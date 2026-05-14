@@ -1,0 +1,45 @@
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+### Gradle ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+### Spring Boot ###
+HELP.md
+target/
+
+### Environment ###
+.env
+.env.*
+!.env.example
+application-local.yml
+application-local.yaml
+
+### Local Infrastructure ###
+docker-compose.yml
+docker-compose.yaml
+!docker-compose.example.yml
+
+### macOS ###
+.DS_Store
+*.swp
+
+### Logs ###
+logs/
+*.log
+
+### APNs / Firebase ###
+*.p8
+*.p12
+firebase-*.json
+
+### Docs ###
+docs/
+.claude
+.codex
