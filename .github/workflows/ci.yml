@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: mio
+          POSTGRES_USER: mio
+          POSTGRES_PASSWORD: mio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Build & Test
+        run: ./gradlew build
+        env:
+          SPRING_PROFILES_ACTIVE: local
+          DB_URL: jdbc:postgresql://localhost:5432/mio
+          DB_USERNAME: mio
+          DB_PASSWORD: mio
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: ci-test-secret-key-minimum-256bits-long-for-hs256-algorithm-padding
+          JWT_ACCESS_TOKEN_EXPIRE_MS: 900000
+          JWT_REFRESH_TOKEN_EXPIRE_MS: 2592000000
+          APP_ENCRYPTION_KEY: Y2l0ZXN0a2V5MzJieXRlc2xvbmdrZXlmb3JhZXM=
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/
+          retention-days: 7
