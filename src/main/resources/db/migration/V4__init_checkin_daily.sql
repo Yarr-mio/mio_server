@@ -8,10 +8,10 @@ CREATE TABLE checkins (
     memo_dek_id      TEXT,
     ai_response      TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (user_id, time_of_day, (created_at::DATE))
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX idx_checkins_user_time_date ON checkins (user_id, time_of_day, (created_at::DATE));
 CREATE INDEX idx_checkins_user_id ON checkins (user_id);
 CREATE INDEX idx_checkins_user_created ON checkins (user_id, created_at DESC);
 
