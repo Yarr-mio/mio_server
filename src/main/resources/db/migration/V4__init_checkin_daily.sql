@@ -7,11 +7,11 @@ CREATE TABLE checkins (
     memo_ciphertext  BYTEA,
     memo_dek_id      TEXT,
     ai_response      TEXT,
+    checkin_date     DATE        NOT NULL DEFAULT CURRENT_DATE,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, time_of_day, checkin_date)
 );
-
-CREATE UNIQUE INDEX idx_checkins_user_time_date ON checkins (user_id, time_of_day, (created_at::DATE));
 CREATE INDEX idx_checkins_user_id ON checkins (user_id);
 CREATE INDEX idx_checkins_user_created ON checkins (user_id, created_at DESC);
 
