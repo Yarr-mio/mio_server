@@ -1,0 +1,115 @@
+name: 기능 요청
+description: 새로운 기능 또는 서버 개선 아이디어를 제안합니다.
+title: "[FEAT] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        문제와 기대 효과가 분명할수록 우선순위를 빠르게 판단할 수 있습니다.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: 사전 확인
+      options:
+        - label: 중복 이슈나 이미 진행 중인 작업이 없는지 확인했습니다.
+          required: true
+        - label: 단순 버그 수정이 아니라 기능 추가 또는 구조 개선 요청임을 확인했습니다.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 제안 영역
+      description: 요청이 주로 영향을 주는 영역을 선택해 주세요.
+      options:
+        - API
+        - 인증 / 인가
+        - DB / 데이터 모델
+        - 배치 / 스케줄러
+        - 성능 / 안정성
+        - 운영 / 관측성
+        - 개발 생산성
+        - 기타
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 요청 배경
+      description: 현재 어떤 불편, 제약, 리스크가 있는지 적어 주세요.
+      placeholder: 특정 API 응답 형식이 일관되지 않아 모바일 클라이언트 처리 비용이 커지고 있습니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안 내용
+      description: 원하는 동작이나 개선 방향을 구체적으로 적어 주세요.
+      placeholder: 응답 공통 래퍼를 도입하고 에러 코드를 표준화했으면 합니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: value
+    attributes:
+      label: 기대 효과
+      description: 이 변경이 왜 가치 있는지 적어 주세요.
+      placeholder: 클라이언트 예외 처리 분기가 줄고, 운영 시 장애 원인 파악이 쉬워집니다.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 고려 범위
+      description: 포함되어야 할 것과 제외해도 되는 것을 적어 주세요.
+      placeholder: |
+        포함:
+        - 로그인 / 회원 API 에러 포맷 통일
+
+        제외:
+        - 기존 관리자 페이지 개편
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 대안 검토
+      description: 고민해본 다른 접근이 있다면 적어 주세요.
+      placeholder: 예외 클래스별 개별 처리도 가능하지만, 공통 정책이 없으면 유지보수가 어렵습니다.
+    validations:
+      required: false
+
+  - type: textarea
+    id: api_db_notes
+    attributes:
+      label: API / DB / 운영 영향
+      description: 스키마 변경, 마이그레이션, 설정 변경, 배포 영향이 있으면 적어 주세요.
+      placeholder: |
+        - API 응답 필드 변경 여부:
+        - DB 스키마 / 데이터 마이그레이션 필요 여부:
+        - 새 환경 변수 / 외부 의존성 추가 여부:
+    validations:
+      required: false
+
+  - type: textarea
+    id: references
+    attributes:
+      label: 참고 자료
+      description: 기획 문서, API 명세, 장애 리포트, 외부 레퍼런스 링크를 남겨 주세요.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: 추가 정보
+      description: 우선순위, 마감 시점, 관련 담당자 등 추가 메모가 있으면 적어 주세요.
+    validations:
+      required: false
