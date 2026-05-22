@@ -1,29 +1,13 @@
-name: 기능 요청
-description: 새로운 기능 또는 서버 개선 아이디어를 제안합니다.
+name: 기능 구현
+description: 새로운 기능 개발 또는 기존 기능 개선 작업을 등록합니다.
 title: "[FEAT] "
 labels:
-  - enhancement
+  - feature
 body:
-  - type: markdown
-    attributes:
-      value: |
-        문제와 기대 효과가 분명할수록 우선순위를 빠르게 판단할 수 있습니다.
-
-  - type: checkboxes
-    id: preflight
-    attributes:
-      label: 사전 확인
-      options:
-        - label: 중복 이슈나 이미 진행 중인 작업이 없는지 확인했습니다.
-          required: true
-        - label: 단순 버그 수정이 아니라 기능 추가 또는 구조 개선 요청임을 확인했습니다.
-          required: true
-
   - type: dropdown
     id: area
     attributes:
-      label: 제안 영역
-      description: 요청이 주로 영향을 주는 영역을 선택해 주세요.
+      label: 작업 영역
       options:
         - API
         - 인증 / 인가
@@ -31,70 +15,79 @@ body:
         - 배치 / 스케줄러
         - 성능 / 안정성
         - 운영 / 관측성
-        - 개발 생산성
+        - 개발 환경
         - 기타
     validations:
       required: true
 
   - type: textarea
-    id: problem
+    id: summary
     attributes:
-      label: 요청 배경
-      description: 현재 어떤 불편, 제약, 리스크가 있는지 적어 주세요.
-      placeholder: 특정 API 응답 형식이 일관되지 않아 모바일 클라이언트 처리 비용이 커지고 있습니다.
-    validations:
-      required: true
-
-  - type: textarea
-    id: proposal
-    attributes:
-      label: 제안 내용
-      description: 원하는 동작이나 개선 방향을 구체적으로 적어 주세요.
-      placeholder: 응답 공통 래퍼를 도입하고 에러 코드를 표준화했으면 합니다.
-    validations:
-      required: true
-
-  - type: textarea
-    id: value
-    attributes:
-      label: 기대 효과
-      description: 이 변경이 왜 가치 있는지 적어 주세요.
-      placeholder: 클라이언트 예외 처리 분기가 줄고, 운영 시 장애 원인 파악이 쉬워집니다.
-    validations:
-      required: true
-
-  - type: textarea
-    id: scope
-    attributes:
-      label: 고려 범위
-      description: 포함되어야 할 것과 제외해도 되는 것을 적어 주세요.
+      label: 작업 개요
+      description: 무엇을 왜 만드는지 2~3줄로 요약해 주세요.
       placeholder: |
-        포함:
-        - 로그인 / 회원 API 에러 포맷 통일
+        소셜 로그인 후 JWT 발급 흐름을 구현합니다.
+        현재 세션 기반 인증을 사용하고 있어 모바일 클라이언트 연동이 어렵습니다.
+    validations:
+      required: true
 
-        제외:
-        - 기존 관리자 페이지 개편
+  - type: textarea
+    id: tasks
+    attributes:
+      label: 구현 항목
+      description: 이 이슈에서 완료해야 할 작업을 체크리스트로 적어 주세요.
+      placeholder: |
+        - [ ] 카카오 OAuth 토큰 검증 API 연동
+        - [ ] 신규 사용자 자동 가입 처리
+        - [ ] Access / Refresh 토큰 발급 및 Redis 저장
+        - [ ] 토큰 재발급 엔드포인트 구현
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 완료 조건
+      description: 어떤 상태가 되면 이 이슈를 닫을 수 있는지 기준을 적어 주세요.
+      placeholder: |
+        - 카카오 액세스 토큰으로 /auth/kakao 호출 시 JWT 반환
+        - 만료된 토큰으로 /auth/refresh 호출 시 401 반환
+        - 단위 테스트 커버리지 80% 이상
+    validations:
+      required: true
+
+  - type: textarea
+    id: approach
+    attributes:
+      label: 기술 접근 방향
+      description: 구현 방법이나 설계 방향에 대해 알고 있는 내용을 적어 주세요. (선택)
+      placeholder: |
+        - Spring Security OAuth2 Client 사용
+        - RefreshToken은 Redis에 TTL 7일로 저장
+        - 기존 UserService.findOrCreate() 재사용
     validations:
       required: false
 
   - type: textarea
-    id: alternatives
+    id: impact
     attributes:
-      label: 대안 검토
-      description: 고민해본 다른 접근이 있다면 적어 주세요.
-      placeholder: 예외 클래스별 개별 처리도 가능하지만, 공통 정책이 없으면 유지보수가 어렵습니다.
+      label: 영향 범위
+      description: 스키마 변경, API 변경, 배포 영향 등 팀이 알아야 할 사항을 적어 주세요. (선택)
+      placeholder: |
+        - DB: users 테이블에 kakao_id 컬럼 추가 (마이그레이션 필요)
+        - API: POST /auth/kakao 신규 추가
+        - 환경 변수: KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET 추가 필요
     validations:
       required: false
 
   - type: textarea
-    id: api_db_notes
+    id: blockers
     attributes:
-      label: API / DB / 운영 영향
-      description: 스키마 변경, 마이그레이션, 설정 변경, 배포 영향이 있으면 적어 주세요.
+      label: 선행 작업 / 의존성
+      description: 이 작업을 시작하기 전에 완료되어야 할 작업이나 결정이 있으면 적어 주세요. (선택)
       placeholder: |
-        - API 응답 필드 변경 여부:
-        - DB 스키마 / 데이터 마이그레이션 필요 여부:
-        - 새 환경 변수 / 외부 의존성 추가 여부:
+        - #42 Redis 연결 설정 완료 후 진행 가능
+        - 카카오 앱 등록 및 Client ID 발급 필요 (담당: @hyochan)
     validations:
       required: false
 
@@ -102,14 +95,6 @@ body:
     id: references
     attributes:
       label: 참고 자료
-      description: 기획 문서, API 명세, 장애 리포트, 외부 레퍼런스 링크를 남겨 주세요.
-    validations:
-      required: false
-
-  - type: textarea
-    id: additional
-    attributes:
-      label: 추가 정보
-      description: 우선순위, 마감 시점, 관련 담당자 등 추가 메모가 있으면 적어 주세요.
+      description: 기획서, 피그마, API 명세, 관련 PR 링크 등을 남겨 주세요. (선택)
     validations:
       required: false
