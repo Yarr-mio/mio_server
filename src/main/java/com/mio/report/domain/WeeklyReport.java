@@ -3,6 +3,8 @@ package com.mio.report.domain;
 import com.mio.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -38,6 +40,7 @@ public class WeeklyReport {
     private Double avgEmotionScore;
 
     /** 날짜별 avg_emotion_score 맵 { "YYYY-MM-DD": Float } */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "emotion_scores", columnDefinition = "jsonb")
     @Builder.Default
     private String emotionScores = "{}";
@@ -48,6 +51,7 @@ public class WeeklyReport {
      * FROM jsonb_each_text(distortion_distribution)
      * ORDER BY count DESC LIMIT 3
      */
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "distortion_distribution", columnDefinition = "jsonb")
     @Builder.Default
     private String distortionDistribution = "{}";
@@ -70,4 +74,17 @@ public class WeeklyReport {
 
     @Column(name = "generated_at")
     private OffsetDateTime generatedAt;
+
+    public void markAsGenerated() {
+        this.status = "GENERATED";
+        this.generatedAt = OffsetDateTime.now();
+    }
+
+    @PrePersist
+    @PreUpdate
+    protected void validate() {
+        if (weekStart != null && weekEnd != null && weekEnd.isBefore(weekStart)) {
+            throw new IllegalStateException("weekEnd must be on or after weekStart");
+        }
+    }
 }

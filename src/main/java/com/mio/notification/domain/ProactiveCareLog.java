@@ -48,6 +48,8 @@ public class ProactiveCareLog {
 
     @PrePersist
     protected void onCreate() {
-        sentAt = OffsetDateTime.now();
+        if (sentAt == null) {
+            sentAt = OffsetDateTime.now();
+        }
     }
 }

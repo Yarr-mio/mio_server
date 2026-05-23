@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.UUID;
 
 @Entity
@@ -31,8 +32,13 @@ public class Message {
     @Column(name = "role", nullable = false)
     private String role;
 
+    @Getter(AccessLevel.NONE)
     @Column(name = "content_ciphertext", nullable = false)
     private byte[] contentCiphertext;
+
+    public byte[] getContentCiphertext() {
+        return Arrays.copyOf(contentCiphertext, contentCiphertext.length);
+    }
 
     @Column(name = "content_dek_id", nullable = false)
     private String contentDekId;

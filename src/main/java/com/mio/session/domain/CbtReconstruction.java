@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.util.Arrays;
 import java.util.UUID;
 
 /**
@@ -43,14 +44,26 @@ public class CbtReconstruction {
     @Column(name = "bias_type", nullable = false)
     private String biasType;
 
+    @Getter(AccessLevel.NONE)
     @Column(name = "distorted_thought_ciphertext", nullable = false)
     private byte[] distortedThoughtCiphertext;
+
+    public byte[] getDistortedThoughtCiphertext() {
+        return Arrays.copyOf(distortedThoughtCiphertext, distortedThoughtCiphertext.length);
+    }
 
     @Column(name = "distorted_thought_dek_id", nullable = false)
     private String distortedThoughtDekId;
 
+    @Getter(AccessLevel.NONE)
     @Column(name = "reconstructed_thought_ciphertext")
     private byte[] reconstructedThoughtCiphertext;
+
+    public byte[] getReconstructedThoughtCiphertext() {
+        return reconstructedThoughtCiphertext != null
+            ? Arrays.copyOf(reconstructedThoughtCiphertext, reconstructedThoughtCiphertext.length)
+            : null;
+    }
 
     @Column(name = "reconstructed_thought_dek_id")
     private String reconstructedThoughtDekId;

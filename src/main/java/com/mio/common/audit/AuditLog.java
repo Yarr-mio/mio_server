@@ -2,6 +2,8 @@ package com.mio.common.audit;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -30,6 +32,7 @@ public class AuditLog {
     @Column(name = "resource_id")
     private String resourceId;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "details", nullable = false, columnDefinition = "jsonb")
     private String details;
 

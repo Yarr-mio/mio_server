@@ -3,6 +3,8 @@ package com.mio.dailytest.domain;
 import com.mio.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -27,6 +29,7 @@ public class DailyTestResponse {
     @JoinColumn(name = "daily_test_id", nullable = false)
     private DailyTest dailyTest;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "answers", nullable = false, columnDefinition = "jsonb")
     private String answers;
 

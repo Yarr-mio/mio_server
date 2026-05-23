@@ -2,6 +2,8 @@ package com.mio.infra.outbox;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -21,6 +23,7 @@ public class OutboxEvent {
     @Column(name = "event_type", nullable = false)
     private String eventType;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "payload", nullable = false, columnDefinition = "jsonb")
     private String payload;
 
@@ -35,6 +38,15 @@ public class OutboxEvent {
 
     @Column(name = "processed_at")
     private OffsetDateTime processedAt;
+
+    public void markProcessed() {
+        this.processed = true;
+        this.processedAt = OffsetDateTime.now();
+    }
+
+    public void incrementRetryCount() {
+        this.retryCount++;
+    }
 
     @PrePersist
     protected void onCreate() {

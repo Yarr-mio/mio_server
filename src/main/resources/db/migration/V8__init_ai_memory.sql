@@ -4,7 +4,7 @@
 
 CREATE TABLE emotional_states (
     id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id          UUID        NOT NULL,
+    user_id          UUID        NOT NULL REFERENCES users(id),
     source_event_id  UUID,
     primary_emotion  TEXT        NOT NULL CHECK (primary_emotion IN (
                        'happy','calm','anxious','sad','angry','ashamed','numb','tired','confused'
@@ -22,7 +22,7 @@ CREATE INDEX idx_emotional_states_user_created ON emotional_states(user_id, crea
 
 CREATE TABLE cbt_patterns (
     id                           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id                      UUID        NOT NULL,
+    user_id                      UUID        NOT NULL REFERENCES users(id),
     pattern_type                 TEXT        NOT NULL CHECK (pattern_type IN (
                                    'overgeneralization','catastrophizing','mind_reading',
                                    'all_or_nothing','self_blame','emotional_reasoning'
@@ -41,7 +41,7 @@ CREATE INDEX idx_cbt_patterns_user_id ON cbt_patterns(user_id);
 
 CREATE TABLE safety_risk_daily (
     id                        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id                   UUID        NOT NULL,
+    user_id                   UUID        NOT NULL REFERENCES users(id),
     date                      DATE        NOT NULL,
     medium_risk_count         INT         NOT NULL DEFAULT 0,
     high_risk_count           INT         NOT NULL DEFAULT 0,
@@ -57,7 +57,7 @@ CREATE TABLE safety_risk_daily (
 
 CREATE TABLE ai_policy_decisions (
     id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id              UUID        NOT NULL,
+    user_id              UUID        NOT NULL REFERENCES users(id),
     session_id           UUID,
     message_id           UUID,
     decision_id          TEXT        NOT NULL UNIQUE,
@@ -78,7 +78,7 @@ CREATE INDEX idx_ai_policy_decisions_session_id ON ai_policy_decisions(session_i
 
 CREATE TABLE memory_embeddings (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id         UUID        NOT NULL,
+    user_id         UUID        NOT NULL REFERENCES users(id),
     source_event_id UUID        NOT NULL,
     content_summary TEXT        NOT NULL,
     embedding       VECTOR(1536),

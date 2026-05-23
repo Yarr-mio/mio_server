@@ -148,12 +148,10 @@ async function main() {
     properties['상태'] = { select: { name: newStatus } };
   }
 
-  // 레이블 (multi-select)
-  if (labels.length > 0) {
-    properties['레이블'] = {
-      multi_select: labels.map(l => ({ name: l.name })),
-    };
-  }
+  // 레이블 (multi-select) — 빈 배열도 반영하여 기존 레이블을 지울 수 있도록
+  properties['레이블'] = {
+    multi_select: labels.map(l => ({ name: l.name })),
+  };
 
   // 유형 (bug/enhancement → 버그/기능 개선)
   const type = detectType(labels, issueTitle);

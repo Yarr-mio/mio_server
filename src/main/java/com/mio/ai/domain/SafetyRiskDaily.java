@@ -2,6 +2,8 @@ package com.mio.ai.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -43,8 +45,10 @@ public class SafetyRiskDaily {
     @Column(name = "last_risk_level")
     private String lastRiskLevel;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "policy_flags", nullable = false, columnDefinition = "jsonb")
-    private String policyFlags;
+    @Builder.Default
+    private String policyFlags = "[]";
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

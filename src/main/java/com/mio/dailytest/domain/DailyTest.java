@@ -2,6 +2,8 @@ package com.mio.dailytest.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -25,6 +27,7 @@ public class DailyTest {
     @Column(name = "description")
     private String description;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "content", nullable = false, columnDefinition = "jsonb")
     private String content;
 

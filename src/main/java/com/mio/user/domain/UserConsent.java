@@ -36,6 +36,8 @@ public class UserConsent {
 
     @PrePersist
     protected void onCreate() {
-        agreedAt = OffsetDateTime.now();
+        if (agreedAt == null) {
+            agreedAt = OffsetDateTime.now();
+        }
     }
 }
