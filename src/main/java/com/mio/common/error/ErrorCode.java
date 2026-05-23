@@ -27,6 +27,13 @@ public enum ErrorCode {
     USER_WITHDRAWN(HttpStatus.GONE, "USER_WITHDRAWN", "탈퇴한 계정입니다."),
     ONBOARDING_REQUIRED(HttpStatus.FORBIDDEN, "ONBOARDING_REQUIRED", "온보딩을 먼저 완료해야 합니다."),
 
+    // Onboarding
+    ONBOARDING_STEP_NOT_COMPLETED(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION", "이전 온보딩 단계를 완료해야 합니다."),
+    INVALID_CHARACTER_ID(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 캐릭터 ID입니다."),
+    INVALID_EMOTION_STATE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 감정 상태입니다."),
+    INVALID_CONCERN_TYPE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 고민 유형입니다."),
+    INVALID_PREFERRED_STYLE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 상담 스타일입니다."),
+
     // Session
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션을 찾을 수 없습니다."),
     SESSION_ALREADY_ENDED(HttpStatus.CONFLICT, "SESSION_ALREADY_ENDED", "이미 종료된 세션입니다."),
