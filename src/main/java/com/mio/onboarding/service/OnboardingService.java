@@ -89,7 +89,8 @@ public class OnboardingService {
         }
 
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
-        List<String> concernTypes = fromJson(answer.getConcernTypes(), new TypeReference<>() {});
+        List<String> rawConcernTypes = fromJson(answer.getConcernTypes(), new TypeReference<>() {});
+        List<String> concernTypes = rawConcernTypes != null ? rawConcernTypes : List.of();
         List<CharacterRecommendationDto> recommendations = characterRecommender.recommend(
                 answer.getEmotionState(), concernTypes, request.preferredStyle()
         );

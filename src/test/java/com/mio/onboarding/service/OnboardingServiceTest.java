@@ -135,6 +135,48 @@ class OnboardingServiceTest {
     }
 
     @Test
+    @DisplayName("3단계 concernTypes가 null이어도 NPE 없이 추천 결과를 반환한다")
+    void submitStep3_concernTypesNull_doesNotThrow() {
+        mockUser.updateOnboardingStep(2);
+        UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
+                .user(mockUser)
+                .emotionState("anxious")
+                .concernTypes(null)
+                .build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        OnboardingStep3Response response = onboardingService.submitStep3(
+                userId, new OnboardingStep3Request("empathetic", List.of())
+        );
+
+        assertThat(response.onboardingStep()).isEqualTo(3);
+        assertThat(response.characterRecommendations()).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("3단계 concernTypes가 빈 문자열이어도 NPE 없이 추천 결과를 반환한다")
+    void submitStep3_concernTypesBlank_doesNotThrow() {
+        mockUser.updateOnboardingStep(2);
+        UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
+                .user(mockUser)
+                .emotionState("anxious")
+                .concernTypes("")
+                .build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        OnboardingStep3Response response = onboardingService.submitStep3(
+                userId, new OnboardingStep3Request("empathetic", List.of())
+        );
+
+        assertThat(response.onboardingStep()).isEqualTo(3);
+        assertThat(response.characterRecommendations()).hasSize(3);
+    }
+
+    @Test
     @DisplayName("3단계는 2단계 미완료 시 ONBOARDING_STEP_NOT_COMPLETED 예외를 발생시킨다")
     void submitStep3_step2NotCompleted_throws() {
         mockUser.updateOnboardingStep(1);

@@ -29,10 +29,10 @@ public enum ErrorCode {
 
     // Onboarding
     ONBOARDING_STEP_NOT_COMPLETED(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION", "이전 온보딩 단계를 완료해야 합니다."),
-    INVALID_CHARACTER_ID(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 캐릭터 ID입니다."),
-    INVALID_EMOTION_STATE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 감정 상태입니다."),
-    INVALID_CONCERN_TYPE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 고민 유형입니다."),
-    INVALID_PREFERRED_STYLE(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "유효하지 않은 상담 스타일입니다."),
+    INVALID_CHARACTER_ID(HttpStatus.BAD_REQUEST, "INVALID_CHARACTER_ID", "유효하지 않은 캐릭터 ID입니다."),
+    INVALID_EMOTION_STATE(HttpStatus.BAD_REQUEST, "INVALID_EMOTION_STATE", "유효하지 않은 감정 상태입니다."),
+    INVALID_CONCERN_TYPE(HttpStatus.BAD_REQUEST, "INVALID_CONCERN_TYPE", "유효하지 않은 고민 유형입니다."),
+    INVALID_PREFERRED_STYLE(HttpStatus.BAD_REQUEST, "INVALID_PREFERRED_STYLE", "유효하지 않은 상담 스타일입니다."),
 
     // Session
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션을 찾을 수 없습니다."),
