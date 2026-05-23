@@ -89,6 +89,15 @@ public class User {
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
+    public void updateOnboardingStep(int step) {
+        this.onboardingStep = step;
+    }
+
+    public void completeOnboarding(String characterId) {
+        this.preferredCharacterId = characterId;
+        this.signupStep = "ONBOARDING_COMPLETED";
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();

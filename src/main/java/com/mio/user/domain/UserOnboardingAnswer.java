@@ -48,4 +48,21 @@ public class UserOnboardingAnswer {
     /** step 3 완료 시점 */
     @Column(name = "submitted_at")
     private OffsetDateTime submittedAt;
+
+    public void updateStep1(String emotionState, String responsesJson) {
+        this.emotionState = emotionState;
+        this.responses = responsesJson;
+    }
+
+    public void updateStep2(String concernTypesJson, String responsesJson) {
+        this.concernTypes = concernTypesJson;
+        this.responses = responsesJson;
+    }
+
+    public void updateStep3(String preferredStyle, String characterRecommendationsJson, String responsesJson) {
+        this.preferredStyle = preferredStyle;
+        this.characterRecommendations = characterRecommendationsJson;
+        this.responses = responsesJson;
+        this.submittedAt = OffsetDateTime.now();
+    }
 }
