@@ -21,6 +21,11 @@ public class CbtPattern {
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
+    /**
+     * 인지 왜곡 유형:
+     * overgeneralization / catastrophizing / mind_reading /
+     * all_or_nothing / self_blame / emotional_reasoning
+     */
     @Column(name = "pattern_type", nullable = false)
     private String patternType;
 
@@ -31,10 +36,12 @@ public class CbtPattern {
     private byte[] distortedThoughtCiphertext;
 
     @Column(name = "alternative_thoughts", columnDefinition = "jsonb")
-    private String alternativeThoughts;
+    @Builder.Default
+    private String alternativeThoughts = "[]";
 
     @Column(name = "recurrence_count", nullable = false)
-    private int recurrenceCount;
+    @Builder.Default
+    private int recurrenceCount = 1;
 
     @Column(name = "session_occurrence_count", nullable = false)
     private int sessionOccurrenceCount;

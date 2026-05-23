@@ -1,47 +1,12 @@
 package com.mio.domain.user;
 
-import jakarta.persistence.*;
-import lombok.*;
-
-import java.time.OffsetDateTime;
-import java.util.UUID;
-
-@Entity
-@Table(name = "user_refresh_tokens")
-@Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Builder
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class UserRefreshToken {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
-    private UUID id;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
-
-    @Column(name = "device_id", nullable = false)
-    private String deviceId;
-
-    @Column(name = "token_hash", nullable = false, unique = true)
-    private String tokenHash;
-
-    @Column(name = "is_valid", nullable = false)
-    private boolean isValid;
-
-    @Column(name = "expires_at", nullable = false)
-    private OffsetDateTime expiresAt;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private OffsetDateTime createdAt;
-
-    @Column(name = "revoked_at")
-    private OffsetDateTime revokedAt;
-
-    @PrePersist
-    protected void onCreate() {
-        createdAt = OffsetDateTime.now();
-    }
+/**
+ * @deprecated Refresh Token은 Redis로 이관되었습니다.
+ * DB 테이블(user_refresh_tokens)은 삭제 예정.
+ * Redis 키 패턴: refresh:{uuid} / refresh:user:{user_id}
+ * @see com.mio.infra.redis (RedisRepository 구현 예정)
+ */
+@Deprecated(since = "v2.4", forRemoval = true)
+public final class UserRefreshToken {
+    private UserRefreshToken() {}
 }

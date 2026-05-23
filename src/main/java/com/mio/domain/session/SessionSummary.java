@@ -1,5 +1,6 @@
 package com.mio.domain.session;
 
+import com.mio.domain.user.User;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -18,24 +19,44 @@ public class SessionSummary {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "session_id", nullable = false, unique = true)
     private Session session;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
+    @Column(name = "character_id", nullable = false)
+    private String characterId;
 
     @Column(name = "summary_text", nullable = false)
     private String summaryText;
 
-    @Column(name = "emotion_arc", columnDefinition = "jsonb")
-    private String emotionArc;
+    /** AES-256 암호화된 요약 원문 */
+    @Column(name = "summary_ciphertext")
+    private byte[] summaryCiphertext;
 
-    @Column(name = "cbt_markers", columnDefinition = "jsonb")
-    private String cbtMarkers;
+    @Column(name = "summary_dek_id")
+    private String summaryDekId;
 
+    /** 세션에서 가장 지배적인 감정 */
+    @Column(name = "dominant_emotion")
+    private String dominantEmotion;
+
+    /** 감지된 인지 왜곡 유형 목록 */
+    @Column(name = "bias_types_detected", columnDefinition = "jsonb")
+    @Builder.Default
+    private String biasTypesDetected = "[]";
+
+    /** CBT 개입 여부 */
+    @Column(name = "cbt_intervened", nullable = false)
+    private boolean cbtIntervened;
+
+    /** pending / done / failed */
     @Column(name = "embedding_status", nullable = false)
-    private String embeddingStatus;
+    @Builder.Default
+    private String embeddingStatus = "pending";
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -43,8 +64,5 @@ public class SessionSummary {
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();
-        if (embeddingStatus == null) {
-            embeddingStatus = "pending";
-        }
     }
 }

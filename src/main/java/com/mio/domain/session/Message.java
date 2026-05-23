@@ -1,5 +1,6 @@
 package com.mio.domain.session;
 
+import com.mio.domain.user.User;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -22,9 +23,11 @@ public class Message {
     @JoinColumn(name = "session_id", nullable = false)
     private Session session;
 
-    @Column(name = "user_id", nullable = false)
-    private UUID userId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
 
+    /** user / assistant */
     @Column(name = "role", nullable = false)
     private String role;
 
@@ -34,9 +37,15 @@ public class Message {
     @Column(name = "content_dek_id", nullable = false)
     private String contentDekId;
 
+    /** CBT 측정용 0~100 (INT). emoji_score 1~5 와 혼용 금지 */
     @Column(name = "emotion_score")
-    private Double emotionScore;
+    private Integer emotionScore;
 
+    /**
+     * 인지 왜곡 유형:
+     * overgeneralization / catastrophizing / mind_reading /
+     * all_or_nothing / self_blame / emotional_reasoning
+     */
     @Column(name = "bias_type")
     private String biasType;
 

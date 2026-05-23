@@ -1,0 +1,44 @@
+name: 🔁 GitHub Issues → Notion 동기화
+
+on:
+  issues:
+    types:
+      - opened
+      - edited
+      - closed
+      - reopened
+      - labeled
+      - unlabeled
+      - assigned
+      - unassigned
+
+jobs:
+  sync-to-notion:
+    name: Notion 이슈 트래킹 동기화
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install @notionhq/client
+
+      - name: Sync issue to Notion
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_ISSUE_DATABASE_ID }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_STATE: ${{ github.event.issue.state }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_LABELS: ${{ toJson(github.event.issue.labels) }}
+          ISSUE_ASSIGNEES: ${{ toJson(github.event.issue.assignees) }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: node .github/scripts/sync-notion-issue.js

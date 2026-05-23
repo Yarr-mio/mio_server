@@ -33,12 +33,14 @@ public class BehaviorTask {
     @JoinColumn(name = "source_checkin_id")
     private Checkin sourceCheckin;
 
+    /** chat / checkin / pattern / character / template */
     @Column(name = "generated_from", nullable = false)
     private String generatedFrom;
 
     @Column(name = "action_text", nullable = false)
     private String actionText;
 
+    /** 심리_안정 / 인지_재구성 / 행동_활성화 */
     @Column(name = "category", nullable = false)
     private String category;
 
@@ -51,12 +53,16 @@ public class BehaviorTask {
     @Column(name = "character_id")
     private String characterId;
 
+    /** suggested / completed / skipped / expired */
     @Column(name = "status", nullable = false)
-    private String status;
+    @Builder.Default
+    private String status = "suggested";
 
+    /** CBT 측정용 0~100 */
     @Column(name = "before_emotion")
     private Integer beforeEmotion;
 
+    /** CBT 측정용 0~100 */
     @Column(name = "after_emotion")
     private Integer afterEmotion;
 
@@ -72,8 +78,5 @@ public class BehaviorTask {
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();
-        if (status == null) {
-            status = "suggested";
-        }
     }
 }

@@ -33,20 +33,37 @@ public class WeeklyReport {
     @Column(name = "checkin_count", nullable = false)
     private int checkinCount;
 
+    /** CBT 측정용 0~100 (FLOAT). emoji_score 1~5 와 혼용 금지 */
     @Column(name = "avg_emotion_score")
     private Double avgEmotionScore;
 
+    /** 날짜별 avg_emotion_score 맵 { "YYYY-MM-DD": Float } */
     @Column(name = "emotion_scores", columnDefinition = "jsonb")
-    private String emotionScores;
+    @Builder.Default
+    private String emotionScores = "{}";
 
+    /**
+     * API 응답 시 distortion_top3 배열로 변환:
+     * SELECT key AS type, value::INT AS count
+     * FROM jsonb_each_text(distortion_distribution)
+     * ORDER BY count DESC LIMIT 3
+     */
     @Column(name = "distortion_distribution", columnDefinition = "jsonb")
-    private String distortionDistribution;
+    @Builder.Default
+    private String distortionDistribution = "{}";
 
+    /** 2차 개발: AI 생성 주간 코칭 내러티브 */
     @Column(name = "narrative")
     private String narrative;
 
+    /** 2차 개발: AI 생성 다음 주 코칭 방향 */
     @Column(name = "coaching_direction")
     private String coachingDirection;
+
+    /** PENDING / GENERATED / INSUFFICIENT_DATA */
+    @Column(name = "status", nullable = false)
+    @Builder.Default
+    private String status = "PENDING";
 
     @Column(name = "is_partial", nullable = false)
     private boolean isPartial;
