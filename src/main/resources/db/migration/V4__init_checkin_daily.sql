@@ -1,5 +1,5 @@
 -- [v2.4] 체크인 도메인
--- checkins: emotion_type 추가, checkin_date 컬럼 제거 (created_at::DATE로 UNIQUE 처리)
+-- checkins: emotion_type 추가, checkin_date 컬럼으로 UNIQUE 처리 (TIMESTAMPTZ::DATE 캐스트는 IMMUTABLE 아님)
 -- emoji_score: 감정 강도 1~5 (체크인용). CBT emotion_score 0~100 과 혼용 금지
 
 CREATE TABLE checkins (
@@ -11,15 +11,14 @@ CREATE TABLE checkins (
                        'happy','calm','anxious','sad','angry','ashamed','numb','tired','confused'
                      )),
     emoji_score      INT         NOT NULL CHECK (emoji_score BETWEEN 1 AND 5), -- 감정 강도 1~5 (체크인용, CBT 0~100과 별도)
+    checkin_date     DATE        NOT NULL,
     memo_ciphertext  BYTEA,
     memo_dek_id      TEXT,
     ai_response      TEXT,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, time_of_day, checkin_date)
 );
-
-CREATE UNIQUE INDEX uq_checkins_user_timeofday_date
-    ON checkins (user_id, time_of_day, (created_at::DATE));
 
 CREATE INDEX idx_checkins_user ON checkins(user_id, created_at DESC);
 

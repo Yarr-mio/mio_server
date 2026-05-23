@@ -4,6 +4,7 @@ import com.mio.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
@@ -32,7 +33,7 @@ public class Checkin {
 
     /**
      * 감정 유형: happy/calm/anxious/sad/angry/ashamed/numb/tired/confused
-     * UNIQUE 제약: (user_id, time_of_day, created_at::DATE)
+     * UNIQUE 제약: (user_id, time_of_day, checkin_date)
      */
     @Column(name = "emotion_type", nullable = false)
     private String emotionType;
@@ -40,6 +41,9 @@ public class Checkin {
     /** 감정 강도 1~5 (체크인용). CBT 측정용 emotion_score 0~100 과 혼용 금지 */
     @Column(name = "emoji_score", nullable = false)
     private int emojiScore;
+
+    @Column(name = "checkin_date", nullable = false, updatable = false)
+    private LocalDate checkinDate;
 
     @Column(name = "memo_ciphertext")
     private byte[] memoCiphertext;
@@ -58,6 +62,9 @@ public class Checkin {
 
     @PrePersist
     protected void onCreate() {
+        if (checkinDate == null) {
+            checkinDate = LocalDate.now();
+        }
         createdAt = OffsetDateTime.now();
         updatedAt = OffsetDateTime.now();
     }
