@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -37,7 +38,7 @@ public class SessionController {
     public SseEmitter sendMessage(
             @RequestHeader("X-User-Id") UUID userId,
             @PathVariable UUID sessionId,
-            @RequestBody SendMessageRequest request) {
+            @Valid @RequestBody SendMessageRequest request) {
         SseEmitter emitter = new SseEmitter(60_000L);
         Thread.ofVirtual().start(() -> sessionService.streamMessage(userId, sessionId, request, emitter));
         return emitter;

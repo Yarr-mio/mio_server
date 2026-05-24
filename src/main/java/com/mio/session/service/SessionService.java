@@ -62,11 +62,11 @@ public class SessionService {
     @Transactional
     public EndSessionResponse endSession(UUID userId, UUID sessionId) {
         Session session = findSession(sessionId);
-        if ("ended".equals(session.getStatus())) {
-            throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
-        }
         if (!java.util.Objects.equals(session.getUser().getId(), userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+        if ("ended".equals(session.getStatus())) {
+            throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
         session.end();
         return EndSessionResponse.from(sessionRepository.save(session));
@@ -74,7 +74,7 @@ public class SessionService {
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request, SseEmitter emitter) {
         try {
-            Session session = findSessionTransactional(sessionId);
+            Session session = findSession(sessionId);
             validateSessionOwner(session, userId);
 
             String inboundMsgId = "msg_in_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
@@ -112,8 +112,8 @@ public class SessionService {
                 .isCrisisFlagged(false)
                 .build();
         messageRepository.save(message);
-
-        // 세션 카운터 갱신은 별도 트랜잭션에서 처리 (SSE는 비동기 컨텍스트)
+        session.incrementMessageCount();
+        sessionRepository.save(session);
     }
 
     private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {
@@ -141,17 +141,12 @@ public class SessionService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
     }
 
-    private Session findSessionTransactional(UUID sessionId) {
-        return sessionRepository.findById(sessionId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
-    }
-
     private void validateSessionOwner(Session session, UUID userId) {
-        if ("ended".equals(session.getStatus())) {
-            throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
-        }
         if (!java.util.Objects.equals(session.getUser().getId(), userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+        if ("ended".equals(session.getStatus())) {
+            throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
     }
 }

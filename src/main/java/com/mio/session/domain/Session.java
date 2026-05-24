@@ -73,7 +73,7 @@ public class Session {
     }
 
     public void updateAvgEmotionScore(int newScore) {
-        if (this.avgEmotionScore == null) {
+        if (this.avgEmotionScore == null || this.messageCount == 0) {
             this.avgEmotionScore = newScore;
         } else {
             this.avgEmotionScore = (this.avgEmotionScore * (this.messageCount - 1) + newScore) / this.messageCount;

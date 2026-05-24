@@ -15,6 +15,9 @@ public record EndSessionResponse(
         @JsonProperty("summary_status") String summaryStatus
 ) {
     public static EndSessionResponse from(Session session) {
+        if (session.getEndedAt() == null) {
+            throw new IllegalStateException("종료되지 않은 세션으로 EndSessionResponse를 생성할 수 없습니다.");
+        }
         return new EndSessionResponse(
                 session.getId(),
                 session.getStatus(),

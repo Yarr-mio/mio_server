@@ -14,7 +14,7 @@ public sealed interface SseEventDto
     String eventName();
 
     record SessionMetaEvent(
-            @JsonProperty("message_id") String messageId,
+            @JsonProperty("msg_id") String msgId,
             @JsonProperty("received_at") OffsetDateTime receivedAt
     ) implements SseEventDto {
         @Override public String eventName() { return "session_meta"; }
