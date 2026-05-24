@@ -40,6 +40,10 @@ public enum ErrorCode {
     SESSION_ALREADY_ENDED(HttpStatus.GONE, "SESSION_ALREADY_ENDED", "이미 종료된 세션입니다."),
     LOCKED_BY_SAFETY(HttpStatus.LOCKED, "LOCKED_BY_SAFETY", "보안 정책에 의해 차단된 요청입니다."),
 
+    // Daily Test
+    DAILY_TEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DAILY_TEST_NOT_FOUND", "오늘의 데일리 테스트가 없습니다."),
+    DAILY_TEST_ALREADY_COMPLETED(HttpStatus.CONFLICT, "DAILY_TEST_ALREADY_COMPLETED", "이미 완료한 데일리 테스트입니다."),
+
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다.");
 
