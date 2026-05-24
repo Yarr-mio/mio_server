@@ -51,7 +51,7 @@ class AuthServiceTest {
                 List.of(kakaoProvider), userRepository, userConsentRepository,
                 jwtTokenService, refreshTokenService, refreshTokenRedisRepository
         );
-        ReflectionTestUtils.setField(authService, "hashSalt", TEST_HASH_SALT);
+        ReflectionTestUtils.setField(authService, "withdrawalAnonymizationSecret", TEST_HASH_SALT);
     }
 
     // ──────────────── login ────────────────

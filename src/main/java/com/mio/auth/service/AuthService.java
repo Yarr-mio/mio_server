@@ -29,8 +29,9 @@ public class AuthService {
 
     private static final int JWT_EXPIRY_SECONDS = 900;
 
-    @Value("${jwt.secret}")
-    private String hashSalt;
+    // jwt.secret과 분리 — JWT 키 로테이션 시 기존 탈퇴 데이터 해시값이 깨지지 않도록 독립 관리
+    @Value("${withdrawal.anonymization.secret}")
+    private String withdrawalAnonymizationSecret;
 
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
@@ -186,7 +187,7 @@ public class AuthService {
     private String hmacSha256(String input) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(hashSalt.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            mac.init(new SecretKeySpec(withdrawalAnonymizationSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             return HexFormat.of().formatHex(mac.doFinal(input.getBytes(StandardCharsets.UTF_8)));
         } catch (Exception e) {
             throw new IllegalStateException(e);
