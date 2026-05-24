@@ -50,8 +50,38 @@ public class Session {
     @Builder.Default
     private String embeddingStatus = "pending";
 
+    @Column(name = "last_message_at")
+    private OffsetDateTime lastMessageAt;
+
     @PrePersist
     protected void onCreate() {
         startedAt = OffsetDateTime.now();
+    }
+
+    public void end() {
+        if ("ended".equals(this.status)) {
+            throw new com.mio.common.error.BusinessException(
+                    com.mio.common.error.ErrorCode.SESSION_ALREADY_ENDED);
+        }
+        this.status = "ended";
+        this.endedAt = OffsetDateTime.now();
+    }
+
+    public void incrementMessageCount() {
+        this.messageCount += 1;
+        this.lastMessageAt = OffsetDateTime.now();
+    }
+
+    public void updateAvgEmotionScore(int newScore) {
+        if (this.avgEmotionScore == null) {
+            this.avgEmotionScore = newScore;
+        } else {
+            this.avgEmotionScore = (this.avgEmotionScore * (this.messageCount - 1) + newScore) / this.messageCount;
+        }
+    }
+
+    public long durationSeconds() {
+        if (startedAt == null || endedAt == null) return 0;
+        return java.time.temporal.ChronoUnit.SECONDS.between(startedAt, endedAt);
     }
 }
