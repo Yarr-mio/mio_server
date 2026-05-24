@@ -5,6 +5,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -29,7 +31,7 @@ public class Session {
     /** active / ended  (5차 회의: idle 제거) */
     @Column(name = "status", nullable = false)
     @Builder.Default
-    private String status = "active";
+    private SessionStatus status = SessionStatus.ACTIVE;
 
     @Column(name = "started_at", nullable = false)
     private OffsetDateTime startedAt;
@@ -50,8 +52,46 @@ public class Session {
     @Builder.Default
     private String embeddingStatus = "pending";
 
+    @Column(name = "last_message_at")
+    private OffsetDateTime lastMessageAt;
+
     @PrePersist
     protected void onCreate() {
         startedAt = OffsetDateTime.now();
+    }
+
+    public void end() {
+        if (isEnded()) {
+            throw new com.mio.common.error.BusinessException(
+                    com.mio.common.error.ErrorCode.SESSION_ALREADY_ENDED);
+        }
+        this.status = SessionStatus.ENDED;
+        this.endedAt = OffsetDateTime.now();
+    }
+
+    public boolean isEnded() {
+        return this.status == SessionStatus.ENDED;
+    }
+
+    public boolean belongsTo(UUID userId) {
+        return Objects.equals(this.user.getId(), userId);
+    }
+
+    public void incrementMessageCount() {
+        this.messageCount += 1;
+        this.lastMessageAt = OffsetDateTime.now();
+    }
+
+    public void updateAvgEmotionScore(int newScore) {
+        if (this.avgEmotionScore == null || this.messageCount == 0) {
+            this.avgEmotionScore = newScore;
+        } else {
+            this.avgEmotionScore = (this.avgEmotionScore * (this.messageCount - 1) + newScore) / this.messageCount;
+        }
+    }
+
+    public long durationSeconds() {
+        if (startedAt == null || endedAt == null) return 0;
+        return ChronoUnit.SECONDS.between(startedAt, endedAt);
     }
 }
