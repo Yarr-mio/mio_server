@@ -65,4 +65,28 @@ class DailyTestResultEngineTest {
         String result = engine.calculate(CONTENT, answers);
         assertThat(result).isEqualTo("오늘은 비교적 안정된 하루였네요.");
     }
+
+    @Test
+    @DisplayName("경계값 3점 → 안정 (stable 상한)")
+    void calculate_boundary3_returnsStableMessage() {
+        Map<String, String> answers = Map.of("q1", "q1_a", "q2", "q2_b"); // 0+3=3
+        String result = engine.calculate(CONTENT, answers);
+        assertThat(result).isEqualTo("오늘은 비교적 안정된 하루였네요.");
+    }
+
+    @Test
+    @DisplayName("경계값 4점 → 중간 (moderate 하한)")
+    void calculate_boundary4_returnsModerateMessage() {
+        Map<String, String> answers = Map.of("q1", "q1_c", "q2", "q2_a"); // 4+0=4
+        String result = engine.calculate(CONTENT, answers);
+        assertThat(result).isEqualTo("감정의 기복이 있었던 하루군요.");
+    }
+
+    @Test
+    @DisplayName("경계값 7점 → 중간 (moderate 상한)")
+    void calculate_boundary7_returnsModerateMessage() {
+        Map<String, String> answers = Map.of("q1", "q1_c", "q2", "q2_b"); // 4+3=7
+        String result = engine.calculate(CONTENT, answers);
+        assertThat(result).isEqualTo("감정의 기복이 있었던 하루군요.");
+    }
 }

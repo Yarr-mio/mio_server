@@ -2,6 +2,7 @@ package com.mio.dailytest.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.dailytest.domain.DailyTest;
@@ -12,6 +13,7 @@ import com.mio.dailytest.repository.DailyTestResponseRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -34,7 +36,7 @@ public class DailyTestService {
         User user = findUser(userId);
         checkOnboarding(user);
 
-        DailyTest test = dailyTestRepository.findByActiveDate(LocalDate.now())
+        DailyTest test = dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))
                 .orElseThrow(() -> new BusinessException(ErrorCode.DAILY_TEST_NOT_FOUND));
 
         return dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, test.getId())
@@ -55,6 +57,10 @@ public class DailyTestService {
         DailyTest test = dailyTestRepository.findById(testId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.DAILY_TEST_NOT_FOUND));
 
+        if (!LocalDate.now(AppConstants.ZONE).equals(test.getActiveDate())) {
+            throw new BusinessException(ErrorCode.DAILY_TEST_NOT_FOUND);
+        }
+
         if (dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId).isPresent()) {
             throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
         }
@@ -70,8 +76,12 @@ public class DailyTestService {
                 .resultSummary(resultSummary)
                 .build();
 
-        DailyTestResponse saved = dailyTestResponseRepository.save(response);
-        return new DailyTestResultResponse(saved.getId(), testId, resultSummary);
+        try {
+            DailyTestResponse saved = dailyTestResponseRepository.save(response);
+            return new DailyTestResultResponse(saved.getId(), testId, resultSummary);
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
+        }
     }
 
     private User findUser(UUID userId) {

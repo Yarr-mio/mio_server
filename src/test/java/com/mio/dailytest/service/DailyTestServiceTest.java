@@ -1,6 +1,7 @@
 package com.mio.dailytest.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.dailytest.domain.DailyTest;
@@ -90,7 +91,7 @@ class DailyTestServiceTest {
     @DisplayName("getTodayTest - 오늘 테스트 없으면 DAILY_TEST_NOT_FOUND")
     void getTodayTest_noTodayTest_throwsNotFound() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
-        when(dailyTestRepository.findByActiveDate(LocalDate.now())).thenReturn(Optional.empty());
+        when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getTodayTest(userId))
                 .isInstanceOf(BusinessException.class)
@@ -103,7 +104,7 @@ class DailyTestServiceTest {
     void getTodayTest_notCompleted_returnsPending() {
         DailyTest test = buildDailyTest();
         when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
-        when(dailyTestRepository.findByActiveDate(LocalDate.now())).thenReturn(Optional.of(test));
+        when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.empty());
 
@@ -120,7 +121,7 @@ class DailyTestServiceTest {
         DailyTest test = buildDailyTest();
         DailyTestResponse existingResponse = buildDailyTestResponse(test, "안정된 하루");
         when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
-        when(dailyTestRepository.findByActiveDate(LocalDate.now())).thenReturn(Optional.of(test));
+        when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.of(existingResponse));
 
@@ -128,6 +129,21 @@ class DailyTestServiceTest {
 
         assertThat(response.status()).isEqualTo("completed");
         assertThat(response.resultSummary()).isEqualTo("안정된 하루");
+    }
+
+    @Test
+    @DisplayName("submitAnswer - 오늘 날짜가 아닌 테스트는 DAILY_TEST_NOT_FOUND")
+    void submitAnswer_notTodayTest_throwsNotFound() {
+        DailyTest oldTest = buildDailyTest(LocalDate.now(AppConstants.ZONE).minusDays(1));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
+        when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(oldTest));
+
+        AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
+
+        assertThatThrownBy(() -> service.submitAnswer(userId, testId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.DAILY_TEST_NOT_FOUND);
     }
 
     @Test
@@ -169,11 +185,15 @@ class DailyTestServiceTest {
     }
 
     private DailyTest buildDailyTest() {
+        return buildDailyTest(LocalDate.now(AppConstants.ZONE));
+    }
+
+    private DailyTest buildDailyTest(LocalDate date) {
         DailyTest test = DailyTest.builder()
                 .title("오늘의 테스트")
                 .description("설명")
                 .content(CONTENT_JSON)
-                .activeDate(LocalDate.now())
+                .activeDate(date)
                 .build();
         ReflectionTestUtils.setField(test, "id", testId);
         return test;

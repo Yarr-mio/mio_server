@@ -1,7 +1,5 @@
 package com.mio.dailytest.controller;
 
-import com.mio.common.error.BusinessException;
-import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import com.mio.dailytest.dto.AnswerSubmitRequest;
 import com.mio.dailytest.dto.DailyTestResultResponse;
@@ -24,26 +22,16 @@ public class DailyTestController {
 
     @GetMapping("/today")
     public ResponseEntity<ApiResponse<DailyTestTodayResponse>> getTodayTest(
-            @RequestHeader("X-User-Id") String userIdStr) {
-        UUID userId = parseUserId(userIdStr);
+            @RequestHeader("X-User-Id") UUID userId) {
         return ResponseEntity.ok(ApiResponse.ok(dailyTestService.getTodayTest(userId)));
     }
 
     @PostMapping("/{testId}/answer")
     public ResponseEntity<ApiResponse<DailyTestResultResponse>> submitAnswer(
-            @RequestHeader("X-User-Id") String userIdStr,
+            @RequestHeader("X-User-Id") UUID userId,
             @PathVariable UUID testId,
             @Valid @RequestBody AnswerSubmitRequest request) {
-        UUID userId = parseUserId(userIdStr);
         DailyTestResultResponse result = dailyTestService.submitAnswer(userId, testId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(result));
-    }
-
-    private UUID parseUserId(String userIdStr) {
-        try {
-            return UUID.fromString(userIdStr);
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
     }
 }
