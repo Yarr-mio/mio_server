@@ -42,6 +42,9 @@ class AuthServiceTest {
     @BeforeEach
     void setUp() {
         lenient().when(kakaoProvider.provider()).thenReturn("kakao");
+        // 탈퇴 유저 해시 체크(findBySocialProviderAndSocialId 1차 호출)에 대한 기본 응답
+        lenient().when(userRepository.findBySocialProviderAndSocialId(any(), any()))
+                .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
                 jwtTokenService, refreshTokenService, refreshTokenRedisRepository
@@ -147,7 +150,6 @@ class AuthServiceTest {
         User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("닉네임")).thenReturn(false);
-        when(userConsentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         SignupCompleteRequest request = new SignupCompleteRequest(
                 "닉네임", "20대", "male",

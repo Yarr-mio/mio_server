@@ -49,17 +49,16 @@ public class AuthController {
 
     @PostMapping("/refresh")
     public ResponseEntity<ApiResponse<TokenRefreshResponse>> refresh(
-            @RequestBody Map<String, String> body) {
-        String refreshToken = body.get("refresh_token");
-        String newAccessToken = refreshTokenService.refresh(refreshToken);
+            @Valid @RequestBody TokenRefreshRequest request) {
+        String newAccessToken = refreshTokenService.refresh(request.refreshToken());
         return ResponseEntity.ok(ApiResponse.ok(new TokenRefreshResponse(newAccessToken, 900)));
     }
 
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Map<String, Boolean>>> logout(
             @AuthenticationPrincipal String userId,
-            @RequestBody Map<String, String> body) {
-        authService.logout(UUID.fromString(userId), body.get("device_id"));
+            @Valid @RequestBody LogoutRequest request) {
+        authService.logout(UUID.fromString(userId), request.deviceId());
         return ResponseEntity.ok(ApiResponse.ok(Map.of("success", true)));
     }
 

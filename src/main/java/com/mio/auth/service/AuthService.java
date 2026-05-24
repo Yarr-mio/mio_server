@@ -18,11 +18,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -47,6 +44,11 @@ public class AuthService {
             userRepository.findByEmailAndSocialProviderNot(socialUser.email(), request.provider())
                     .ifPresent(u -> { throw new BusinessException(ErrorCode.PROVIDER_MISMATCH); });
         }
+
+        // 탈퇴 유저 재가입 차단 — social_id가 SHA-256으로 익명화되므로 해시 값으로 조회
+        userRepository.findBySocialProviderAndSocialId(socialUser.provider(), sha256(socialUser.socialId()))
+                .filter(u -> "DELETED".equals(u.getStatus()))
+                .ifPresent(u -> { throw new BusinessException(ErrorCode.USER_WITHDRAWN); });
 
         // lambda 내에서 변경이 필요하므로 AtomicBoolean 사용 (effectively final 제약 우회)
         AtomicBoolean isNewUser = new AtomicBoolean(false);
@@ -122,14 +124,15 @@ public class AuthService {
 
         user.completeProfile(request.nickname(), request.ageRange(), request.gender());
 
-        request.consents().forEach(item ->
-                userConsentRepository.save(UserConsent.builder()
+        List<UserConsent> consents = request.consents().stream()
+                .map(item -> UserConsent.builder()
                         .user(user)
                         .consentType(item.type())
                         .agreed(item.agreed())
                         .version(item.version())
                         .build())
-        );
+                .toList();
+        userConsentRepository.saveAll(consents);
 
         return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
     }

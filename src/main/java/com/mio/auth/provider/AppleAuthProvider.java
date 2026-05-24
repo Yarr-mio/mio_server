@@ -32,6 +32,7 @@ public class AppleAuthProvider implements SocialAuthProvider {
 
     private final AppleJwksRedisRepository jwksRepository;
     private final ObjectMapper objectMapper;
+    private final RestClient restClient = RestClient.create();
 
     @Override
     public String provider() {
@@ -101,7 +102,7 @@ public class AppleAuthProvider implements SocialAuthProvider {
 
     private String fetchAndCacheJwks() {
         try {
-            String jwks = RestClient.create()
+            String jwks = restClient
                     .get()
                     .uri(appleJwksUrl)
                     .retrieve()
@@ -129,7 +130,7 @@ public class AppleAuthProvider implements SocialAuthProvider {
         if (!"https://appleid.apple.com".equals(claims.getIssuer())) {
             throw new BusinessException(ErrorCode.OAUTH_FAILED);
         }
-        if (!appleAppId.equals(claims.getAudience().iterator().next())) {
+        if (!claims.getAudience().contains(appleAppId)) {
             throw new BusinessException(ErrorCode.OAUTH_FAILED);
         }
     }

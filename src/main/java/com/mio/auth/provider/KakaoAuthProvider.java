@@ -23,6 +23,7 @@ public class KakaoAuthProvider implements SocialAuthProvider {
     private String kakaoApiUrl;
 
     private final ObjectMapper objectMapper;
+    private final RestClient restClient = RestClient.create();
 
     @Override
     public String provider() {
@@ -31,12 +32,11 @@ public class KakaoAuthProvider implements SocialAuthProvider {
 
     @Override
     public SocialUserInfo verify(String accessToken) {
-        RestClient client = RestClient.create();
         Exception lastException = null;
 
         for (int attempt = 0; attempt < MAX_RETRY; attempt++) {
             try {
-                String body = client.get()
+                String body = restClient.get()
                         .uri(kakaoApiUrl + USER_INFO_PATH)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                         .retrieve()
