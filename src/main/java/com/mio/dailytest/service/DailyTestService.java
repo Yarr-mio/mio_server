@@ -13,18 +13,22 @@ import com.mio.dailytest.repository.DailyTestResponseRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.postgresql.util.PSQLException;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class DailyTestService {
+
+    private static final String DUPLICATE_RESPONSE_CONSTRAINT =
+            "daily_test_responses_user_id_daily_test_id_key";
 
     private final DailyTestRepository dailyTestRepository;
     private final DailyTestResponseRepository dailyTestResponseRepository;
@@ -81,7 +85,7 @@ public class DailyTestService {
             DailyTestResponse saved = dailyTestResponseRepository.save(response);
             return new DailyTestResultResponse(saved.getId(), testId, resultSummary);
         } catch (DataIntegrityViolationException e) {
-            if (e.getCause() instanceof PSQLException psql && "23505".equals(psql.getSQLState())) {
+            if (isDuplicateResponseViolation(e)) {
                 throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
             }
             throw e;
@@ -116,9 +120,16 @@ public class DailyTestService {
         }
     }
 
+    private boolean isDuplicateResponseViolation(DataIntegrityViolationException e) {
+        Throwable mostSpecificCause = NestedExceptionUtils.getMostSpecificCause(e);
+        return mostSpecificCause != null
+                && mostSpecificCause.getMessage() != null
+                && mostSpecificCause.getMessage().contains(DUPLICATE_RESPONSE_CONSTRAINT);
+    }
+
     private List<DailyTestTodayResponse.QuestionDto> mapToQuestionDtos(DailyTestContent content) {
         return content.questions().stream()
-                .sorted((a, b) -> Integer.compare(a.order(), b.order()))
+                .sorted(Comparator.comparingInt(DailyTestContent.Question::order))
                 .map(q -> new DailyTestTodayResponse.QuestionDto(
                         q.id(),
                         q.order(),

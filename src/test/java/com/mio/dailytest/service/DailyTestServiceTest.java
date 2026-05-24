@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -182,6 +183,50 @@ class DailyTestServiceTest {
 
         assertThat(result.testId()).isEqualTo(testId);
         assertThat(result.resultSummary()).isEqualTo("오늘은 비교적 안정된 하루였네요.");
+    }
+
+    @Test
+    @DisplayName("submitAnswer - unique 제약 위반이면 DAILY_TEST_ALREADY_COMPLETED")
+    void submitAnswer_duplicateConstraint_throwsAlreadyCompleted() {
+        DailyTest test = buildDailyTest();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
+        when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(test));
+        when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
+                .thenReturn(Optional.empty());
+        when(resultEngine.calculate(any(), any())).thenReturn("오늘은 비교적 안정된 하루였네요.");
+        when(dailyTestResponseRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException(
+                        "save failed",
+                        new RuntimeException("daily_test_responses_user_id_daily_test_id_key")
+                ));
+
+        AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
+
+        assertThatThrownBy(() -> service.submitAnswer(userId, testId, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
+    }
+
+    @Test
+    @DisplayName("submitAnswer - 다른 DB 무결성 예외는 그대로 전파")
+    void submitAnswer_otherIntegrityViolation_propagates() {
+        DailyTest test = buildDailyTest();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
+        when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(test));
+        when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
+                .thenReturn(Optional.empty());
+        when(resultEngine.calculate(any(), any())).thenReturn("오늘은 비교적 안정된 하루였네요.");
+        when(dailyTestResponseRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException(
+                        "save failed",
+                        new RuntimeException("other_constraint")
+                ));
+
+        AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
+
+        assertThatThrownBy(() -> service.submitAnswer(userId, testId, request))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     private DailyTest buildDailyTest() {

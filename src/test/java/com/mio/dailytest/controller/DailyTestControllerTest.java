@@ -145,4 +145,34 @@ class DailyTestControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest());
     }
+
+    @Test
+    @DisplayName("POST /v1/daily-test/{testId}/answer - answers null이면 400")
+    void submitAnswer_nullAnswers_returns400() throws Exception {
+        mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
+                        .header("X-User-Id", USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "answers": null
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("POST /v1/daily-test/{testId}/answer - answers value가 blank면 400")
+    void submitAnswer_blankAnswerValue_returns400() throws Exception {
+        mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
+                        .header("X-User-Id", USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "answers": {
+                                    "q1": " "
+                                  }
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
 }

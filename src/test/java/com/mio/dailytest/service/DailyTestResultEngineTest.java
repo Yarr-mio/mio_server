@@ -89,4 +89,17 @@ class DailyTestResultEngineTest {
         String result = engine.calculate(CONTENT, answers);
         assertThat(result).isEqualTo("감정의 기복이 있었던 하루군요.");
     }
+
+    @Test
+    @DisplayName("경계값 8점 → 힘든 하루 (hard 하한)")
+    void calculate_boundary8_returnsHardMessage() {
+        DailyTestContent thresholdContent = new DailyTestContent(List.of(
+                new DailyTestContent.Question("q1", 1, "질문1", List.of(
+                        new DailyTestContent.Option("q1_hard", "매우 높음", 8, List.of("high"))
+                ))
+        ));
+        Map<String, String> answers = Map.of("q1", "q1_hard");
+        String result = engine.calculate(thresholdContent, answers);
+        assertThat(result).isEqualTo("힘든 하루를 보냈군요. 충분히 쉬어요.");
+    }
 }

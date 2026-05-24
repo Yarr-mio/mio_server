@@ -1,5 +1,7 @@
 package com.mio.dailytest.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.util.List;
 import java.util.UUID;
 
@@ -7,6 +9,7 @@ import java.util.UUID;
  * status=pending: testId, title, description, questions 포함
  * status=completed: testId, resultSummary 포함, questions null
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record DailyTestTodayResponse(
         String status,
         UUID testId,
