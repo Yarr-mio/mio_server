@@ -13,6 +13,7 @@ import com.mio.dailytest.repository.DailyTestResponseRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.postgresql.util.PSQLException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,7 +81,10 @@ public class DailyTestService {
             DailyTestResponse saved = dailyTestResponseRepository.save(response);
             return new DailyTestResultResponse(saved.getId(), testId, resultSummary);
         } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
+            if (e.getCause() instanceof PSQLException psql && "23505".equals(psql.getSQLState())) {
+                throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
+            }
+            throw e;
         }
     }
 
