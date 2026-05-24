@@ -60,8 +60,13 @@ public class KakaoAuthProvider implements SocialAuthProvider {
         try {
             JsonNode root = objectMapper.readTree(body);
             String socialId = root.path("id").asText();
+            if (socialId.isBlank()) {
+                throw new BusinessException(ErrorCode.OAUTH_FAILED);
+            }
             String email = root.path("kakao_account").path("email").asText(null);
             return new SocialUserInfo(socialId, email, "kakao");
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
             throw new BusinessException(ErrorCode.OAUTH_FAILED);
         }
