@@ -13,6 +13,7 @@ import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -56,7 +57,10 @@ public class SessionService {
         try {
             return SessionResponse.from(sessionRepository.save(session));
         } catch (DataIntegrityViolationException e) {
-            throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
+            if (isActiveSessionUniqueViolation(e)) {
+                throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
+            }
+            throw e;
         }
     }
 
@@ -139,5 +143,12 @@ public class SessionService {
         if (session.isEnded()) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
+    }
+
+    private boolean isActiveSessionUniqueViolation(DataIntegrityViolationException e) {
+        Throwable mostSpecificCause = NestedExceptionUtils.getMostSpecificCause(e);
+        return mostSpecificCause != null
+                && mostSpecificCause.getMessage() != null
+                && mostSpecificCause.getMessage().contains("uq_sessions_one_active_per_user");
     }
 }

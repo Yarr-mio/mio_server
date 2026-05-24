@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @Service
@@ -42,6 +43,7 @@ public class SessionMessagePersistenceService {
 
         saveMessage(session, user, MessageRole.USER, userContent);
         saveMessage(session, user, MessageRole.ASSISTANT, assistantContent);
+        sessionRepository.incrementMessageCountAndSetLastMessageAt(session.getId(), 2, OffsetDateTime.now());
     }
 
     private void saveMessage(Session session, User user, MessageRole role, String content) {
@@ -55,7 +57,5 @@ public class SessionMessagePersistenceService {
                 .isCrisisFlagged(false)
                 .build();
         messageRepository.save(message);
-        session.incrementMessageCount();
-        sessionRepository.save(session);
     }
 }

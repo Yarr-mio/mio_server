@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -118,6 +119,32 @@ class SessionServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.SESSION_ALREADY_ACTIVE));
+    }
+
+    @Test
+    @DisplayName("활성 세션 unique 제약 위반이면 SESSION_ALREADY_ACTIVE 예외로 변환한다")
+    void createSession_uniqueViolation_throwsBusinessException() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
+        when(sessionRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("uq_sessions_one_active_per_user")));
+
+        assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SESSION_ALREADY_ACTIVE));
+    }
+
+    @Test
+    @DisplayName("다른 DB 무결성 예외는 그대로 전파한다")
+    void createSession_otherIntegrityViolation_propagates() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
+        when(sessionRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("other_constraint")));
+
+        assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

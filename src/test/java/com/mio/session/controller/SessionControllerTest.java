@@ -47,7 +47,7 @@ class SessionControllerTest {
         when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/v1/sessions/active")
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data").doesNotExist());
     }
@@ -61,7 +61,7 @@ class SessionControllerTest {
         when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.of(response));
 
         mockMvc.perform(get("/v1/sessions/active")
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
                 .andExpect(jsonPath("$.data.character_id").value("mio"))
@@ -75,7 +75,7 @@ class SessionControllerTest {
         when(sessionService.createSession(eq(TEST_USER_ID), any())).thenReturn(response);
 
         mockMvc.perform(post("/v1/sessions")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"character_id\":\"mio\"}"))
                 .andExpect(status().isCreated())
@@ -89,7 +89,7 @@ class SessionControllerTest {
         String invalidCharacterId = "x".repeat(51);
 
         mockMvc.perform(post("/v1/sessions")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"character_id\":\"" + invalidCharacterId + "\"}"))
                 .andExpect(status().isBadRequest())
@@ -103,11 +103,21 @@ class SessionControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.ONBOARDING_REQUIRED));
 
         mockMvc.perform(post("/v1/sessions")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"character_id\":\"mio\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("ONBOARDING_REQUIRED"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/sessions - 인증 principal이 없으면 401 반환")
+    void createSession_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"character_id\":\"mio\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 
     @Test
@@ -119,7 +129,7 @@ class SessionControllerTest {
         when(sessionService.endSession(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
 
         mockMvc.perform(post("/v1/sessions/{id}/end", TEST_SESSION_ID)
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("ended"))
                 .andExpect(jsonPath("$.data.summary_status").value("pending"));
@@ -132,7 +142,7 @@ class SessionControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.SESSION_ALREADY_ENDED));
 
         mockMvc.perform(post("/v1/sessions/{id}/end", TEST_SESSION_ID)
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.error.code").value("SESSION_ALREADY_ENDED"));
     }
