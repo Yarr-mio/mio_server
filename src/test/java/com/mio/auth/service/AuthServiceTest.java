@@ -14,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -39,7 +38,6 @@ class AuthServiceTest {
 
     private static final UUID USER_ID = UUID.randomUUID();
     private static final String DEVICE_ID = "device-abc";
-    private static final String TEST_HASH_SALT = "test-jwt-secret-key-minimum-32-chars!!";
 
     @BeforeEach
     void setUp() {
@@ -51,7 +49,6 @@ class AuthServiceTest {
                 List.of(kakaoProvider), userRepository, userConsentRepository,
                 jwtTokenService, refreshTokenService, refreshTokenRedisRepository
         );
-        ReflectionTestUtils.setField(authService, "withdrawalAnonymizationSecret", TEST_HASH_SALT);
     }
 
     // ──────────────── login ────────────────

@@ -13,11 +13,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import org.springframework.beans.factory.annotation.Value;
-
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.UUID;
@@ -28,10 +26,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AuthService {
 
     private static final int JWT_EXPIRY_SECONDS = 900;
-
-    // jwt.secret과 분리 — JWT 키 로테이션 시 기존 탈퇴 데이터 해시값이 깨지지 않도록 독립 관리
-    @Value("${withdrawal.anonymization.secret}")
-    private String withdrawalAnonymizationSecret;
 
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
@@ -52,7 +46,7 @@ public class AuthService {
         }
 
         // 탈퇴 유저 재가입 차단 — social_id가 SHA-256으로 익명화되므로 해시 값으로 조회
-        userRepository.findBySocialProviderAndSocialId(socialUser.provider(), hmacSha256(socialUser.socialId()))
+        userRepository.findBySocialProviderAndSocialId(socialUser.provider(), sha256(socialUser.socialId()))
                 .filter(u -> "DELETED".equals(u.getStatus()))
                 .ifPresent(u -> { throw new BusinessException(ErrorCode.USER_WITHDRAWN); });
 
@@ -160,7 +154,7 @@ public class AuthService {
         refreshTokenService.invalidateAll(userId.toString());
 
         // PII 비식별화 정책 — social_id를 해시로 대체해 재가입 방지 키만 유지
-        String anonymizedSocialId = hmacSha256(user.getSocialId());
+        String anonymizedSocialId = sha256(user.getSocialId());
         user.softDelete(anonymizedSocialId);
 
         return new WithdrawResponse(user.getDeletedAt());
@@ -183,13 +177,12 @@ public class AuthService {
         if ("DELETED".equals(user.getStatus())) throw new BusinessException(ErrorCode.USER_WITHDRAWN);
     }
 
-    // 솔트 없는 SHA-256은 레인보우 테이블에 취약 — HMAC-SHA256으로 서버 시크릿을 솔트로 사용
-    private String hmacSha256(String input) {
+    private static String sha256(String input) {
         try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(withdrawalAnonymizationSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            return HexFormat.of().formatHex(mac.doFinal(input.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
+            byte[] hash = MessageDigest.getInstance("SHA-256")
+                    .digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
     }

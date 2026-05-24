@@ -80,10 +80,6 @@ apple:
   jwks-url: ${APPLE_JWKS_URL:https://appleid.apple.com/auth/keys}
   app-id: ${APPLE_APP_ID}
 
-withdrawal:
-  anonymization:
-    secret: ${WITHDRAWAL_ANONYMIZATION_SECRET}
-
 logging:
   level:
     com.mio: INFO
