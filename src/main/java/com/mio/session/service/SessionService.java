@@ -2,23 +2,24 @@ package com.mio.session.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mio.common.crypto.MessageEncryptor;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
-import com.mio.session.domain.Message;
 import com.mio.session.domain.Session;
+import com.mio.session.domain.SessionStatus;
 import com.mio.session.dto.*;
-import com.mio.session.repository.MessageRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -26,9 +27,8 @@ import java.util.UUID;
 public class SessionService {
 
     private final SessionRepository sessionRepository;
-    private final MessageRepository messageRepository;
     private final UserRepository userRepository;
-    private final MessageEncryptor messageEncryptor;
+    private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ObjectMapper objectMapper;
 
     @Transactional
@@ -44,28 +44,35 @@ public class SessionService {
                 ? request.characterId()
                 : user.getPreferredCharacterId();
 
+        if (sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)) {
+            throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
+        }
+
         Session session = Session.builder()
                 .user(user)
                 .characterId(characterId)
                 .build();
 
-        return SessionResponse.from(sessionRepository.save(session));
+        try {
+            return SessionResponse.from(sessionRepository.save(session));
+        } catch (DataIntegrityViolationException e) {
+            throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
+        }
     }
 
     @Transactional(readOnly = true)
-    public ActiveSessionResponse getActiveSession(UUID userId) {
-        return sessionRepository.findByUser_IdAndStatus(userId, "active")
-                .map(ActiveSessionResponse::from)
-                .orElse(null);
+    public Optional<ActiveSessionResponse> getActiveSession(UUID userId) {
+        return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)
+                .map(ActiveSessionResponse::from);
     }
 
     @Transactional
     public EndSessionResponse endSession(UUID userId, UUID sessionId) {
         Session session = findSession(sessionId);
-        if (!java.util.Objects.equals(session.getUser().getId(), userId)) {
+        if (!session.belongsTo(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
-        if ("ended".equals(session.getStatus())) {
+        if (session.isEnded()) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
         session.end();
@@ -76,21 +83,20 @@ public class SessionService {
         try {
             Session session = findSession(sessionId);
             validateSessionOwner(session, userId);
+            User user = findUser(userId);
 
             String inboundMsgId = "msg_in_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
             String outboundMsgId = "msg_out_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            String assistantReply = "안녕하세요! 오늘 어떤 이야기를 나눠볼까요?";
 
             // session_meta 이벤트
             sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now()));
 
-            // 사용자 메시지 저장
-            saveMessage(session, findUser(userId), "user", request.content());
+            // 사용자/어시스턴트 메시지를 한 트랜잭션으로 저장
+            sessionMessagePersistenceService.saveConversation(session.getId(), user.getId(), request.content(), assistantReply);
 
             // stub: delta 이벤트 1개
-            sendEvent(emitter, new SseEventDto.DeltaEvent("안녕하세요! 오늘 어떤 이야기를 나눠볼까요?", outboundMsgId));
-
-            // stub: 어시스턴트 메시지 저장
-            saveMessage(session, findUser(userId), "assistant", "안녕하세요! 오늘 어떤 이야기를 나눠볼까요?");
+            sendEvent(emitter, new SseEventDto.DeltaEvent(assistantReply, outboundMsgId));
 
             // done 이벤트
             sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
@@ -99,21 +105,6 @@ public class SessionService {
         } catch (Exception e) {
             emitter.completeWithError(e);
         }
-    }
-
-    private void saveMessage(Session session, User user, String role, String content) {
-        byte[] ciphertext = messageEncryptor.encrypt(content.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        Message message = Message.builder()
-                .session(session)
-                .user(user)
-                .role(role)
-                .contentCiphertext(ciphertext)
-                .contentDekId(messageEncryptor.dekId())
-                .isCrisisFlagged(false)
-                .build();
-        messageRepository.save(message);
-        session.incrementMessageCount();
-        sessionRepository.save(session);
     }
 
     private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {
@@ -142,10 +133,10 @@ public class SessionService {
     }
 
     private void validateSessionOwner(Session session, UUID userId) {
-        if (!java.util.Objects.equals(session.getUser().getId(), userId)) {
+        if (!Objects.equals(session.getUser().getId(), userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
-        if ("ended".equals(session.getStatus())) {
+        if (session.isEnded()) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
     }

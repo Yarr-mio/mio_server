@@ -18,7 +18,7 @@ public record ActiveSessionResponse(
         return new ActiveSessionResponse(
                 session.getId(),
                 session.getCharacterId(),
-                session.getStatus(),
+                session.getStatus().value(),
                 session.getStartedAt(),
                 session.getLastMessageAt(),
                 session.getMessageCount()

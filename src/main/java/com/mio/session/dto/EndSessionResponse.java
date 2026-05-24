@@ -20,7 +20,7 @@ public record EndSessionResponse(
         }
         return new EndSessionResponse(
                 session.getId(),
-                session.getStatus(),
+                session.getStatus().value(),
                 session.getEndedAt(),
                 session.getMessageCount(),
                 session.durationSeconds(),

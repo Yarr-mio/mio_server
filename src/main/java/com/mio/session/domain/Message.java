@@ -30,7 +30,7 @@ public class Message {
 
     /** user / assistant */
     @Column(name = "role", nullable = false)
-    private String role;
+    private MessageRole role;
 
     @Getter(AccessLevel.NONE)
     @Column(name = "content_ciphertext", nullable = false)

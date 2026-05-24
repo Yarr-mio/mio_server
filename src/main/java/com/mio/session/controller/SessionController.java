@@ -23,13 +23,13 @@ public class SessionController {
     @GetMapping("/active")
     public ResponseEntity<ApiResponse<ActiveSessionResponse>> getActiveSession(
             @RequestHeader("X-User-Id") UUID userId) {
-        return ResponseEntity.ok(ApiResponse.ok(sessionService.getActiveSession(userId)));
+        return ResponseEntity.ok(ApiResponse.ok(sessionService.getActiveSession(userId).orElse(null)));
     }
 
     @PostMapping
     public ResponseEntity<ApiResponse<SessionResponse>> createSession(
             @RequestHeader("X-User-Id") UUID userId,
-            @RequestBody CreateSessionRequest request) {
+            @Valid @RequestBody CreateSessionRequest request) {
         SessionResponse response = sessionService.createSession(userId, request);
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(response));
     }
@@ -40,6 +40,8 @@ public class SessionController {
             @PathVariable UUID sessionId,
             @Valid @RequestBody SendMessageRequest request) {
         SseEmitter emitter = new SseEmitter(60_000L);
+        emitter.onTimeout(emitter::complete);
+        emitter.onError(error -> emitter.complete());
         Thread.ofVirtual().start(() -> sessionService.streamMessage(userId, sessionId, request, emitter));
         return emitter;
     }

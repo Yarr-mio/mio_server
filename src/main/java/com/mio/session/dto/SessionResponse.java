@@ -16,7 +16,7 @@ public record SessionResponse(
         return new SessionResponse(
                 session.getId(),
                 session.getCharacterId(),
-                session.getStatus(),
+                session.getStatus().value(),
                 session.getStartedAt()
         );
     }

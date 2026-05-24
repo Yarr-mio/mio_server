@@ -18,6 +18,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -43,7 +44,7 @@ class SessionControllerTest {
     @Test
     @DisplayName("GET /v1/sessions/active - 활성 세션 없으면 data: null 반환")
     void getActiveSession_noSession_returnsNullData() throws Exception {
-        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(null);
+        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.empty());
 
         mockMvc.perform(get("/v1/sessions/active")
                         .header("X-User-Id", TEST_USER_ID.toString()))
@@ -57,7 +58,7 @@ class SessionControllerTest {
         ActiveSessionResponse response = new ActiveSessionResponse(
                 TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 0
         );
-        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
+        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.of(response));
 
         mockMvc.perform(get("/v1/sessions/active")
                         .header("X-User-Id", TEST_USER_ID.toString()))
@@ -80,6 +81,19 @@ class SessionControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
                 .andExpect(jsonPath("$.data.status").value("active"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/sessions - 잘못된 입력이면 400 반환")
+    void createSession_invalidRequest_returns400() throws Exception {
+        String invalidCharacterId = "x".repeat(51);
+
+        mockMvc.perform(post("/v1/sessions")
+                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"character_id\":\"" + invalidCharacterId + "\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
     }
 
     @Test
