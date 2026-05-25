@@ -19,13 +19,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.mockito.junit.jupiter.MockitoSettings;
-import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -36,11 +37,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@MockitoSettings(strictness = Strictness.LENIENT)
 class NotificationServiceTest {
 
     @Mock private UserRepository userRepository;
@@ -56,10 +56,13 @@ class NotificationServiceTest {
     private NotificationService notificationService;
     private UUID userId;
     private User user;
+    private Clock fixedClock;
 
     @BeforeEach
     void setUp() {
-        notificationService = spy(new NotificationService(
+        fixedClock = Clock.fixed(Instant.parse("2026-05-26T00:00:00Z"), ZoneOffset.of("+09:00"));
+        notificationService = new NotificationService(
+                fixedClock,
                 userRepository,
                 deviceTokenRepository,
                 notificationSettingRepository,
@@ -69,8 +72,8 @@ class NotificationServiceTest {
                 stringRedisTemplate,
                 new NotificationMessageMapper(),
                 pushSender
-        ));
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        );
+        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         userId = UUID.randomUUID();
         user = User.builder()
                 .socialProvider("kakao")
@@ -145,12 +148,47 @@ class NotificationServiceTest {
 
         assertThat(response.notificationStatus()).isEqualTo("OPENED");
         assertThat(response.respondedAt()).isNotNull();
+        ArgumentCaptor<ProactiveCareLog> captor = ArgumentCaptor.forClass(ProactiveCareLog.class);
+        verify(proactiveCareLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getNotificationStatus()).isEqualTo("OPENED");
+        assertThat(captor.getValue().getRespondedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("알림 이력 조회는 cursor가 있으면 다음 페이지를 조회한다")
+    void getNotificationHistory_withCursor_readsNextPage() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock);
+        ProactiveCareLog first = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus("SENT")
+                .sentAt(now)
+                .build();
+        ProactiveCareLog second = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("todo_incomplete")
+                .notificationStatus("FAILED")
+                .sentAt(now.minusMinutes(1))
+                .build();
+
+        when(proactiveCareLogRepository.findByIdAndUser_Id(first.getId(), userId)).thenReturn(Optional.of(first));
+        when(proactiveCareLogRepository.findByUser_IdAndSentAtLessThanOrderBySentAtDesc(eq(userId), eq(first.getSentAt()), any(Pageable.class)))
+                .thenReturn(List.of(second));
+
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, first.getId(), 1);
+
+        assertThat(response.items()).hasSize(1);
+        assertThat(response.items().get(0).notificationId()).isEqualTo(second.getId());
+        assertThat(response.hasMore()).isFalse();
+        assertThat(response.nextCursor()).isNull();
     }
 
     @Test
     @DisplayName("5분 주기 작업은 사용자 커스텀 시간에 체크인 리마인더를 발송한다")
     void processScheduledNotifications_sendsDueCheckinReminder() {
-        OffsetDateTime fixedNow = OffsetDateTime.now().withHour(9).withMinute(0).withSecond(0).withNano(0);
+        OffsetDateTime fixedNow = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
         NotificationSetting setting = NotificationSetting.builder()
                 .user(user)
                 .build();
@@ -162,15 +200,17 @@ class NotificationServiceTest {
                 .token("fcm-token")
                 .build();
 
-        doReturn(fixedNow).when(notificationService).currentTime();
-        when(notificationSettingRepository.findAllNotificationAgreed()).thenReturn(List.of(setting));
+        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting))
+        );
         when(valueOperations.get(anyString())).thenReturn(null);
         when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
-        when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndRespondedAtIsNullAndSentAtAfter(eq(userId), anyString(), any()))
+        when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
                 .thenReturn(false);
         when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
         when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), eq("morning"))).thenReturn(false);
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(pushSender.send("fcm-token", "android", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!"))
                 .thenReturn(PushSendResult.SENT);
         when(valueOperations.increment(anyString())).thenReturn(1L);

@@ -47,6 +47,9 @@ public class ProactiveCareLog {
     private String responseAction;
 
     public void markOpened() {
+        if ("OPENED".equals(this.notificationStatus) || this.respondedAt != null) {
+            return;
+        }
         this.notificationStatus = "OPENED";
         this.respondedAt = OffsetDateTime.now();
         this.responseAction = "tapped";

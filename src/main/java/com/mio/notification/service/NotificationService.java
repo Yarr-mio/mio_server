@@ -20,12 +20,15 @@ import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -46,10 +49,12 @@ public class NotificationService {
     private static final int DAILY_SEND_LIMIT = 3;
     private static final int DEFAULT_HISTORY_LIMIT = 20;
     private static final int MAX_HISTORY_LIMIT = 50;
+    private static final int SCHEDULER_BATCH_SIZE = 200;
     private static final Set<String> NEGATIVE_EMOTIONS = Set.of(
             "anxious", "sad", "angry", "ashamed", "numb", "tired", "confused"
     );
 
+    private final Clock clock;
     private final UserRepository userRepository;
     private final DeviceTokenRepository deviceTokenRepository;
     private final NotificationSettingRepository notificationSettingRepository;
@@ -71,7 +76,11 @@ public class NotificationService {
         }
 
         for (DeviceToken token : tokens) {
-            handlePushResult(token, pushSender.send(token.getToken(), token.getPlatform(), title, body));
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            if (result == PushSendResult.TOKEN_EXPIRED || result == PushSendResult.INVALID_TOKEN) {
+                token.invalidate();
+                deviceTokenRepository.save(token);
+            }
         }
     }
 
@@ -107,19 +116,46 @@ public class NotificationService {
         ProactiveCareLog logEntry = proactiveCareLogRepository.findByIdAndUser_Id(notificationId, userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
         logEntry.markOpened();
+        proactiveCareLogRepository.save(logEntry);
         return new NotificationReadResponse(logEntry.getId(), logEntry.getNotificationStatus(), logEntry.getRespondedAt());
     }
 
     public void processScheduledNotifications() {
-        OffsetDateTime now = currentTime().truncatedTo(ChronoUnit.MINUTES);
+        OffsetDateTime now = OffsetDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
         if (now.toLocalTime().isBefore(QUIET_HOURS_END)) {
             return;
         }
 
-        List<NotificationSetting> settings = notificationSettingRepository.findAllNotificationAgreed();
-        for (NotificationSetting setting : settings) {
-            evaluateAndSend(setting, now);
+        Pageable pageable = PageRequest.of(0, SCHEDULER_BATCH_SIZE);
+        Slice<NotificationSetting> batch;
+        do {
+            batch = notificationSettingRepository.findByNotificationAgreeTrue(pageable);
+            for (NotificationSetting setting : batch.getContent()) {
+                evaluateAndSend(setting, now);
+            }
+            pageable = batch.hasNext() ? batch.nextPageable() : Pageable.unpaged();
+        } while (batch.hasNext());
+    }
+
+    public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
+        List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
+        if (tokens.isEmpty()) {
+            return;
         }
+
+        boolean anySucceeded = false;
+        List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
+        for (DeviceToken token : tokens) {
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            if (result == PushSendResult.SENT) {
+                anySucceeded = true;
+            }
+            if (result == PushSendResult.TOKEN_EXPIRED || result == PushSendResult.INVALID_TOKEN) {
+                tokensToInvalidate.add(token.getId());
+            }
+        }
+
+        persistNotificationResult(user.getId(), triggerCode, anySucceeded, tokensToInvalidate, countTowardDailyLimit);
     }
 
     private void evaluateAndSend(NotificationSetting setting, OffsetDateTime now) {
@@ -194,7 +230,7 @@ public class NotificationService {
     }
 
     private boolean shouldSuppressTrigger(UUID userId, String triggerCode, OffsetDateTime now) {
-        return proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndRespondedAtIsNullAndSentAtAfter(
+        return proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(
                 userId,
                 triggerCode,
                 now.minusHours(24)
@@ -218,21 +254,21 @@ public class NotificationService {
     }
 
     @Transactional
-    public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
-        List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
-        if (tokens.isEmpty()) {
-            return;
+    void persistNotificationResult(
+            UUID userId,
+            String triggerCode,
+            boolean anySucceeded,
+            List<UUID> tokensToInvalidate,
+            boolean countTowardDailyLimit
+    ) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        for (UUID tokenId : tokensToInvalidate) {
+            deviceTokenRepository.findById(tokenId).ifPresent(token -> {
+                token.invalidate();
+                deviceTokenRepository.save(token);
+            });
         }
-
-        boolean anySucceeded = false;
-        for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
-            handlePushResult(token, result);
-            if (result == PushSendResult.SENT) {
-                anySucceeded = true;
-            }
-        }
-
         proactiveCareLogRepository.save(
                 ProactiveCareLog.builder()
                         .user(user)
@@ -242,7 +278,7 @@ public class NotificationService {
         );
 
         if (anySucceeded && countTowardDailyLimit) {
-            incrementDailyCount(user.getId(), currentTime());
+            incrementDailyCount(user.getId(), OffsetDateTime.now(clock));
         }
     }
 
@@ -255,13 +291,6 @@ public class NotificationService {
         }
     }
 
-    private void handlePushResult(DeviceToken token, PushSendResult result) {
-        if (result == PushSendResult.TOKEN_EXPIRED || result == PushSendResult.INVALID_TOKEN) {
-            token.invalidate();
-            deviceTokenRepository.save(token);
-        }
-    }
-
     private int normalizeLimit(Integer limit) {
         if (limit == null || limit <= 0) {
             return DEFAULT_HISTORY_LIMIT;
@@ -271,9 +300,5 @@ public class NotificationService {
 
     private String dailyCountKey(UUID userId) {
         return "proactive:" + userId + ":daily_count";
-    }
-
-    OffsetDateTime currentTime() {
-        return OffsetDateTime.now(AppConstants.ZONE);
     }
 }

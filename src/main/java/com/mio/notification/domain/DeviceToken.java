@@ -45,6 +45,7 @@ public class DeviceToken {
 
     public void refreshToken(String newToken) {
         this.token = newToken;
+        this.isValid = true;
     }
 
     public void invalidate() {

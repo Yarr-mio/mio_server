@@ -1,6 +1,8 @@
 package com.mio.notification.controller;
 
 import com.mio.common.PrincipalUtils;
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import com.mio.notification.dto.DeviceTokenRegisterRequest;
 import com.mio.notification.dto.DeviceTokenResponse;
@@ -40,8 +42,11 @@ public class DeviceTokenController {
 
     @DeleteMapping
     public ResponseEntity<ApiResponse<Void>> deleteCurrentDevice(Authentication authentication) {
-        UUID userId = UUID.fromString((String) authentication.getPrincipal());
-        String deviceId = (String) authentication.getCredentials();
+        UUID userId = PrincipalUtils.resolveUserId(authentication);
+        Object credentials = authentication == null ? null : authentication.getCredentials();
+        if (!(credentials instanceof String deviceId) || deviceId.isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
         deviceTokenService.deleteCurrentDevice(userId, deviceId);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }

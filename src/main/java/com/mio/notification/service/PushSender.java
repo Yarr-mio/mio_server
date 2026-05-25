@@ -153,6 +153,7 @@ public class PushSender {
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
+                .timeout(Duration.ofSeconds(10))
                 .POST(HttpRequest.BodyPublishers.ofString(payload))
                 .header("authorization", "bearer " + jwt)
                 .header("apns-topic", apnsBundleId)

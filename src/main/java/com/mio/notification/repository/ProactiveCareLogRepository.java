@@ -13,7 +13,7 @@ public interface ProactiveCareLogRepository extends JpaRepository<ProactiveCareL
 
     Optional<ProactiveCareLog> findByIdAndUser_Id(UUID id, UUID userId);
 
-    boolean existsByUser_IdAndTriggerCodeAndRespondedAtIsNullAndSentAtAfter(
+    boolean existsByUser_IdAndTriggerCodeAndSentAtAfter(
             UUID userId,
             String triggerCode,
             OffsetDateTime sentAt
