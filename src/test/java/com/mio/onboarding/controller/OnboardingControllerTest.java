@@ -5,6 +5,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.common.error.GlobalExceptionHandler;
 import com.mio.onboarding.dto.*;
+import com.mio.auth.service.JwtTokenService;
 import com.mio.onboarding.service.OnboardingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,7 @@ class OnboardingControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private OnboardingService onboardingService;
+    @MockBean private JwtTokenService jwtTokenService;
 
     private static final UUID TEST_USER_ID = UUID.randomUUID();
 
