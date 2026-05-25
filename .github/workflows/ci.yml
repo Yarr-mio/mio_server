@@ -65,6 +65,7 @@ jobs:
           REDIS_PASSWORD: ""
           APPLE_APP_ID: com.example.mio
           APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
+          KAKAO_APP_ID: 1466527
 
       - name: Upload test report
         if: failure()
