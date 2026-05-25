@@ -26,14 +26,18 @@ public class RefreshTokenRedisRepository {
         String tokenKey = TOKEN_KEY.formatted(tokenUuid);
         String userKey = USER_KEY.formatted(userId);
 
+        String infoJson;
         try {
-            redisTemplate.opsForValue().set(tokenKey, objectMapper.writeValueAsString(info), TTL);
+            infoJson = objectMapper.writeValueAsString(info);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("RefreshTokenInfo 직렬화 실패", e);
         }
 
+        // hash 먼저 등록 → 이후 token 키 쓰기가 실패해도 invalidateAll()이 uuid를 인식할 수 있음
+        // 반대 순서면 token은 존재하는데 hash에 없어 invalidateAll()이 누락하는 문제 발생
         redisTemplate.<String, String>opsForHash().put(userKey, deviceId, tokenUuid);
         redisTemplate.expire(userKey, TTL);
+        redisTemplate.opsForValue().set(tokenKey, infoJson, TTL);
     }
 
     public Optional<RefreshTokenInfo> validateToken(String tokenUuid) {

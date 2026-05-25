@@ -65,10 +65,7 @@ jobs:
           REDIS_PASSWORD: ""
           APPLE_APP_ID: com.example.mio
           APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
-          REDIS_PASSWORD: ""
-          APPLE_APP_ID: com.example.mio
-          APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
-          WITHDRAWAL_ANONYMIZATION_SECRET: ci-test-withdrawal-secret-key-32chars!!
+          KAKAO_APP_ID: 0
 
       - name: Upload test report
         if: failure()

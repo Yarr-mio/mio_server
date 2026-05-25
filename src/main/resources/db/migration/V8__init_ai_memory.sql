@@ -1,3 +1,4 @@
+
 -- [v2.4] AI Memory 도메인
 -- cbt_patterns.pattern_type: personalization → self_blame
 -- safety_risk_daily, ai_policy_decisions, memory_embeddings 동일
