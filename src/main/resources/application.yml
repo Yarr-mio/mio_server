@@ -99,6 +99,7 @@ fcm:
   credentials-json: ${FCM_CREDENTIALS_JSON:}
 
 notification:
+  test-endpoint-enabled: true
   cron:
     morning: ${NOTIFICATION_CRON_MORNING:0 0 9 * * *}
     afternoon: ${NOTIFICATION_CRON_AFTERNOON:0 0 12 * * *}

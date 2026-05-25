@@ -5,6 +5,8 @@ import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
 import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
+import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.Notification;
 import io.jsonwebtoken.Jwts;
@@ -37,6 +39,7 @@ public class PushSender {
     private static final String APNS_HOST_PROD = "https://api.push.apple.com";
     private static final String APNS_HOST_SANDBOX = "https://api.sandbox.push.apple.com";
     private static final long JWT_TTL_SECONDS = 3000;
+    private static final String APNS_TOKEN_PATTERN = "[0-9a-fA-F]{64}";
 
     @Value("${apns.key-path:}")
     private String apnsKeyPath;
@@ -117,27 +120,30 @@ public class PushSender {
         }
     }
 
-    public boolean send(String token, String platform, String title, String body) {
+    public PushSendResult send(String token, String platform, String title, String body) {
         try {
             if ("ios".equalsIgnoreCase(platform)) {
-                sendApns(token, title, body);
+                return sendApns(token, title, body);
             } else if ("android".equalsIgnoreCase(platform)) {
-                sendFcm(token, title, body);
+                return sendFcm(token, title, body);
             } else {
                 log.warn("Unknown platform '{}', skipping push", platform);
-                return false;
+                return PushSendResult.SKIPPED;
             }
-            return true;
         } catch (Exception e) {
             log.error("Push send failed for platform={} token={}: {}", platform, maskToken(token), e.getMessage());
-            return false;
+            return PushSendResult.FAILED;
         }
     }
 
-    private void sendApns(String deviceToken, String title, String body) throws Exception {
+    private PushSendResult sendApns(String deviceToken, String title, String body) throws Exception {
         if (!apnsEnabled) {
             log.debug("APNs disabled, skipping send");
-            return;
+            return PushSendResult.SKIPPED;
+        }
+        if (deviceToken == null || !deviceToken.matches(APNS_TOKEN_PATTERN)) {
+            log.warn("APNs token has invalid format: {}", maskToken(deviceToken));
+            return PushSendResult.INVALID_TOKEN;
         }
 
         String host = apnsIsProduction ? APNS_HOST_PROD : APNS_HOST_SANDBOX;
@@ -155,15 +161,24 @@ public class PushSender {
                 .build();
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
+        if (response.statusCode() == 200) {
+            return PushSendResult.SENT;
         }
+
+        log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
+        if (response.statusCode() == 410) {
+            return PushSendResult.TOKEN_EXPIRED;
+        }
+        if (response.statusCode() == 400) {
+            return PushSendResult.INVALID_TOKEN;
+        }
+        return PushSendResult.FAILED;
     }
 
-    private void sendFcm(String fcmToken, String title, String body) throws Exception {
+    private PushSendResult sendFcm(String fcmToken, String title, String body) throws Exception {
         if (!fcmEnabled) {
             log.debug("FCM disabled, skipping send");
-            return;
+            return PushSendResult.SKIPPED;
         }
 
         Message message = Message.builder()
@@ -174,7 +189,16 @@ public class PushSender {
                 .setToken(fcmToken)
                 .build();
 
-        FirebaseMessaging.getInstance().send(message);
+        try {
+            FirebaseMessaging.getInstance().send(message);
+            return PushSendResult.SENT;
+        } catch (FirebaseMessagingException e) {
+            if (e.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
+                log.warn("FCM token expired: {}", maskToken(fcmToken));
+                return PushSendResult.TOKEN_EXPIRED;
+            }
+            throw e;
+        }
     }
 
     private String getOrRefreshApnsJwt() {

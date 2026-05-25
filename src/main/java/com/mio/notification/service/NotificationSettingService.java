@@ -9,7 +9,6 @@ import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,24 +21,19 @@ public class NotificationSettingService {
     private final NotificationSettingRepository notificationSettingRepository;
     private final UserRepository userRepository;
 
+    @Transactional
     public NotificationSettingResponse getOrCreate(UUID userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        return notificationSettingRepository.findByUser_Id(userId)
-                .map(NotificationSettingResponse::from)
-                .orElseGet(() -> {
-                    try {
-                        NotificationSetting created = notificationSettingRepository.save(
-                                NotificationSetting.builder().user(user).build()
-                        );
-                        return NotificationSettingResponse.from(created);
-                    } catch (DataIntegrityViolationException e) {
-                        return notificationSettingRepository.findByUser_Id(userId)
-                                .map(NotificationSettingResponse::from)
-                                .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
-                    }
-                });
+        NotificationSetting setting = notificationSettingRepository.findByUser_Id(userId)
+                .orElseGet(() -> notificationSettingRepository.save(
+                        NotificationSetting.builder()
+                                .user(user)
+                                .build()
+                ));
+
+        return NotificationSettingResponse.from(setting);
     }
 
     @Transactional

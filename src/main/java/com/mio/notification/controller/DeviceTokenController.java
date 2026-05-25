@@ -9,13 +9,14 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/v1/notifications/device-token")
+@RequestMapping({"/v1/user/device-token", "/v1/notifications/device-token"})
 @RequiredArgsConstructor
 public class DeviceTokenController {
 
@@ -34,6 +35,14 @@ public class DeviceTokenController {
             Principal principal,
             @PathVariable UUID tokenId) {
         deviceTokenService.delete(PrincipalUtils.resolveUserId(principal), tokenId);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    @DeleteMapping
+    public ResponseEntity<ApiResponse<Void>> deleteCurrentDevice(Authentication authentication) {
+        UUID userId = UUID.fromString((String) authentication.getPrincipal());
+        String deviceId = (String) authentication.getCredentials();
+        deviceTokenService.deleteCurrentDevice(userId, deviceId);
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 }

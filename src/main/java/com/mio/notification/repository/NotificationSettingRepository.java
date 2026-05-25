@@ -12,6 +12,11 @@ public interface NotificationSettingRepository extends JpaRepository<Notificatio
 
     Optional<NotificationSetting> findByUser_Id(UUID userId);
 
-    @Query("SELECT ns FROM NotificationSetting ns WHERE ns.notificationAgree = true AND ns.checkinEnabled = true")
-    List<NotificationSetting> findAllCheckinEnabled();
+    @Query("""
+            SELECT ns
+            FROM NotificationSetting ns
+            JOIN FETCH ns.user
+            WHERE ns.notificationAgree = true
+            """)
+    List<NotificationSetting> findAllNotificationAgreed();
 }

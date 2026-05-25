@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.security.Principal;
 
 @RestController
-@RequestMapping("/v1/notifications/settings")
+@RequestMapping({"/v1/user/notification-settings", "/v1/notifications/settings"})
 @RequiredArgsConstructor
 public class NotificationSettingController {
 
