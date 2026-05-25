@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
@@ -28,34 +29,37 @@ public class TodoController {
 
     @PostMapping("/generate")
     public ResponseEntity<ApiResponse<List<TodoResponse>>> generate(
-            @RequestHeader("X-User-Id") String userIdStr,
+            Principal principal,
             @Valid @RequestBody TodoGenerateRequest request) {
-        UUID userId = resolveUserId(userIdStr);
+        UUID userId = resolveUserId(principal);
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.ok(todoService.generate(userId, request)));
     }
 
     @GetMapping
     public ResponseEntity<ApiResponse<List<TodoResponse>>> getTodos(
-            @RequestHeader("X-User-Id") String userIdStr,
+            Principal principal,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(required = false) String status) {
-        UUID userId = resolveUserId(userIdStr);
+        UUID userId = resolveUserId(principal);
         return ResponseEntity.ok(ApiResponse.ok(todoService.getTodos(userId, date, status)));
     }
 
     @PostMapping("/{todoId}/checkin")
     public ResponseEntity<ApiResponse<TodoCheckinResponse>> checkin(
-            @RequestHeader("X-User-Id") String userIdStr,
+            Principal principal,
             @PathVariable UUID todoId,
             @Valid @RequestBody TodoCheckinRequest request) {
-        UUID userId = resolveUserId(userIdStr);
+        UUID userId = resolveUserId(principal);
         return ResponseEntity.ok(ApiResponse.ok(todoService.checkin(userId, todoId, request)));
     }
 
-    private UUID resolveUserId(String userIdStr) {
+    private UUID resolveUserId(Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
         try {
-            return UUID.fromString(userIdStr);
+            return UUID.fromString(principal.getName());
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }

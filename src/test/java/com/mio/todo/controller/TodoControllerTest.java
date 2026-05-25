@@ -61,7 +61,7 @@ class TodoControllerTest {
         when(todoService.generate(eq(TEST_USER_ID), any())).thenReturn(responses);
 
         mockMvc.perform(post("/v1/todos/generate")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoGenerateRequest("checkin", null)
@@ -79,7 +79,7 @@ class TodoControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.ONBOARDING_REQUIRED));
 
         mockMvc.perform(post("/v1/todos/generate")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoGenerateRequest("checkin", null)
@@ -92,7 +92,7 @@ class TodoControllerTest {
     @DisplayName("POST /v1/todos/generate - 지원하지 않는 source면 400 반환")
     void generate_invalidSource_returns400() throws Exception {
         mockMvc.perform(post("/v1/todos/generate")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoGenerateRequest("pattern", null)
@@ -110,7 +110,7 @@ class TodoControllerTest {
         when(todoService.getTodos(eq(TEST_USER_ID), any(), any())).thenReturn(responses);
 
         mockMvc.perform(get("/v1/todos")
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data").isArray())
@@ -125,7 +125,7 @@ class TodoControllerTest {
         when(todoService.checkin(eq(TEST_USER_ID), eq(todoId), any())).thenReturn(response);
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoCheckinRequest("completed", 70, 40, "괜찮았어요")
@@ -145,7 +145,7 @@ class TodoControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED));
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoCheckinRequest("completed", 60, 30, "또 해봤어요")
@@ -162,7 +162,7 @@ class TodoControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.TODO_EXPIRED));
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoCheckinRequest("completed", 60, 30, "늦었어요")
@@ -177,7 +177,7 @@ class TodoControllerTest {
         UUID todoId = UUID.randomUUID();
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoCheckinRequest("done", 60, 30, "...")
@@ -194,12 +194,32 @@ class TodoControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.FORBIDDEN));
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new TodoCheckinRequest("completed", 70, 40, "...")
                         )))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/todos/generate - principal 없으면 401 반환")
+    void generate_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/todos/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new TodoGenerateRequest("checkin", null)
+                        )))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/todos - principal 없으면 401 반환")
+    void getTodos_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(get("/v1/todos"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 }
