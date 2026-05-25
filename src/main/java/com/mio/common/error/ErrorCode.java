@@ -44,6 +44,10 @@ public enum ErrorCode {
     DAILY_TEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DAILY_TEST_NOT_FOUND", "오늘의 데일리 테스트가 없습니다."),
     DAILY_TEST_ALREADY_COMPLETED(HttpStatus.CONFLICT, "DAILY_TEST_ALREADY_COMPLETED", "이미 완료한 데일리 테스트입니다."),
 
+    // Todo
+    TODO_NOT_FOUND(HttpStatus.NOT_FOUND, "TODO_NOT_FOUND", "존재하지 않는 할 일입니다."),
+    TODO_ALREADY_COMPLETED(HttpStatus.CONFLICT, "TODO_ALREADY_COMPLETED", "이미 완료 또는 처리된 할 일입니다."),
+
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다.");
 

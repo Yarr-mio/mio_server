@@ -1,6 +1,8 @@
 package com.mio.todo.domain;
 
 import com.mio.checkin.domain.Checkin;
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
 import com.mio.user.domain.User;
 import jakarta.persistence.*;
@@ -74,6 +76,25 @@ public class BehaviorTask {
 
     @Column(name = "completed_at")
     private OffsetDateTime completedAt;
+
+    public void complete(Integer beforeEmotion, Integer afterEmotion, String feedback) {
+        if (!"suggested".equals(this.status)) {
+            throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
+        }
+        this.status = "completed";
+        this.beforeEmotion = beforeEmotion;
+        this.afterEmotion = afterEmotion;
+        this.feedback = feedback;
+        this.completedAt = OffsetDateTime.now();
+    }
+
+    public void skip() {
+        if (!"suggested".equals(this.status)) {
+            throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
+        }
+        this.status = "skipped";
+        this.completedAt = OffsetDateTime.now();
+    }
 
     @PrePersist
     protected void onCreate() {
