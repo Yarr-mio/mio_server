@@ -17,9 +17,10 @@ public enum ErrorCode {
     // Auth
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "UNAUTHORIZED", "인증이 필요합니다."),
     FORBIDDEN(HttpStatus.FORBIDDEN, "FORBIDDEN", "접근 권한이 없습니다."),
-    INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "유효하지 않은 토큰입니다."),
-    EXPIRED_TOKEN(HttpStatus.UNAUTHORIZED, "EXPIRED_TOKEN", "만료된 토큰입니다."),
-    OAUTH_FAILED(HttpStatus.UNAUTHORIZED, "OAUTH_FAILED", "소셜 로그인에 실패했습니다."),
+    INVALID_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_TOKEN_INVALID", "유효하지 않은 토큰입니다."),
+    EXPIRED_TOKEN(HttpStatus.UNAUTHORIZED, "AUTH_TOKEN_EXPIRED", "만료된 토큰입니다."),
+    REFRESH_TOKEN_INVALID(HttpStatus.UNAUTHORIZED, "REFRESH_TOKEN_INVALID", "유효하지 않은 Refresh Token입니다."),
+    OAUTH_FAILED(HttpStatus.UNAUTHORIZED, "OAUTH_VERIFICATION_FAILED", "소셜 로그인에 실패했습니다."),
 
     // User
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다."),
@@ -51,7 +52,15 @@ public enum ErrorCode {
     TODO_EXPIRED(HttpStatus.UNPROCESSABLE_ENTITY, "TODO_EXPIRED", "만료된 할 일은 처리할 수 없습니다."),
 
     // Rate Limit
-    RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다.");
+    RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다."),
+
+    // External
+    UPSTREAM_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE", "외부 서비스가 일시적으로 응답하지 않습니다."),
+    PROVIDER_MISMATCH(HttpStatus.CONFLICT, "PROVIDER_MISMATCH", "동일 이메일로 다른 소셜 계정이 이미 존재합니다."),
+    INVALID_PROVIDER(HttpStatus.BAD_REQUEST, "INVALID_PROVIDER", "지원하지 않는 소셜 로그인 제공자입니다."),
+    SIGNUP_STEP_INVALID(HttpStatus.FORBIDDEN, "SIGNUP_STEP_INVALID", "현재 가입 단계에서 허용되지 않는 요청입니다."),
+    NICKNAME_DUPLICATE(HttpStatus.CONFLICT, "CONFLICT", "이미 사용 중인 닉네임입니다."),
+    CONSENT_REQUIRED(HttpStatus.BAD_REQUEST, "CONSENT_REQUIRED", "필수 약관에 동의해야 합니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

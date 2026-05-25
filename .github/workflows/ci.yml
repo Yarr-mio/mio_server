@@ -62,6 +62,13 @@ jobs:
           JWT_ACCESS_TOKEN_EXPIRE_MS: 900000
           JWT_REFRESH_TOKEN_EXPIRE_MS: 2592000000
           APP_ENCRYPTION_KEY: Y2l0ZXN0a2V5MzJieXRlc2xvbmdrZXlmb3JhZXM=
+          REDIS_PASSWORD: ""
+          APPLE_APP_ID: com.example.mio
+          APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
+          REDIS_PASSWORD: ""
+          APPLE_APP_ID: com.example.mio
+          APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
+          WITHDRAWAL_ANONYMIZATION_SECRET: ci-test-withdrawal-secret-key-32chars!!
 
       - name: Upload test report
         if: failure()

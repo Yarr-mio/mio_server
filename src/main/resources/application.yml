@@ -31,10 +31,13 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
       timeout: 2000ms
 
   jackson:
@@ -72,6 +75,17 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiry-seconds: 900
+
+kakao:
+  api-url: ${KAKAO_API_URL:https://kapi.kakao.com}
+
+apple:
+  jwks-url: ${APPLE_JWKS_URL:https://appleid.apple.com/auth/keys}
+  app-id: ${APPLE_APP_ID}
 
 logging:
   level:

@@ -98,6 +98,25 @@ public class User {
         this.signupStep = "ONBOARDING_COMPLETED";
     }
 
+    public void completeProfile(String nickname, String ageRange, String gender) {
+        this.nickname = nickname;
+        this.ageRange = ageRange;
+        this.gender = gender;
+        this.signupStep = "PROFILE_COMPLETED";
+    }
+
+    public void activate() {
+        this.status = "ACTIVE";
+    }
+
+    public void softDelete(String anonymizedSocialId) {
+        this.socialId = anonymizedSocialId;
+        this.nickname = "탈퇴한 사용자";
+        this.email = null;
+        this.status = "DELETED";
+        this.deletedAt = OffsetDateTime.now();
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();
