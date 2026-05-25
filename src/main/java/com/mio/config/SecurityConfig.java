@@ -24,6 +24,7 @@ public class SecurityConfig {
             "/actuator/health",
             "/v1/auth/**",
             "/v1/onboarding/**",
+            "/v1/todos/**",
             "/api-docs/**",
             "/swagger-ui/**",
             "/swagger-ui.html"
@@ -35,6 +36,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .addFilterBefore(new XUserIdAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         .anyRequest().authenticated())

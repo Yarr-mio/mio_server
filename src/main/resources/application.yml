@@ -40,6 +40,13 @@ spring:
       password: ${REDIS_PASSWORD}
       timeout: 2000ms
 
+  jackson:
+    time-zone: Asia/Seoul
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
+
   threads:
     virtual:
       enabled: true

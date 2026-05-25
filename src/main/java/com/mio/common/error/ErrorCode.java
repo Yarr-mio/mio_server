@@ -37,7 +37,19 @@ public enum ErrorCode {
 
     // Session
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션을 찾을 수 없습니다."),
-    SESSION_ALREADY_ENDED(HttpStatus.CONFLICT, "SESSION_ALREADY_ENDED", "이미 종료된 세션입니다."),
+    SESSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "SESSION_ALREADY_ACTIVE", "이미 진행 중인 활성 세션이 있습니다."),
+    SESSION_ALREADY_ENDED(HttpStatus.GONE, "SESSION_ALREADY_ENDED", "이미 종료된 세션입니다."),
+    LOCKED_BY_SAFETY(HttpStatus.LOCKED, "LOCKED_BY_SAFETY", "보안 정책에 의해 차단된 요청입니다."),
+
+    // Daily Test
+    DAILY_TEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DAILY_TEST_NOT_FOUND", "오늘의 데일리 테스트가 없습니다."),
+    DAILY_TEST_ALREADY_COMPLETED(HttpStatus.CONFLICT, "DAILY_TEST_ALREADY_COMPLETED", "이미 완료한 데일리 테스트입니다."),
+
+    // Todo
+    TODO_NOT_FOUND(HttpStatus.NOT_FOUND, "TODO_NOT_FOUND", "존재하지 않는 할 일입니다."),
+    TODO_ALREADY_COMPLETED(HttpStatus.CONFLICT, "TODO_ALREADY_COMPLETED", "이미 완료 또는 처리된 할 일입니다."),
+    TODO_ALREADY_GENERATED(HttpStatus.CONFLICT, "TODO_ALREADY_GENERATED", "이미 생성된 오늘의 할 일입니다."),
+    TODO_EXPIRED(HttpStatus.UNPROCESSABLE_ENTITY, "TODO_EXPIRED", "만료된 할 일은 처리할 수 없습니다."),
 
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다."),
