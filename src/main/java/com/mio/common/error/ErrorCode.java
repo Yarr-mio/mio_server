@@ -51,6 +51,10 @@ public enum ErrorCode {
     TODO_ALREADY_GENERATED(HttpStatus.CONFLICT, "TODO_ALREADY_GENERATED", "이미 생성된 오늘의 할 일입니다."),
     TODO_EXPIRED(HttpStatus.UNPROCESSABLE_ENTITY, "TODO_EXPIRED", "만료된 할 일은 처리할 수 없습니다."),
 
+    // Notification
+    NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "NOTIFICATION_NOT_FOUND", "알림 설정을 찾을 수 없습니다."),
+    DEVICE_TOKEN_NOT_FOUND(HttpStatus.NOT_FOUND, "DEVICE_TOKEN_NOT_FOUND", "디바이스 토큰을 찾을 수 없습니다."),
+
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다."),
 

@@ -47,6 +47,9 @@ dependencies {
     // OpenAPI / Swagger UI
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
 
+    // Firebase Admin SDK — Android FCM push
+    implementation("com.google.firebase:firebase-admin:9.4.1")
+
     // Lombok
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
