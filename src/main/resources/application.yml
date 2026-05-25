@@ -75,7 +75,7 @@ jwt:
 
 kakao:
   api-url: ${KAKAO_API_URL:https://kapi.kakao.com}
-  app-id: ${KAKAO_APP_ID:1466527}
+  app-id: ${KAKAO_APP_ID}
 
 apple:
   jwks-url: ${APPLE_JWKS_URL:https://appleid.apple.com/auth/keys}
