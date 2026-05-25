@@ -54,7 +54,7 @@ class OnboardingControllerTest {
                 .thenReturn(new OnboardingStepResponse(1));
 
         mockMvc.perform(post("/v1/onboarding/step/1")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new OnboardingStep1Request("anxious", List.of())
@@ -68,7 +68,7 @@ class OnboardingControllerTest {
     @DisplayName("POST /v1/onboarding/step/1 - emotion_state 누락 시 400 반환")
     void submitStep1_blankEmotionState_returns400() throws Exception {
         mockMvc.perform(post("/v1/onboarding/step/1")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"emotion_state\": \"\"}"))
                 .andExpect(status().isBadRequest());
@@ -81,7 +81,7 @@ class OnboardingControllerTest {
                 .thenReturn(new OnboardingStepResponse(2));
 
         mockMvc.perform(post("/v1/onboarding/step/2")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new OnboardingStep2Request(List.of("career", "family"), List.of())
@@ -97,7 +97,7 @@ class OnboardingControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
 
         mockMvc.perform(post("/v1/onboarding/step/2")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new OnboardingStep2Request(List.of("career"), List.of())
@@ -117,7 +117,7 @@ class OnboardingControllerTest {
                 .thenReturn(new OnboardingStep3Response(3, recs));
 
         mockMvc.perform(post("/v1/onboarding/step/3")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new OnboardingStep3Request("empathetic", List.of())
@@ -135,7 +135,7 @@ class OnboardingControllerTest {
                 .thenReturn(new CharacterSelectResponse("mio", "ONBOARDING_COMPLETED"));
 
         mockMvc.perform(post("/v1/onboarding/character")
-                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .principal(() -> TEST_USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(
                                 new CharacterSelectRequest("mio")
@@ -152,9 +152,29 @@ class OnboardingControllerTest {
                 .thenReturn(new OnboardingStatusResponse(2, "PROFILE_COMPLETED", null));
 
         mockMvc.perform(get("/v1/onboarding/status")
-                        .header("X-User-Id", TEST_USER_ID.toString()))
+                        .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.onboarding_step").value(2))
                 .andExpect(jsonPath("$.data.signup_step").value("PROFILE_COMPLETED"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/onboarding/step/1 - principal 없으면 401 반환")
+    void submitStep1_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/onboarding/step/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new OnboardingStep1Request("anxious", List.of())
+                        )))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/onboarding/status - principal 없으면 401 반환")
+    void getStatus_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(get("/v1/onboarding/status"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 }

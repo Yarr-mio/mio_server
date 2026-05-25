@@ -63,7 +63,7 @@ class DailyTestControllerTest {
         when(dailyTestService.getTodayTest(USER_ID)).thenReturn(response);
 
         mockMvc.perform(get("/v1/daily-test/today")
-                        .header("X-User-Id", USER_ID.toString()))
+                        .principal(() -> USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("pending"))
                 .andExpect(jsonPath("$.data.testId").value(TEST_ID.toString()))
@@ -77,7 +77,7 @@ class DailyTestControllerTest {
         when(dailyTestService.getTodayTest(USER_ID)).thenReturn(response);
 
         mockMvc.perform(get("/v1/daily-test/today")
-                        .header("X-User-Id", USER_ID.toString()))
+                        .principal(() -> USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("completed"))
                 .andExpect(jsonPath("$.data.resultSummary").value("안정된 하루였네요."));
@@ -90,7 +90,7 @@ class DailyTestControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.ONBOARDING_REQUIRED));
 
         mockMvc.perform(get("/v1/daily-test/today")
-                        .header("X-User-Id", USER_ID.toString()))
+                        .principal(() -> USER_ID.toString()))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error.code").value("ONBOARDING_REQUIRED"));
     }
@@ -102,7 +102,7 @@ class DailyTestControllerTest {
                 .thenThrow(new BusinessException(ErrorCode.DAILY_TEST_NOT_FOUND));
 
         mockMvc.perform(get("/v1/daily-test/today")
-                        .header("X-User-Id", USER_ID.toString()))
+                        .principal(() -> USER_ID.toString()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("DAILY_TEST_NOT_FOUND"));
     }
@@ -118,7 +118,7 @@ class DailyTestControllerTest {
         AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
 
         mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
-                        .header("X-User-Id", USER_ID.toString())
+                        .principal(() -> USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -135,7 +135,7 @@ class DailyTestControllerTest {
         AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
 
         mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
-                        .header("X-User-Id", USER_ID.toString())
+                        .principal(() -> USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isConflict())
@@ -148,7 +148,7 @@ class DailyTestControllerTest {
         AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of());
 
         mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
-                        .header("X-User-Id", USER_ID.toString())
+                        .principal(() -> USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
@@ -159,7 +159,7 @@ class DailyTestControllerTest {
     @DisplayName("POST /v1/daily-test/{testId}/answer - answers null이면 400")
     void submitAnswer_nullAnswers_returns400() throws Exception {
         mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
-                        .header("X-User-Id", USER_ID.toString())
+                        .principal(() -> USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -174,7 +174,7 @@ class DailyTestControllerTest {
     @DisplayName("POST /v1/daily-test/{testId}/answer - answers value가 blank면 400")
     void submitAnswer_blankAnswerValue_returns400() throws Exception {
         mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
-                        .header("X-User-Id", USER_ID.toString())
+                        .principal(() -> USER_ID.toString())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {
@@ -185,5 +185,23 @@ class DailyTestControllerTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/daily-test/today - principal 없으면 401 반환")
+    void getTodayTest_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(get("/v1/daily-test/today"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/daily-test/{testId}/answer - principal 없으면 401 반환")
+    void submitAnswer_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/daily-test/{testId}/answer", TEST_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new AnswerSubmitRequest(Map.of("q1", "q1_a")))))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 }
