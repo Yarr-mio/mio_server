@@ -2,6 +2,7 @@ package com.mio.todo.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.todo.domain.BehaviorTask;
+import com.mio.todo.domain.TaskStatus;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -36,14 +37,14 @@ public record TodoResponse(
         );
     }
 
-    public static TodoResponse fromWithStatus(BehaviorTask task, String overrideStatus) {
+    public static TodoResponse fromWithStatus(BehaviorTask task, TaskStatus overrideStatus) {
         return new TodoResponse(
                 task.getId(),
                 task.getActionText(),
                 task.getCategory(),
                 task.getDifficulty(),
                 task.getEstimatedMinutes(),
-                overrideStatus,
+                overrideStatus.value(),
                 task.getCreatedAt()
         );
     }

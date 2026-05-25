@@ -6,6 +6,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.repository.SessionRepository;
 import com.mio.todo.domain.BehaviorTask;
+import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoGenerateRequest;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import com.mio.common.AppConstants;
 
@@ -122,6 +124,37 @@ class TodoServiceTest {
     }
 
     @Test
+    @DisplayName("status=expired 조회 시 과거 suggested Todo를 반환한다")
+    void getTodos_statusExpired_returnsExpiredTasks() {
+        OffsetDateTime yesterday = OffsetDateTime.now(AppConstants.ZONE).minusDays(1);
+        BehaviorTask task = buildTaskWithCreatedAt(yesterday);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(List.of(task));
+
+        List<TodoResponse> result = todoService.getTodos(userId, LocalDate.now(AppConstants.ZONE).minusDays(1), "expired");
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).status()).isEqualTo("expired");
+    }
+
+    @Test
+    @DisplayName("status=suggested 조회 시 과거 suggested Todo는 제외된다")
+    void getTodos_statusSuggested_excludesExpiredTasks() {
+        OffsetDateTime yesterday = OffsetDateTime.now(AppConstants.ZONE).minusDays(1);
+        BehaviorTask task = buildTaskWithCreatedAt(yesterday);
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(List.of(task));
+
+        List<TodoResponse> result = todoService.getTodos(userId, LocalDate.now(AppConstants.ZONE).minusDays(1), "suggested");
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
     @DisplayName("completed 처리 후 status와 completedAt이 변경된다")
     void checkin_complete_updatesStatus() {
         UUID todoId = UUID.randomUUID();
@@ -213,6 +246,42 @@ class TodoServiceTest {
     }
 
     @Test
+    @DisplayName("같은 source 컨텍스트의 suggested Todo가 있으면 중복 생성이 차단된다")
+    void generate_duplicateSuggestedTodo_throwsConflict() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(checkinRepository.findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(eq(userId), any()))
+                .thenReturn(Optional.empty());
+        when(behaviorTaskRepository
+                .existsByUser_IdAndGeneratedFromAndSourceCheckinIsNullAndSourceSessionIsNullAndStatusAndCreatedAtBetween(
+                        eq(userId), eq("checkin"), eq(TaskStatus.SUGGESTED), any(), any()
+                ))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> todoService.generate(userId, new TodoGenerateRequest("checkin", null)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.TODO_ALREADY_GENERATED));
+    }
+
+    @Test
+    @DisplayName("중복 생성 유니크 제약 위반이면 TODO_ALREADY_GENERATED 예외로 변환한다")
+    void generate_duplicateUniqueViolation_throwsConflict() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(checkinRepository.findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(eq(userId), any()))
+                .thenReturn(Optional.empty());
+        when(behaviorTaskRepository.saveAll(any()))
+                .thenThrow(new DataIntegrityViolationException(
+                        "save failed",
+                        new RuntimeException("uq_behavior_tasks_suggested_default_per_day")
+                ));
+
+        assertThatThrownBy(() -> todoService.generate(userId, new TodoGenerateRequest("checkin", null)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.TODO_ALREADY_GENERATED));
+    }
+
+    @Test
     @DisplayName("오늘 체크인이 없으면 default 템플릿 1개를 생성한다")
     void generate_noCheckin_usesDefaultTemplate() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
@@ -272,6 +341,24 @@ class TodoServiceTest {
         List<TodoResponse> result = todoService.getTodos(userId, LocalDate.now(AppConstants.ZONE).minusDays(1), null);
 
         assertThat(result.get(0).status()).isEqualTo("expired");
+    }
+
+    @Test
+    @DisplayName("만료된 Todo 체크인 시 TODO_EXPIRED 예외를 발생시킨다")
+    void checkin_expiredTask_throwsTodoExpired() {
+        UUID todoId = UUID.randomUUID();
+        BehaviorTask task = buildTaskWithCreatedAt(OffsetDateTime.now(AppConstants.ZONE).minusDays(1));
+
+        setUserId(completedUser, userId);
+        when(behaviorTaskRepository.findById(todoId)).thenReturn(Optional.of(task));
+
+        assertThatThrownBy(() -> todoService.checkin(
+                userId, todoId,
+                new TodoCheckinRequest("completed", 70, 40, "늦었어요")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.TODO_EXPIRED));
     }
 
     private void setUserId(User user, UUID id) {

@@ -81,6 +81,19 @@ class TodoControllerTest {
     }
 
     @Test
+    @DisplayName("POST /v1/todos/generate - 지원하지 않는 source면 400 반환")
+    void generate_invalidSource_returns400() throws Exception {
+        mockMvc.perform(post("/v1/todos/generate")
+                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new TodoGenerateRequest("pattern", null)
+                        )))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+    }
+
+    @Test
     @DisplayName("GET /v1/todos - 성공 시 200 반환")
     void getTodos_success_returns200() throws Exception {
         List<TodoResponse> responses = List.of(
@@ -131,6 +144,38 @@ class TodoControllerTest {
                         )))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("TODO_ALREADY_COMPLETED"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/todos/{todoId}/checkin - 만료된 Todo 처리 시 422 반환")
+    void checkin_expired_returns422() throws Exception {
+        UUID todoId = UUID.randomUUID();
+        when(todoService.checkin(eq(TEST_USER_ID), eq(todoId), any()))
+                .thenThrow(new BusinessException(ErrorCode.TODO_EXPIRED));
+
+        mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
+                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new TodoCheckinRequest("completed", 60, 30, "늦었어요")
+                        )))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.error.code").value("TODO_EXPIRED"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/todos/{todoId}/checkin - 지원하지 않는 status면 400 반환")
+    void checkin_invalidStatus_returns400() throws Exception {
+        UUID todoId = UUID.randomUUID();
+
+        mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
+                        .header("X-User-Id", TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(
+                                new TodoCheckinRequest("done", 60, 30, "...")
+                        )))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
     }
 
     @Test

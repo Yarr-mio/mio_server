@@ -18,6 +18,8 @@ import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,6 +56,7 @@ public class TodoService {
         String emotionType = checkin != null ? checkin.getEmotionType() : "default";
         List<TodoTemplateProvider.TaskTemplate> templates = templateProvider.getTemplates(emotionType);
         Session session = resolveSession(userId, request);
+        ensureNoSuggestedTodosForToday(userId, request.source(), checkin, session);
 
         List<BehaviorTask> tasks = templates.stream()
                 .map(t -> BehaviorTask.builder()
@@ -68,9 +71,16 @@ public class TodoService {
                         .build())
                 .toList();
 
-        return behaviorTaskRepository.saveAll(tasks).stream()
-                .map(TodoResponse::from)
-                .toList();
+        try {
+            return behaviorTaskRepository.saveAll(tasks).stream()
+                    .map(TodoResponse::from)
+                    .toList();
+        } catch (DataIntegrityViolationException e) {
+            if (isSuggestedTodoDuplicateViolation(e)) {
+                throw new BusinessException(ErrorCode.TODO_ALREADY_GENERATED);
+            }
+            throw e;
+        }
     }
 
     @Transactional(readOnly = true)
@@ -82,22 +92,12 @@ public class TodoService {
         OffsetDateTime from = targetDate.atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
         OffsetDateTime to = targetDate.plusDays(1).atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
         LocalDate today = LocalDate.now(AppConstants.ZONE);
+        TaskStatus requestedStatus = parseStatus(status);
 
-        List<BehaviorTask> tasks;
-        if (status != null) {
-            TaskStatus taskStatus;
-            try {
-                taskStatus = TaskStatus.fromValue(status);
-            } catch (IllegalArgumentException e) {
-                throw new BusinessException(ErrorCode.INVALID_INPUT);
-            }
-            tasks = behaviorTaskRepository.findByUser_IdAndStatusAndCreatedAtBetween(userId, taskStatus, from, to);
-        } else {
-            tasks = behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(userId, from, to);
-        }
-
-        return tasks.stream()
-                .map(t -> isExpired(t, today) ? TodoResponse.fromWithStatus(t, "expired") : TodoResponse.from(t))
+        return behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(userId, from, to).stream()
+                .map(task -> new TaskWithEffectiveStatus(task, effectiveStatus(task, today)))
+                .filter(task -> requestedStatus == null || task.status() == requestedStatus)
+                .map(task -> TodoResponse.fromWithStatus(task.task(), task.status()))
                 .toList();
     }
 
@@ -116,7 +116,7 @@ public class TodoService {
 
         LocalDate today = LocalDate.now(AppConstants.ZONE);
         if (isExpired(task, today)) {
-            throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
+            throw new BusinessException(ErrorCode.TODO_EXPIRED);
         }
 
         if ("completed".equals(request.status())) {
@@ -131,6 +131,47 @@ public class TodoService {
     private boolean isExpired(BehaviorTask task, LocalDate today) {
         return TaskStatus.SUGGESTED == task.getStatus()
                 && task.getCreatedAt().toLocalDate().isBefore(today);
+    }
+
+    private TaskStatus effectiveStatus(BehaviorTask task, LocalDate today) {
+        return isExpired(task, today) ? TaskStatus.EXPIRED : task.getStatus();
+    }
+
+    private TaskStatus parseStatus(String status) {
+        if (status == null) {
+            return null;
+        }
+        try {
+            return TaskStatus.fromValue(status);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    private void ensureNoSuggestedTodosForToday(UUID userId, String source, Checkin checkin, Session session) {
+        LocalDate today = LocalDate.now(AppConstants.ZONE);
+        OffsetDateTime from = today.atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
+        OffsetDateTime to = today.plusDays(1).atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
+
+        boolean exists;
+        if (checkin != null) {
+            exists = behaviorTaskRepository.existsByUser_IdAndGeneratedFromAndSourceCheckin_IdAndStatusAndCreatedAtBetween(
+                    userId, source, checkin.getId(), TaskStatus.SUGGESTED, from, to
+            );
+        } else if (session != null) {
+            exists = behaviorTaskRepository.existsByUser_IdAndGeneratedFromAndSourceSession_IdAndStatusAndCreatedAtBetween(
+                    userId, source, session.getId(), TaskStatus.SUGGESTED, from, to
+            );
+        } else {
+            exists = behaviorTaskRepository
+                    .existsByUser_IdAndGeneratedFromAndSourceCheckinIsNullAndSourceSessionIsNullAndStatusAndCreatedAtBetween(
+                            userId, source, TaskStatus.SUGGESTED, from, to
+                    );
+        }
+
+        if (exists) {
+            throw new BusinessException(ErrorCode.TODO_ALREADY_GENERATED);
+        }
     }
 
     private Checkin resolveCheckin(UUID userId, TodoGenerateRequest request) {
@@ -167,4 +208,13 @@ public class TodoService {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
     }
+
+    private boolean isSuggestedTodoDuplicateViolation(DataIntegrityViolationException e) {
+        Throwable mostSpecificCause = NestedExceptionUtils.getMostSpecificCause(e);
+        return mostSpecificCause != null
+                && mostSpecificCause.getMessage() != null
+                && mostSpecificCause.getMessage().contains("uq_behavior_tasks_suggested_");
+    }
+
+    private record TaskWithEffectiveStatus(BehaviorTask task, TaskStatus status) {}
 }

@@ -47,6 +47,8 @@ public enum ErrorCode {
     // Todo
     TODO_NOT_FOUND(HttpStatus.NOT_FOUND, "TODO_NOT_FOUND", "존재하지 않는 할 일입니다."),
     TODO_ALREADY_COMPLETED(HttpStatus.CONFLICT, "TODO_ALREADY_COMPLETED", "이미 완료 또는 처리된 할 일입니다."),
+    TODO_ALREADY_GENERATED(HttpStatus.CONFLICT, "TODO_ALREADY_GENERATED", "이미 생성된 오늘의 할 일입니다."),
+    TODO_EXPIRED(HttpStatus.UNPROCESSABLE_ENTITY, "TODO_EXPIRED", "만료된 할 일은 처리할 수 없습니다."),
 
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다.");
