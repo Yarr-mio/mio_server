@@ -26,7 +26,7 @@ public record TodoCheckinResponse(
     public static TodoCheckinResponse from(BehaviorTask task) {
         return new TodoCheckinResponse(
                 task.getId(),
-                task.getStatus(),
+                task.getStatus().value(),
                 task.getBeforeEmotion(),
                 task.getAfterEmotion(),
                 task.getFeedback(),

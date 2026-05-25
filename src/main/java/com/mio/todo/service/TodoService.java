@@ -9,6 +9,7 @@ import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
 import com.mio.session.repository.SessionRepository;
 import com.mio.todo.domain.BehaviorTask;
+import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoGenerateRequest;
@@ -84,7 +85,13 @@ public class TodoService {
 
         List<BehaviorTask> tasks;
         if (status != null) {
-            tasks = behaviorTaskRepository.findByUser_IdAndStatusAndCreatedAtBetween(userId, status, from, to);
+            TaskStatus taskStatus;
+            try {
+                taskStatus = TaskStatus.fromValue(status);
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            tasks = behaviorTaskRepository.findByUser_IdAndStatusAndCreatedAtBetween(userId, taskStatus, from, to);
         } else {
             tasks = behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(userId, from, to);
         }
@@ -122,7 +129,7 @@ public class TodoService {
     }
 
     private boolean isExpired(BehaviorTask task, LocalDate today) {
-        return "suggested".equals(task.getStatus())
+        return TaskStatus.SUGGESTED == task.getStatus()
                 && task.getCreatedAt().toLocalDate().isBefore(today);
     }
 

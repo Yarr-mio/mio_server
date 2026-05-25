@@ -1,6 +1,7 @@
 package com.mio.todo.repository;
 
 import com.mio.todo.domain.BehaviorTask;
+import com.mio.todo.domain.TaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.OffsetDateTime;
@@ -14,6 +15,6 @@ public interface BehaviorTaskRepository extends JpaRepository<BehaviorTask, UUID
     );
 
     List<BehaviorTask> findByUser_IdAndStatusAndCreatedAtBetween(
-            UUID userId, String status, OffsetDateTime from, OffsetDateTime to
+            UUID userId, TaskStatus status, OffsetDateTime from, OffsetDateTime to
     );
 }

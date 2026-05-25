@@ -226,6 +226,40 @@ class TodoServiceTest {
     }
 
     @Test
+    @DisplayName("타 유저 체크인 sourceId로 generate 시 FORBIDDEN 예외를 발생시킨다")
+    void generate_checkinSourceId_otherUser_throwsForbidden() {
+        UUID otherCheckinId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(checkinRepository.findByIdAndUser_Id(otherCheckinId, userId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> todoService.generate(
+                userId, new TodoGenerateRequest("checkin", otherCheckinId)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    @DisplayName("타 유저 세션 sourceId로 generate 시 FORBIDDEN 예외를 발생시킨다")
+    void generate_chatSourceId_otherUser_throwsForbidden() {
+        UUID otherSessionId = UUID.randomUUID();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
+        when(sessionRepository.findByIdAndUser_Id(otherSessionId, userId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> todoService.generate(
+                userId, new TodoGenerateRequest("chat", otherSessionId)
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
     @DisplayName("suggested 상태이고 어제 날짜인 Todo는 expired로 응답한다")
     void getTodos_expiredSuggestedTask_returnsExpiredStatus() {
         OffsetDateTime yesterday = OffsetDateTime.now(AppConstants.ZONE).minusDays(1);

@@ -56,10 +56,9 @@ public class BehaviorTask {
     @Column(name = "character_id")
     private String characterId;
 
-    /** suggested / completed / skipped / expired */
     @Column(name = "status", nullable = false)
     @Builder.Default
-    private String status = "suggested";
+    private TaskStatus status = TaskStatus.SUGGESTED;
 
     /** CBT 측정용 0~100 */
     @Column(name = "before_emotion")
@@ -79,12 +78,12 @@ public class BehaviorTask {
     private OffsetDateTime completedAt;
 
     public void complete(Integer beforeEmotion, Integer afterEmotion, String feedback) {
-        if (!"suggested".equals(this.status)) {
+        if (TaskStatus.SUGGESTED != this.status) {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
         validateEmotionRange(beforeEmotion);
         validateEmotionRange(afterEmotion);
-        this.status = "completed";
+        this.status = TaskStatus.COMPLETED;
         this.beforeEmotion = beforeEmotion;
         this.afterEmotion = afterEmotion;
         this.feedback = feedback;
@@ -92,10 +91,10 @@ public class BehaviorTask {
     }
 
     public void skip() {
-        if (!"suggested".equals(this.status)) {
+        if (TaskStatus.SUGGESTED != this.status) {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
-        this.status = "skipped";
+        this.status = TaskStatus.SKIPPED;
         this.completedAt = OffsetDateTime.now(AppConstants.ZONE);
     }
 

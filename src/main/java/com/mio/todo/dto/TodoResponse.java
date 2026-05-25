@@ -31,7 +31,7 @@ public record TodoResponse(
                 task.getCategory(),
                 task.getDifficulty(),
                 task.getEstimatedMinutes(),
-                task.getStatus(),
+                task.getStatus().value(),
                 task.getCreatedAt()
         );
     }
