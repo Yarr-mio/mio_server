@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.security.Principal;
 
 @RestController
-@RequestMapping({"/v1/user/notification-settings", "/v1/notifications/settings"})
+@RequestMapping({"/v1/notifications/settings", "/v1/user/notification-settings"})
 @RequiredArgsConstructor
 public class NotificationSettingController {
 
@@ -24,7 +24,7 @@ public class NotificationSettingController {
         return ResponseEntity.ok(ApiResponse.ok(notificationSettingService.getOrCreate(PrincipalUtils.resolveUserId(principal))));
     }
 
-    @PutMapping
+    @PatchMapping
     public ResponseEntity<ApiResponse<NotificationSettingResponse>> updateSettings(
             Principal principal,
             @Valid @RequestBody NotificationSettingUpdateRequest request) {

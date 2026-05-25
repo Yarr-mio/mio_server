@@ -12,6 +12,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
 import java.util.UUID;
 
 @Service
@@ -41,17 +43,32 @@ public class NotificationSettingService {
         NotificationSetting setting = notificationSettingRepository.findByUser_Id(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
 
+        LocalTime morningTime = parseTime(request.checkinTime() == null ? null : request.checkinTime().morning());
+        LocalTime afternoonTime = parseTime(request.checkinTime() == null ? null : request.checkinTime().afternoon());
+        LocalTime eveningTime = parseTime(request.checkinTime() == null ? null : request.checkinTime().evening());
+
         setting.update(
-                request.notificationAgree(),
+                null,
                 request.checkinEnabled(),
-                request.checkinMorningTime(),
-                request.checkinAfternoonTime(),
-                request.checkinEveningTime(),
+                morningTime,
+                afternoonTime,
+                eveningTime,
                 request.characterEnabled(),
                 request.reportEnabled(),
-                request.todoReminderOn()
+                null
         );
 
         return NotificationSettingResponse.from(setting);
+    }
+
+    private LocalTime parseTime(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return LocalTime.parse(value);
+        } catch (DateTimeParseException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
     }
 }

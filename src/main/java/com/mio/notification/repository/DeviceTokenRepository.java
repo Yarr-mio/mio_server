@@ -12,4 +12,6 @@ public interface DeviceTokenRepository extends JpaRepository<DeviceToken, UUID> 
     List<DeviceToken> findByUser_IdAndIsValidTrue(UUID userId);
 
     Optional<DeviceToken> findByUser_IdAndDeviceId(UUID userId, String deviceId);
+
+    Optional<DeviceToken> findByUser_IdAndToken(UUID userId, String token);
 }

@@ -1,5 +1,6 @@
 package com.mio.common.error;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 
@@ -22,5 +23,5 @@ public record ErrorResponse(
 
     public record ErrorDetail(String code, String message) {}
 
-    public record Meta(String traceId) {}
+    public record Meta(@JsonProperty("trace_id") String traceId) {}
 }

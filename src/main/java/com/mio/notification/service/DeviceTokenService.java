@@ -28,7 +28,7 @@ public class DeviceTokenService {
 
         DeviceToken token = deviceTokenRepository.findByUser_IdAndDeviceId(userId, request.deviceId())
                 .map(existing -> {
-                    existing.refreshToken(request.token());
+                    existing.refreshToken(request.pushToken());
                     return existing;
                 })
                 .orElseGet(() -> deviceTokenRepository.save(
@@ -36,7 +36,7 @@ public class DeviceTokenService {
                                 .user(user)
                                 .deviceId(request.deviceId())
                                 .platform(request.platform())
-                                .token(request.token())
+                                .token(request.pushToken())
                                 .build()
                 ));
 
@@ -44,20 +44,8 @@ public class DeviceTokenService {
     }
 
     @Transactional
-    public void delete(UUID userId, UUID tokenId) {
-        DeviceToken token = deviceTokenRepository.findById(tokenId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.DEVICE_TOKEN_NOT_FOUND));
-
-        if (!token.getUser().getId().equals(userId)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN);
-        }
-
-        token.invalidate();
-    }
-
-    @Transactional
-    public void deleteCurrentDevice(UUID userId, String deviceId) {
-        DeviceToken token = deviceTokenRepository.findByUser_IdAndDeviceId(userId, deviceId)
+    public void deleteByToken(UUID userId, String rawToken) {
+        DeviceToken token = deviceTokenRepository.findByUser_IdAndToken(userId, rawToken)
                 .orElseThrow(() -> new BusinessException(ErrorCode.DEVICE_TOKEN_NOT_FOUND));
         token.invalidate();
     }

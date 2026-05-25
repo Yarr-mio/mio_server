@@ -28,7 +28,9 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
+import java.nio.charset.StandardCharsets;
 import java.time.temporal.ChronoUnit;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -127,8 +129,10 @@ class NotificationServiceTest {
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 1);
 
         assertThat(response.items()).hasSize(1);
+        assertThat(response.items().get(0).title()).isEqualTo("아침 체크인");
+        assertThat(response.items().get(0).body()).isEqualTo("오늘 기분은 어때요? 아침 체크인을 해보세요!");
         assertThat(response.hasMore()).isTrue();
-        assertThat(response.nextCursor()).isEqualTo(first.getId());
+        assertThat(response.nextCursor()).isEqualTo(encodeCursor(first.getId()));
     }
 
     @Test
@@ -177,10 +181,11 @@ class NotificationServiceTest {
         when(proactiveCareLogRepository.findByUser_IdAndSentAtLessThanOrderBySentAtDesc(eq(userId), eq(first.getSentAt()), any(Pageable.class)))
                 .thenReturn(List.of(second));
 
-        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, first.getId(), 1);
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, encodeCursor(first.getId()), 1);
 
         assertThat(response.items()).hasSize(1);
         assertThat(response.items().get(0).notificationId()).isEqualTo(second.getId());
+        assertThat(response.items().get(0).title()).isEqualTo("오늘의 To-do");
         assertThat(response.hasMore()).isFalse();
         assertThat(response.nextCursor()).isNull();
     }
@@ -236,5 +241,11 @@ class NotificationServiceTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    private String encodeCursor(UUID notificationId) {
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(notificationId.toString().getBytes(StandardCharsets.UTF_8));
     }
 }

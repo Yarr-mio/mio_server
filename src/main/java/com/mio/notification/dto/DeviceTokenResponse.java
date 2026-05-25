@@ -1,12 +1,15 @@
 package com.mio.notification.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.notification.domain.DeviceToken;
 
-import java.util.UUID;
-
-public record DeviceTokenResponse(UUID id, String deviceId, String platform) {
+public record DeviceTokenResponse(
+        boolean success,
+        @JsonProperty("device_id") String deviceId,
+        String platform
+) {
 
     public static DeviceTokenResponse from(DeviceToken token) {
-        return new DeviceTokenResponse(token.getId(), token.getDeviceId(), token.getPlatform());
+        return new DeviceTokenResponse(true, token.getDeviceId(), token.getPlatform());
     }
 }

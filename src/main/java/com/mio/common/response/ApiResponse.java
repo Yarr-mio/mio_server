@@ -1,5 +1,6 @@
 package com.mio.common.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 
@@ -18,13 +19,29 @@ public record ApiResponse<T>(
                 .build();
     }
 
-    public static <T> ApiResponse<T> ok(T data, String traceId) {
+    public static <T> ApiResponse<T> ok(T data, Meta meta) {
         return ApiResponse.<T>builder()
                 .success(true)
                 .data(data)
-                .meta(new Meta(traceId))
+                .meta(meta)
                 .build();
     }
 
-    public record Meta(String traceId) {}
+    public static <T> ApiResponse<T> ok(T data, String traceId) {
+        return ok(data, Meta.trace(traceId));
+    }
+
+    public record Meta(
+            @JsonProperty("trace_id") String traceId,
+            @JsonProperty("next_cursor") String nextCursor,
+            @JsonProperty("has_more") Boolean hasMore
+    ) {
+        public static Meta trace(String traceId) {
+            return new Meta(traceId, null, null);
+        }
+
+        public static Meta page(String traceId, String nextCursor, boolean hasMore) {
+            return new Meta(traceId, nextCursor, hasMore);
+        }
+    }
 }

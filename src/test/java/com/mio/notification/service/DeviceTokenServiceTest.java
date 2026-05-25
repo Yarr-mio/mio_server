@@ -51,7 +51,7 @@ class DeviceTokenServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> deviceTokenService.register(userId,
-                new DeviceTokenRegisterRequest("device-1", "ios", "token-abc")))
+                new DeviceTokenRegisterRequest("device-1", "token-abc", "ios", "1.2.0")))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.USER_NOT_FOUND));
@@ -72,10 +72,11 @@ class DeviceTokenServiceTest {
                 .thenReturn(Optional.of(existing));
 
         DeviceTokenResponse response = deviceTokenService.register(userId,
-                new DeviceTokenRegisterRequest("device-1", "ios", "new-token"));
+                new DeviceTokenRegisterRequest("device-1", "new-token", "ios", "1.2.0"));
 
         assertThat(existing.getToken()).isEqualTo("new-token");
         assertThat(response.deviceId()).isEqualTo("device-1");
+        assertThat(response.success()).isTrue();
         verify(deviceTokenRepository, never()).save(any());
     }
 
@@ -95,7 +96,7 @@ class DeviceTokenServiceTest {
         when(deviceTokenRepository.save(any())).thenReturn(saved);
 
         DeviceTokenResponse response = deviceTokenService.register(userId,
-                new DeviceTokenRegisterRequest("device-new", "android", "fcm-token"));
+                new DeviceTokenRegisterRequest("device-new", "fcm-token", "android", "1.2.0"));
 
         assertThat(response.deviceId()).isEqualTo("device-new");
         assertThat(response.platform()).isEqualTo("android");
@@ -103,56 +104,28 @@ class DeviceTokenServiceTest {
     }
 
     @Test
-    @DisplayName("존재하지 않는 tokenId로 delete 시 DEVICE_TOKEN_NOT_FOUND 예외를 발생시킨다")
+    @DisplayName("존재하지 않는 token으로 delete 시 DEVICE_TOKEN_NOT_FOUND 예외를 발생시킨다")
     void delete_tokenNotFound_throwsDeviceTokenNotFound() {
-        UUID tokenId = UUID.randomUUID();
-        when(deviceTokenRepository.findById(tokenId)).thenReturn(Optional.empty());
+        when(deviceTokenRepository.findByUser_IdAndToken(userId, "token-abc")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> deviceTokenService.delete(userId, tokenId))
+        assertThatThrownBy(() -> deviceTokenService.deleteByToken(userId, "token-abc"))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.DEVICE_TOKEN_NOT_FOUND));
     }
 
     @Test
-    @DisplayName("다른 유저의 토큰 삭제 시 FORBIDDEN 예외를 발생시킨다")
-    void delete_otherUserToken_throwsForbidden() {
-        UUID tokenId = UUID.randomUUID();
-        UUID otherUserId = UUID.randomUUID();
-        User otherUser = User.builder()
-                .socialProvider("kakao")
-                .socialId("other-social-id")
-                .privacyConsent(true)
-                .build();
-        setUserId(otherUser, otherUserId);
-
-        DeviceToken token = DeviceToken.builder()
-                .user(otherUser)
-                .deviceId("device-1")
-                .platform("ios")
-                .token("token-abc")
-                .build();
-        when(deviceTokenRepository.findById(tokenId)).thenReturn(Optional.of(token));
-
-        assertThatThrownBy(() -> deviceTokenService.delete(userId, tokenId))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.FORBIDDEN));
-    }
-
-    @Test
     @DisplayName("본인 토큰 삭제 시 invalidate가 호출된다")
     void delete_ownToken_invalidates() {
-        UUID tokenId = UUID.randomUUID();
         DeviceToken token = DeviceToken.builder()
                 .user(user)
                 .deviceId("device-1")
                 .platform("ios")
                 .token("token-abc")
                 .build();
-        when(deviceTokenRepository.findById(tokenId)).thenReturn(Optional.of(token));
+        when(deviceTokenRepository.findByUser_IdAndToken(userId, "token-abc")).thenReturn(Optional.of(token));
 
-        deviceTokenService.delete(userId, tokenId);
+        deviceTokenService.deleteByToken(userId, "token-abc");
 
         assertThat(token.isValid()).isFalse();
     }

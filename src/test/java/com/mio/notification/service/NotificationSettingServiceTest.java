@@ -3,6 +3,7 @@ package com.mio.notification.service;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.notification.domain.NotificationSetting;
+import com.mio.notification.dto.NotificationCheckinTimeUpdateRequest;
 import com.mio.notification.dto.NotificationSettingResponse;
 import com.mio.notification.dto.NotificationSettingUpdateRequest;
 import com.mio.notification.repository.NotificationSettingRepository;
@@ -15,7 +16,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalTime;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -68,8 +68,8 @@ class NotificationSettingServiceTest {
 
         NotificationSettingResponse response = notificationSettingService.getOrCreate(userId);
 
-        assertThat(response.notificationAgree()).isTrue();
         assertThat(response.checkinEnabled()).isTrue();
+        assertThat(response.checkinTime().morning()).isEqualTo("09:00");
         verify(notificationSettingRepository, never()).save(any());
     }
 
@@ -96,7 +96,7 @@ class NotificationSettingServiceTest {
         when(notificationSettingRepository.findByUser_Id(userId)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> notificationSettingService.update(userId,
-                new NotificationSettingUpdateRequest(false, null, null, null, null, null, null, null)))
+                new NotificationSettingUpdateRequest(false, null, null, null)))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.NOTIFICATION_NOT_FOUND));
@@ -111,12 +111,16 @@ class NotificationSettingServiceTest {
 
         when(notificationSettingRepository.findByUser_Id(userId)).thenReturn(Optional.of(setting));
 
-        LocalTime newMorningTime = LocalTime.of(8, 30);
         NotificationSettingResponse response = notificationSettingService.update(userId,
-                new NotificationSettingUpdateRequest(false, null, newMorningTime, null, null, null, null, null));
+                new NotificationSettingUpdateRequest(
+                        false,
+                        new NotificationCheckinTimeUpdateRequest("08:30", null, null),
+                        null,
+                        null
+                ));
 
-        assertThat(response.notificationAgree()).isFalse();
-        assertThat(response.checkinMorningTime()).isEqualTo(newMorningTime);
-        assertThat(response.checkinEnabled()).isTrue();
+        assertThat(response.checkinEnabled()).isFalse();
+        assertThat(response.checkinTime().morning()).isEqualTo("08:30");
+        assertThat(response.characterEnabled()).isTrue();
     }
 }

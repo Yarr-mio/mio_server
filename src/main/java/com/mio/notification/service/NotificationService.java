@@ -34,6 +34,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -85,14 +87,15 @@ public class NotificationService {
     }
 
     @Transactional(readOnly = true)
-    public NotificationHistoryResponse getNotificationHistory(UUID userId, UUID cursor, Integer limit) {
+    public NotificationHistoryResponse getNotificationHistory(UUID userId, String cursor, Integer limit) {
         int pageSize = normalizeLimit(limit);
         List<ProactiveCareLog> logs;
 
         if (cursor == null) {
             logs = proactiveCareLogRepository.findByUser_IdOrderBySentAtDesc(userId, PageRequest.of(0, pageSize + 1));
         } else {
-            ProactiveCareLog cursorLog = proactiveCareLogRepository.findByIdAndUser_Id(cursor, userId)
+            UUID cursorId = decodeCursor(cursor);
+            ProactiveCareLog cursorLog = proactiveCareLogRepository.findByIdAndUser_Id(cursorId, userId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
             logs = proactiveCareLogRepository.findByUser_IdAndSentAtLessThanOrderBySentAtDesc(
                     userId,
@@ -104,9 +107,14 @@ public class NotificationService {
         boolean hasMore = logs.size() > pageSize;
         List<NotificationHistoryItemResponse> items = logs.stream()
                 .limit(pageSize)
-                .map(NotificationHistoryItemResponse::from)
+                .map(log -> NotificationHistoryItemResponse.from(
+                        log,
+                        notificationMessageMapper.messageFor(log.getTriggerCode())
+                ))
                 .toList();
-        UUID nextCursor = hasMore && !items.isEmpty() ? items.get(items.size() - 1).notificationId() : null;
+        String nextCursor = hasMore && !items.isEmpty()
+                ? encodeCursor(items.get(items.size() - 1).notificationId())
+                : null;
 
         return new NotificationHistoryResponse(items, nextCursor, hasMore);
     }
@@ -140,6 +148,7 @@ public class NotificationService {
     public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
+            persistNotificationResult(user.getId(), triggerCode, true, List.of(), countTowardDailyLimit);
             return;
         }
 
@@ -177,7 +186,7 @@ public class NotificationService {
         UUID userId = setting.getUser().getId();
         LocalDate today = now.toLocalDate();
 
-        if (setting.isCharacterEnabled() && hasNegativeEmotionStreak(userId)) {
+        if (setting.isCheckinEnabled() && hasNegativeEmotionStreak(userId)) {
             return "negative_emotion_streak";
         }
         if (setting.isCheckinEnabled()) {
@@ -194,7 +203,10 @@ public class NotificationService {
         if (setting.isReportEnabled() && isWeeklyReportDue(now)) {
             return "report_weekly";
         }
-        if (setting.isTodoReminderOn() && isDue(TODO_REMINDER_TIME, now) && hasIncompleteTodoToday(userId, now)) {
+        if (setting.isCharacterEnabled()
+                && setting.isTodoReminderOn()
+                && isDue(TODO_REMINDER_TIME, now)
+                && hasIncompleteTodoToday(userId, now)) {
             return "todo_incomplete";
         }
         return null;
@@ -300,5 +312,23 @@ public class NotificationService {
 
     private String dailyCountKey(UUID userId) {
         return "proactive:" + userId + ":daily_count";
+    }
+
+    private UUID decodeCursor(String cursor) {
+        try {
+            return UUID.fromString(new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8));
+        } catch (IllegalArgumentException ignored) {
+            try {
+                return UUID.fromString(cursor);
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+        }
+    }
+
+    private String encodeCursor(UUID notificationId) {
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(notificationId.toString().getBytes(StandardCharsets.UTF_8));
     }
 }

@@ -1,24 +1,20 @@
 package com.mio.notification.controller;
 
 import com.mio.common.PrincipalUtils;
-import com.mio.common.error.BusinessException;
-import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import com.mio.notification.dto.DeviceTokenRegisterRequest;
 import com.mio.notification.dto.DeviceTokenResponse;
 import com.mio.notification.service.DeviceTokenService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
-import java.util.UUID;
+import java.util.Map;
 
 @RestController
-@RequestMapping({"/v1/user/device-token", "/v1/notifications/device-token"})
+@RequestMapping({"/v1/notifications/devices", "/v1/user/device-token"})
 @RequiredArgsConstructor
 public class DeviceTokenController {
 
@@ -28,26 +24,14 @@ public class DeviceTokenController {
     public ResponseEntity<ApiResponse<DeviceTokenResponse>> register(
             Principal principal,
             @Valid @RequestBody DeviceTokenRegisterRequest request) {
-        return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(deviceTokenService.register(PrincipalUtils.resolveUserId(principal), request)));
+        return ResponseEntity.ok(ApiResponse.ok(deviceTokenService.register(PrincipalUtils.resolveUserId(principal), request)));
     }
 
-    @DeleteMapping("/{tokenId}")
-    public ResponseEntity<ApiResponse<Void>> delete(
+    @DeleteMapping("/{token}")
+    public ResponseEntity<ApiResponse<Map<String, Boolean>>> delete(
             Principal principal,
-            @PathVariable UUID tokenId) {
-        deviceTokenService.delete(PrincipalUtils.resolveUserId(principal), tokenId);
-        return ResponseEntity.ok(ApiResponse.ok(null));
-    }
-
-    @DeleteMapping
-    public ResponseEntity<ApiResponse<Void>> deleteCurrentDevice(Authentication authentication) {
-        UUID userId = PrincipalUtils.resolveUserId(authentication);
-        Object credentials = authentication == null ? null : authentication.getCredentials();
-        if (!(credentials instanceof String deviceId) || deviceId.isBlank()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        deviceTokenService.deleteCurrentDevice(userId, deviceId);
-        return ResponseEntity.ok(ApiResponse.ok(null));
+            @PathVariable String token) {
+        deviceTokenService.deleteByToken(PrincipalUtils.resolveUserId(principal), token);
+        return ResponseEntity.ok(ApiResponse.ok(Map.of("success", true)));
     }
 }
