@@ -8,7 +8,8 @@ import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoGenerateRequest;
 import com.mio.todo.dto.TodoResponse;
-import com.mio.auth.service.JwtTokenService;
+import com.mio.auth.filter.JwtAuthenticationFilter;
+import com.mio.config.SecurityConfig;
 import com.mio.todo.service.TodoService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,8 @@ import org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfi
 import org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
@@ -33,7 +36,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @WebMvcTest(
         value = TodoController.class,
-        excludeAutoConfiguration = {SecurityAutoConfiguration.class, SecurityFilterAutoConfiguration.class}
+        excludeAutoConfiguration = {SecurityAutoConfiguration.class, SecurityFilterAutoConfiguration.class},
+        excludeFilters = {
+                @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = JwtAuthenticationFilter.class),
+                @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = SecurityConfig.class)
+        }
 )
 @Import(GlobalExceptionHandler.class)
 class TodoControllerTest {
@@ -41,7 +48,6 @@ class TodoControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private TodoService todoService;
-    @MockBean private JwtTokenService jwtTokenService;
 
     private static final UUID TEST_USER_ID = UUID.randomUUID();
 
