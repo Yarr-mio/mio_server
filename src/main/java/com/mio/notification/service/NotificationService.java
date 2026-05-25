@@ -11,7 +11,6 @@ import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.UUID;
@@ -26,9 +25,8 @@ public class NotificationService {
     private final ProactiveCareLogRepository proactiveCareLogRepository;
     private final PushSender pushSender;
 
-    @Transactional
     public void sendTestNotification(UUID userId, String title, String body) {
-        User user = userRepository.findById(userId)
+        userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(userId);
@@ -40,32 +38,26 @@ public class NotificationService {
         for (DeviceToken token : tokens) {
             pushSender.send(token.getToken(), token.getPlatform(), title, body);
         }
-
-        proactiveCareLogRepository.save(
-                ProactiveCareLog.builder()
-                        .user(user)
-                        .triggerCode("test_push")
-                        .notificationStatus("SENT")
-                        .build()
-        );
     }
 
-    @Transactional
     public void sendCheckinReminder(User user, String triggerCode, String title, String body) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
             return;
         }
 
+        boolean anySucceeded = false;
         for (DeviceToken token : tokens) {
-            pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            if (pushSender.send(token.getToken(), token.getPlatform(), title, body)) {
+                anySucceeded = true;
+            }
         }
 
         proactiveCareLogRepository.save(
                 ProactiveCareLog.builder()
                         .user(user)
                         .triggerCode(triggerCode)
-                        .notificationStatus("SENT")
+                        .notificationStatus(anySucceeded ? "SENT" : "FAILED")
                         .build()
         );
     }

@@ -1,7 +1,6 @@
 package com.mio.notification.controller;
 
-import com.mio.common.error.BusinessException;
-import com.mio.common.error.ErrorCode;
+import com.mio.common.PrincipalUtils;
 import com.mio.common.response.ApiResponse;
 import com.mio.notification.dto.DeviceTokenRegisterRequest;
 import com.mio.notification.dto.DeviceTokenResponse;
@@ -26,28 +25,15 @@ public class DeviceTokenController {
     public ResponseEntity<ApiResponse<DeviceTokenResponse>> register(
             Principal principal,
             @Valid @RequestBody DeviceTokenRegisterRequest request) {
-        UUID userId = resolveUserId(principal);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(deviceTokenService.register(userId, request)));
+                .body(ApiResponse.ok(deviceTokenService.register(PrincipalUtils.resolveUserId(principal), request)));
     }
 
     @DeleteMapping("/{tokenId}")
     public ResponseEntity<ApiResponse<Void>> delete(
             Principal principal,
             @PathVariable UUID tokenId) {
-        UUID userId = resolveUserId(principal);
-        deviceTokenService.delete(userId, tokenId);
+        deviceTokenService.delete(PrincipalUtils.resolveUserId(principal), tokenId);
         return ResponseEntity.ok(ApiResponse.ok(null));
-    }
-
-    private UUID resolveUserId(Principal principal) {
-        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        try {
-            return UUID.fromString(principal.getName());
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
     }
 }

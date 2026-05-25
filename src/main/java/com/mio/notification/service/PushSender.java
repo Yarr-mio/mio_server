@@ -1,5 +1,6 @@
 package com.mio.notification.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.FirebaseOptions;
@@ -22,9 +23,11 @@ import java.nio.file.Paths;
 import java.security.KeyFactory;
 import java.security.PrivateKey;
 import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -58,8 +61,10 @@ public class PushSender {
     private boolean fcmEnabled;
 
     private final AtomicReference<CachedJwt> cachedJwt = new AtomicReference<>();
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
             .version(HttpClient.Version.HTTP_2)
+            .connectTimeout(Duration.ofSeconds(10))
             .build();
 
     @PostConstruct
@@ -71,6 +76,10 @@ public class PushSender {
     private void initApns() {
         if (apnsKeyPath == null || apnsKeyPath.isBlank()) {
             log.warn("APNs not configured — APNS_KEY_PATH is empty");
+            return;
+        }
+        if (apnsKeyId.isBlank() || apnsTeamId.isBlank() || apnsBundleId.isBlank()) {
+            log.warn("APNs not configured — APNS_KEY_ID, APNS_TEAM_ID, or APNS_BUNDLE_ID is empty");
             return;
         }
         try {
@@ -108,7 +117,7 @@ public class PushSender {
         }
     }
 
-    public void send(String token, String platform, String title, String body) {
+    public boolean send(String token, String platform, String title, String body) {
         try {
             if ("ios".equalsIgnoreCase(platform)) {
                 sendApns(token, title, body);
@@ -116,9 +125,12 @@ public class PushSender {
                 sendFcm(token, title, body);
             } else {
                 log.warn("Unknown platform '{}', skipping push", platform);
+                return false;
             }
+            return true;
         } catch (Exception e) {
-            log.error("Push send failed for platform={} token={}: {}", platform, token, e.getMessage());
+            log.error("Push send failed for platform={} token={}: {}", platform, maskToken(token), e.getMessage());
+            return false;
         }
     }
 
@@ -144,7 +156,7 @@ public class PushSender {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
-            log.warn("APNs rejected token {}: status={} body={}", deviceToken, response.statusCode(), response.body());
+            log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
         }
     }
 
@@ -185,12 +197,20 @@ public class PushSender {
     }
 
     private String buildApnsPayload(String title, String body) {
-        return "{\"aps\":{\"alert\":{\"title\":\"" + escapeJson(title)
-                + "\",\"body\":\"" + escapeJson(body) + "\"},\"sound\":\"default\"}}";
+        try {
+            Map<String, Object> alert = Map.of("title", title, "body", body);
+            Map<String, Object> aps = Map.of("alert", alert, "sound", "default");
+            return objectMapper.writeValueAsString(Map.of("aps", aps));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to build APNs payload", e);
+        }
     }
 
-    private String escapeJson(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    private String maskToken(String token) {
+        if (token == null || token.length() <= 8) {
+            return "***";
+        }
+        return token.substring(0, 8) + "...";
     }
 
     private record CachedJwt(String jwt, long issuedAt) {}

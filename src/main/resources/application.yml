@@ -98,6 +98,12 @@ apns:
 fcm:
   credentials-json: ${FCM_CREDENTIALS_JSON:}
 
+notification:
+  cron:
+    morning: ${NOTIFICATION_CRON_MORNING:0 0 9 * * *}
+    afternoon: ${NOTIFICATION_CRON_AFTERNOON:0 0 12 * * *}
+    evening: ${NOTIFICATION_CRON_EVENING:0 0 22 * * *}
+
 logging:
   level:
     com.mio: INFO

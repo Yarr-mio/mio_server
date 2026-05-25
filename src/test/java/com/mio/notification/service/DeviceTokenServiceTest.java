@@ -58,7 +58,7 @@ class DeviceTokenServiceTest {
     }
 
     @Test
-    @DisplayName("동일 deviceId가 있으면 토큰을 갱신하고 save를 호출하지 않는다")
+    @DisplayName("동일 deviceId가 있으면 토큰을 갱신하고 save를 호출한다")
     void register_existingDevice_refreshesToken() {
         DeviceToken existing = DeviceToken.builder()
                 .user(user)
@@ -70,13 +70,14 @@ class DeviceTokenServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(deviceTokenRepository.findByUser_IdAndDeviceId(userId, "device-1"))
                 .thenReturn(Optional.of(existing));
+        when(deviceTokenRepository.save(existing)).thenReturn(existing);
 
         DeviceTokenResponse response = deviceTokenService.register(userId,
                 new DeviceTokenRegisterRequest("device-1", "ios", "new-token"));
 
         assertThat(existing.getToken()).isEqualTo("new-token");
         assertThat(response.deviceId()).isEqualTo("device-1");
-        verify(deviceTokenRepository, never()).save(any());
+        verify(deviceTokenRepository).save(existing);
     }
 
     @Test

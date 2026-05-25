@@ -18,17 +18,17 @@ public class CheckinReminderScheduler {
     private final NotificationSettingRepository notificationSettingRepository;
     private final NotificationService notificationService;
 
-    @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${notification.cron.morning:0 0 9 * * *}", zone = "Asia/Seoul")
     public void sendMorningReminder() {
         sendCheckinReminder("checkin_reminder_morning", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!");
     }
 
-    @Scheduled(cron = "0 0 12 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${notification.cron.afternoon:0 0 12 * * *}", zone = "Asia/Seoul")
     public void sendAfternoonReminder() {
         sendCheckinReminder("checkin_reminder_afternoon", "점심 체크인", "오늘 오전은 어떠셨나요? 체크인을 해보세요!");
     }
 
-    @Scheduled(cron = "0 0 22 * * *", zone = "Asia/Seoul")
+    @Scheduled(cron = "${notification.cron.evening:0 0 22 * * *}", zone = "Asia/Seoul")
     public void sendEveningReminder() {
         sendCheckinReminder("checkin_reminder_evening", "저녁 체크인", "오늘 하루 수고 많으셨어요. 저녁 체크인을 해보세요!");
     }
