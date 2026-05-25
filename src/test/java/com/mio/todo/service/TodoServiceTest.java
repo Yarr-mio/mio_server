@@ -20,9 +20,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.mio.common.AppConstants;
+
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -108,7 +109,7 @@ class TodoServiceTest {
     @Test
     @DisplayName("오늘 날짜 필터링으로 getTodos 정상 동작한다")
     void getTodos_today_returnsFilteredList() {
-        BehaviorTask task = buildTaskWithCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        BehaviorTask task = buildTaskWithCreatedAt(OffsetDateTime.now(AppConstants.ZONE));
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
         when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
@@ -124,7 +125,7 @@ class TodoServiceTest {
     @DisplayName("completed 처리 후 status와 completedAt이 변경된다")
     void checkin_complete_updatesStatus() {
         UUID todoId = UUID.randomUUID();
-        BehaviorTask task = buildTaskWithCreatedAt(OffsetDateTime.now(ZoneOffset.UTC));
+        BehaviorTask task = buildTaskWithCreatedAt(OffsetDateTime.now(AppConstants.ZONE));
 
         setUserId(completedUser, userId);
         when(behaviorTaskRepository.findById(todoId)).thenReturn(Optional.of(task));
@@ -227,14 +228,14 @@ class TodoServiceTest {
     @Test
     @DisplayName("suggested 상태이고 어제 날짜인 Todo는 expired로 응답한다")
     void getTodos_expiredSuggestedTask_returnsExpiredStatus() {
-        OffsetDateTime yesterday = OffsetDateTime.now(ZoneOffset.UTC).minusDays(1);
+        OffsetDateTime yesterday = OffsetDateTime.now(AppConstants.ZONE).minusDays(1);
         BehaviorTask task = buildTaskWithCreatedAt(yesterday);
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
         when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
                 .thenReturn(List.of(task));
 
-        List<TodoResponse> result = todoService.getTodos(userId, LocalDate.now(ZoneOffset.UTC).minusDays(1), null);
+        List<TodoResponse> result = todoService.getTodos(userId, LocalDate.now(AppConstants.ZONE).minusDays(1), null);
 
         assertThat(result.get(0).status()).isEqualTo("expired");
     }

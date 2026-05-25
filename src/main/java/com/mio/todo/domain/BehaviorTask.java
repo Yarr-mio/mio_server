@@ -1,6 +1,7 @@
 package com.mio.todo.domain;
 
 import com.mio.checkin.domain.Checkin;
+import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -81,11 +82,13 @@ public class BehaviorTask {
         if (!"suggested".equals(this.status)) {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
+        validateEmotionRange(beforeEmotion);
+        validateEmotionRange(afterEmotion);
         this.status = "completed";
         this.beforeEmotion = beforeEmotion;
         this.afterEmotion = afterEmotion;
         this.feedback = feedback;
-        this.completedAt = OffsetDateTime.now();
+        this.completedAt = OffsetDateTime.now(AppConstants.ZONE);
     }
 
     public void skip() {
@@ -93,11 +96,17 @@ public class BehaviorTask {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
         this.status = "skipped";
-        this.completedAt = OffsetDateTime.now();
+        this.completedAt = OffsetDateTime.now(AppConstants.ZONE);
     }
 
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now();
+        createdAt = OffsetDateTime.now(AppConstants.ZONE);
+    }
+
+    private void validateEmotionRange(Integer value) {
+        if (value != null && (value < 0 || value > 100)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
     }
 }

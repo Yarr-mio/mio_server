@@ -2,6 +2,7 @@ package com.mio.todo.service;
 
 import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.repository.CheckinRepository;
+import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -21,7 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -49,9 +49,9 @@ public class TodoService {
         User user = findUser(userId);
         requireOnboardingComplete(user);
 
-        String emotionType = resolveEmotionType(userId, request);
-        List<TodoTemplateProvider.TaskTemplate> templates = templateProvider.getTemplates(emotionType);
         Checkin checkin = resolveCheckin(userId, request);
+        String emotionType = checkin != null ? checkin.getEmotionType() : "default";
+        List<TodoTemplateProvider.TaskTemplate> templates = templateProvider.getTemplates(emotionType);
         Session session = resolveSession(userId, request);
 
         List<BehaviorTask> tasks = templates.stream()
@@ -77,10 +77,10 @@ public class TodoService {
         User user = findUser(userId);
         requireOnboardingComplete(user);
 
-        LocalDate targetDate = date != null ? date : LocalDate.now(ZoneOffset.UTC);
-        OffsetDateTime from = targetDate.atStartOfDay(ZoneOffset.UTC).toOffsetDateTime();
-        OffsetDateTime to = targetDate.plusDays(1).atStartOfDay(ZoneOffset.UTC).toOffsetDateTime();
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate targetDate = date != null ? date : LocalDate.now(AppConstants.ZONE);
+        OffsetDateTime from = targetDate.atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
+        OffsetDateTime to = targetDate.plusDays(1).atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
+        LocalDate today = LocalDate.now(AppConstants.ZONE);
 
         List<BehaviorTask> tasks;
         if (status != null) {
@@ -107,7 +107,7 @@ public class TodoService {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
 
-        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        LocalDate today = LocalDate.now(AppConstants.ZONE);
         if (isExpired(task, today)) {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
@@ -126,34 +126,16 @@ public class TodoService {
                 && task.getCreatedAt().toLocalDate().isBefore(today);
     }
 
-    private String resolveEmotionType(UUID userId, TodoGenerateRequest request) {
-        if ("checkin".equals(request.source())) {
-            return resolveCheckinEmotion(userId, request.sourceId());
-        }
-        return "default";
-    }
-
-    private String resolveCheckinEmotion(UUID userId, UUID sourceId) {
-        Checkin checkin;
-        if (sourceId != null) {
-            checkin = checkinRepository.findById(sourceId).orElse(null);
-        } else {
-            checkin = checkinRepository
-                    .findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(userId, LocalDate.now(ZoneOffset.UTC))
-                    .orElse(null);
-        }
-        return checkin != null ? checkin.getEmotionType() : "default";
-    }
-
     private Checkin resolveCheckin(UUID userId, TodoGenerateRequest request) {
         if (!"checkin".equals(request.source())) {
             return null;
         }
         if (request.sourceId() != null) {
-            return checkinRepository.findById(request.sourceId()).orElse(null);
+            return checkinRepository.findByIdAndUser_Id(request.sourceId(), userId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
         }
         return checkinRepository
-                .findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(userId, LocalDate.now(ZoneOffset.UTC))
+                .findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(userId, LocalDate.now(AppConstants.ZONE))
                 .orElse(null);
     }
 
@@ -162,7 +144,8 @@ public class TodoService {
             return null;
         }
         if (request.sourceId() != null) {
-            return sessionRepository.findById(request.sourceId()).orElse(null);
+            return sessionRepository.findByIdAndUser_Id(request.sourceId(), userId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
         }
         return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE).orElse(null);
     }

@@ -9,6 +9,8 @@ import java.util.UUID;
 
 public interface CheckinRepository extends JpaRepository<Checkin, UUID> {
 
+    Optional<Checkin> findByIdAndUser_Id(UUID id, UUID userId);
+
     Optional<Checkin> findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(UUID userId, LocalDate date);
 
     Optional<Checkin> findTopByUser_IdOrderByCreatedAtDesc(UUID userId);

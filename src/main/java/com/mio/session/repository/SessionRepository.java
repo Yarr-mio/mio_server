@@ -13,6 +13,8 @@ import java.util.UUID;
 
 public interface SessionRepository extends JpaRepository<Session, UUID> {
 
+    Optional<Session> findByIdAndUser_Id(UUID id, UUID userId);
+
     Optional<Session> findByUser_IdAndStatus(UUID userId, SessionStatus status);
 
     boolean existsByUser_IdAndStatus(UUID userId, SessionStatus status);
