@@ -5,6 +5,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.common.error.GlobalExceptionHandler;
 import com.mio.onboarding.dto.*;
+import com.mio.user.domain.SignupStep;
 import com.mio.auth.filter.JwtAuthenticationFilter;
 import com.mio.config.SecurityConfig;
 import com.mio.onboarding.service.OnboardingService;
@@ -132,7 +133,7 @@ class OnboardingControllerTest {
     @DisplayName("POST /v1/onboarding/character - 성공 시 200 반환")
     void selectCharacter_success_returns200() throws Exception {
         when(onboardingService.selectCharacter(eq(TEST_USER_ID), any()))
-                .thenReturn(new CharacterSelectResponse("mio", "ONBOARDING_COMPLETED"));
+                .thenReturn(new CharacterSelectResponse("mio", SignupStep.ONBOARDING_COMPLETED));
 
         mockMvc.perform(post("/v1/onboarding/character")
                         .principal(() -> TEST_USER_ID.toString())
@@ -149,7 +150,7 @@ class OnboardingControllerTest {
     @DisplayName("GET /v1/onboarding/status - 성공 시 상태 반환")
     void getStatus_success_returnsStatus() throws Exception {
         when(onboardingService.getStatus(TEST_USER_ID))
-                .thenReturn(new OnboardingStatusResponse(2, "PROFILE_COMPLETED", null));
+                .thenReturn(new OnboardingStatusResponse(2, SignupStep.PROFILE_COMPLETED, null));
 
         mockMvc.perform(get("/v1/onboarding/status")
                         .principal(() -> TEST_USER_ID.toString()))

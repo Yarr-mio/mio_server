@@ -98,8 +98,7 @@ public class DailyTestService {
     }
 
     private void checkOnboarding(User user) {
-        String step = user.getSignupStep();
-        if (!"ONBOARDING_COMPLETED".equals(step) && !"COMPLETED".equals(step)) {
+        if (!user.getSignupStep().isOnboardingComplete()) {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
     }
@@ -109,6 +108,8 @@ public class DailyTestService {
             return objectMapper.readValue(contentJson, DailyTestContent.class);
         } catch (JsonProcessingException e) {
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
         }
     }
 

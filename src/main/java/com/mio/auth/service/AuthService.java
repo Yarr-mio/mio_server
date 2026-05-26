@@ -5,6 +5,7 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserConsent;
 import com.mio.user.repository.UserConsentRepository;
@@ -76,7 +77,7 @@ public class AuthService {
                 user.getSocialProvider(), user.getSignupStep());
 
         LoginResponse.UserInfo userInfo = null;
-        if (!isNewUser.get() && "COMPLETED".equals(user.getSignupStep())) {
+        if (!isNewUser.get() && SignupStep.COMPLETED == user.getSignupStep()) {
             userInfo = new LoginResponse.UserInfo(
                     user.getId().toString(),
                     user.getNickname(),
@@ -105,7 +106,7 @@ public class AuthService {
     public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
         User user = findUser(userId);
 
-        if (!"SOCIAL_AUTHENTICATED".equals(user.getSignupStep())) {
+        if (SignupStep.SOCIAL_AUTHENTICATED != user.getSignupStep()) {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 
