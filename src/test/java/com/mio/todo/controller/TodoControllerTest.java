@@ -98,7 +98,7 @@ class TodoControllerTest {
                                 new TodoGenerateRequest("pattern", null)
                         )))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -183,7 +183,7 @@ class TodoControllerTest {
                                 new TodoCheckinRequest("done", 60, 30, "...")
                         )))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test

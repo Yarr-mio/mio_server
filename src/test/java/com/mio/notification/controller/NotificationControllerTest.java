@@ -69,7 +69,7 @@ class NotificationControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"\",\"body\":\"내용\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test

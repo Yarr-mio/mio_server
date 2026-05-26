@@ -109,7 +109,6 @@ public class User {
         this.privacyConsent = privacyConsent;
         this.signupStep = SignupStep.CONSENT_AGREED;
     }
-
     public void completeProfile(String nickname, String ageRange, String gender) {
         this.nickname = nickname;
         this.ageRange = ageRange;
