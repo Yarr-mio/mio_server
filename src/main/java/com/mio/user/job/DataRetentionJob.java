@@ -21,7 +21,7 @@ public class DataRetentionJob {
 
     private final UserRepository userRepository;
 
-    @Scheduled(cron = "0 0 0 * * *")
+    @Scheduled(cron = "0 0 0 * * *", zone = "UTC")
     @Transactional
     public void hardDeleteExpiredUsers() {
         OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(RETENTION_DAYS);
