@@ -52,9 +52,10 @@ public class User {
      * 회원가입 단계 상태머신
      * SOCIAL_AUTHENTICATED → CONSENT_AGREED → PROFILE_COMPLETED → ONBOARDING_COMPLETED → COMPLETED
      */
+    @Enumerated(EnumType.STRING)
     @Column(name = "signup_step", nullable = false)
     @Builder.Default
-    private String signupStep = "SOCIAL_AUTHENTICATED";
+    private SignupStep signupStep = SignupStep.SOCIAL_AUTHENTICATED;
 
     /** 온보딩 진행 단계: 0=미시작, 1=감정상태, 2=고민유형, 3=상담스타일 완료 */
     @Column(name = "onboarding_step", nullable = false)
@@ -96,14 +97,14 @@ public class User {
 
     public void completeOnboarding(String characterId) {
         this.preferredCharacterId = characterId;
-        this.signupStep = "ONBOARDING_COMPLETED";
+        this.signupStep = SignupStep.ONBOARDING_COMPLETED;
     }
 
     public void completeProfile(String nickname, String ageRange, String gender) {
         this.nickname = nickname;
         this.ageRange = ageRange;
         this.gender = gender;
-        this.signupStep = "PROFILE_COMPLETED";
+        this.signupStep = SignupStep.PROFILE_COMPLETED;
     }
 
     public void activate() {

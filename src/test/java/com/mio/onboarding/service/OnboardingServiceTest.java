@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.onboarding.dto.*;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserOnboardingAnswer;
 import com.mio.user.repository.UserOnboardingAnswerRepository;
@@ -201,7 +202,7 @@ class OnboardingServiceTest {
         );
 
         assertThat(response.preferredCharacterId()).isEqualTo("mio");
-        assertThat(response.signupStep()).isEqualTo("ONBOARDING_COMPLETED");
+        assertThat(response.signupStep()).isEqualTo(SignupStep.ONBOARDING_COMPLETED);
     }
 
     @Test

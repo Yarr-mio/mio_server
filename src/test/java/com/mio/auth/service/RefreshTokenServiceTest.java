@@ -4,6 +4,7 @@ import com.mio.auth.redis.RefreshTokenInfo;
 import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,7 +41,7 @@ class RefreshTokenServiceTest {
     @Test
     @DisplayName("issue는 mio_refresh_ 접두사가 붙은 토큰을 반환하고 Redis에 저장한다")
     void issue_storesInRedisAndReturnsPrefixedToken() {
-        String token = refreshTokenService.issue("user-1", "device-1", "kakao", "COMPLETED");
+        String token = refreshTokenService.issue("user-1", "device-1", "kakao", SignupStep.COMPLETED);
 
         assertThat(token).startsWith("mio_refresh_");
         verify(refreshTokenRedisRepository).issueToken(eq("user-1"), eq("device-1"), any(), any());
@@ -50,7 +51,7 @@ class RefreshTokenServiceTest {
     @DisplayName("유효한 refresh 토큰으로 새 access 토큰을 발급한다")
     void refresh_validToken_returnsNewAccessToken() {
         UUID userId = UUID.randomUUID();
-        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", "COMPLETED");
+        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", SignupStep.COMPLETED);
         User activeUser = User.builder()
                 .id(userId)
                 .socialProvider("kakao")
@@ -101,7 +102,7 @@ class RefreshTokenServiceTest {
     @DisplayName("정지된 사용자는 refresh 시 USER_SUSPENDED를 던진다")
     void refresh_suspendedUser_throwsSuspended() {
         UUID userId = UUID.randomUUID();
-        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", "COMPLETED");
+        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", SignupStep.COMPLETED);
         User suspendedUser = User.builder()
                 .id(userId)
                 .socialProvider("kakao")
@@ -123,7 +124,7 @@ class RefreshTokenServiceTest {
     @DisplayName("탈퇴한 사용자는 refresh 시 USER_WITHDRAWN을 던진다")
     void refresh_deletedUser_throwsWithdrawn() {
         UUID userId = UUID.randomUUID();
-        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", "COMPLETED");
+        RefreshTokenInfo info = new RefreshTokenInfo(userId.toString(), "device-1", "kakao", SignupStep.COMPLETED);
         User deletedUser = User.builder()
                 .id(userId)
                 .socialProvider("kakao")
