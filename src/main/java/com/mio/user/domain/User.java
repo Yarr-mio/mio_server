@@ -97,7 +97,12 @@ public class User {
 
     public void completeOnboarding(String characterId) {
         this.preferredCharacterId = characterId;
+        this.onboardingStep = 4;
         this.signupStep = SignupStep.ONBOARDING_COMPLETED;
+    }
+
+    public void changeCharacter(String characterId) {
+        this.preferredCharacterId = characterId;
     }
 
     public void agreeConsent(boolean privacyConsent) {
