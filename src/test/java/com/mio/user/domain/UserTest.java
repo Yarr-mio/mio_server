@@ -27,6 +27,22 @@ class UserTest {
     }
 
     @Test
+    @DisplayName("completeOnboarding은 onboardingStep을 4로 설정한다")
+    void completeOnboarding_setsOnboardingStepFour() {
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("social-id")
+                .privacyConsent(true)
+                .build();
+
+        user.completeOnboarding("mio");
+
+        assertThat(user.getOnboardingStep()).isEqualTo(4);
+        assertThat(user.getPreferredCharacterId()).isEqualTo("mio");
+        assertThat(user.getSignupStep()).isEqualTo(SignupStep.ONBOARDING_COMPLETED);
+    }
+
+    @Test
     @DisplayName("softDelete는 deletedAt을 UTC로 저장하고 상태를 DELETED로 바꾼다")
     void softDelete_setsUtcDeletedAt() {
         User user = User.builder()
