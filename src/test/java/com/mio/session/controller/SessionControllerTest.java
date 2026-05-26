@@ -101,7 +101,7 @@ class SessionControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"character_id\":\"" + invalidCharacterId + "\"}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("INVALID_INPUT"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
