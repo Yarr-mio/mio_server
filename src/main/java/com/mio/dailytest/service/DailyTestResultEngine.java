@@ -1,5 +1,7 @@
 package com.mio.dailytest.service;
 
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
 import com.mio.dailytest.dto.DailyTestContent;
 import org.springframework.stereotype.Component;
 
@@ -21,6 +23,9 @@ public class DailyTestResultEngine {
      * @return result summary 문자열
      */
     public String calculate(DailyTestContent content, Map<String, String> answers) {
+        if (content == null || content.questions() == null || content.questions().isEmpty()) {
+            throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
+        }
         int totalScore = content.questions().stream()
                 .mapToInt(question -> {
                     String selectedOptionId = answers.get(question.id());
