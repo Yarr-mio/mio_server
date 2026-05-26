@@ -22,6 +22,7 @@ import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.domain.Slice;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -30,7 +31,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
@@ -52,6 +52,7 @@ public class NotificationService {
     private static final int DEFAULT_HISTORY_LIMIT = 20;
     private static final int MAX_HISTORY_LIMIT = 50;
     private static final int SCHEDULER_BATCH_SIZE = 200;
+    private static final Sort SCHEDULER_SORT = Sort.by(Sort.Direction.ASC, "id");
     private static final Set<String> NEGATIVE_EMOTIONS = Set.of(
             "anxious", "sad", "angry", "ashamed", "numb", "tired", "confused"
     );
@@ -66,6 +67,7 @@ public class NotificationService {
     private final StringRedisTemplate stringRedisTemplate;
     private final NotificationMessageMapper notificationMessageMapper;
     private final PushSender pushSender;
+    private final NotificationPersistenceService notificationPersistenceService;
 
     public void sendTestNotification(UUID userId, String title, String body) {
         userRepository.findById(userId)
@@ -92,14 +94,13 @@ public class NotificationService {
         List<ProactiveCareLog> logs;
 
         if (cursor == null) {
-            logs = proactiveCareLogRepository.findByUser_IdOrderBySentAtDesc(userId, PageRequest.of(0, pageSize + 1));
+            logs = proactiveCareLogRepository.findPageByUserId(userId, PageRequest.of(0, pageSize + 1));
         } else {
-            UUID cursorId = decodeCursor(cursor);
-            ProactiveCareLog cursorLog = proactiveCareLogRepository.findByIdAndUser_Id(cursorId, userId)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
-            logs = proactiveCareLogRepository.findByUser_IdAndSentAtLessThanOrderBySentAtDesc(
+            NotificationCursor notificationCursor = decodeCursor(userId, cursor);
+            logs = proactiveCareLogRepository.findPageByUserIdAfterCursor(
                     userId,
-                    cursorLog.getSentAt(),
+                    notificationCursor.sentAt(),
+                    notificationCursor.id(),
                     PageRequest.of(0, pageSize + 1)
             );
         }
@@ -113,7 +114,7 @@ public class NotificationService {
                 ))
                 .toList();
         String nextCursor = hasMore && !items.isEmpty()
-                ? encodeCursor(items.get(items.size() - 1).notificationId())
+                ? encodeCursor(items.get(items.size() - 1).sentAt(), items.get(items.size() - 1).notificationId())
                 : null;
 
         return new NotificationHistoryResponse(items, nextCursor, hasMore);
@@ -134,7 +135,7 @@ public class NotificationService {
             return;
         }
 
-        Pageable pageable = PageRequest.of(0, SCHEDULER_BATCH_SIZE);
+        Pageable pageable = PageRequest.of(0, SCHEDULER_BATCH_SIZE, SCHEDULER_SORT);
         Slice<NotificationSetting> batch;
         do {
             batch = notificationSettingRepository.findByNotificationAgreeTrue(pageable);
@@ -148,7 +149,13 @@ public class NotificationService {
     public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
-            persistNotificationResult(user.getId(), triggerCode, true, List.of(), countTowardDailyLimit);
+            notificationPersistenceService.persistNotificationResult(
+                    user.getId(),
+                    triggerCode,
+                    true,
+                    List.of(),
+                    countTowardDailyLimit
+            );
             return;
         }
 
@@ -164,7 +171,13 @@ public class NotificationService {
             }
         }
 
-        persistNotificationResult(user.getId(), triggerCode, anySucceeded, tokensToInvalidate, countTowardDailyLimit);
+        notificationPersistenceService.persistNotificationResult(
+                user.getId(),
+                triggerCode,
+                anySucceeded,
+                tokensToInvalidate,
+                countTowardDailyLimit
+        );
     }
 
     private void evaluateAndSend(NotificationSetting setting, OffsetDateTime now) {
@@ -265,44 +278,6 @@ public class NotificationService {
         return proactiveCareLogRepository.countByUser_IdAndSentAtBetween(userId, from, to) >= DAILY_SEND_LIMIT;
     }
 
-    @Transactional
-    void persistNotificationResult(
-            UUID userId,
-            String triggerCode,
-            boolean anySucceeded,
-            List<UUID> tokensToInvalidate,
-            boolean countTowardDailyLimit
-    ) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
-        for (UUID tokenId : tokensToInvalidate) {
-            deviceTokenRepository.findById(tokenId).ifPresent(token -> {
-                token.invalidate();
-                deviceTokenRepository.save(token);
-            });
-        }
-        proactiveCareLogRepository.save(
-                ProactiveCareLog.builder()
-                        .user(user)
-                        .triggerCode(triggerCode)
-                        .notificationStatus(anySucceeded ? "SENT" : "FAILED")
-                        .build()
-        );
-
-        if (anySucceeded && countTowardDailyLimit) {
-            incrementDailyCount(user.getId(), OffsetDateTime.now(clock));
-        }
-    }
-
-    private void incrementDailyCount(UUID userId, OffsetDateTime now) {
-        String key = dailyCountKey(userId);
-        Long count = stringRedisTemplate.opsForValue().increment(key);
-        if (count != null && count == 1L) {
-            LocalDateTime nextMidnight = now.toLocalDate().plusDays(1).atStartOfDay();
-            stringRedisTemplate.expireAt(key, java.util.Date.from(nextMidnight.atZone(AppConstants.ZONE).toInstant()));
-        }
-    }
-
     private int normalizeLimit(Integer limit) {
         if (limit == null || limit <= 0) {
             return DEFAULT_HISTORY_LIMIT;
@@ -314,21 +289,30 @@ public class NotificationService {
         return "proactive:" + userId + ":daily_count";
     }
 
-    private UUID decodeCursor(String cursor) {
+    private NotificationCursor decodeCursor(UUID userId, String cursor) {
         try {
-            return UUID.fromString(new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8));
+            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+            String[] parts = decoded.split("\\|", 2);
+            if (parts.length != 2) {
+                throw new IllegalArgumentException("Invalid cursor payload");
+            }
+            return new NotificationCursor(OffsetDateTime.parse(parts[0]), UUID.fromString(parts[1]));
         } catch (IllegalArgumentException ignored) {
             try {
-                return UUID.fromString(cursor);
+                ProactiveCareLog legacyCursorLog = proactiveCareLogRepository.findByIdAndUser_Id(UUID.fromString(cursor), userId)
+                        .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
+                return new NotificationCursor(legacyCursorLog.getSentAt(), legacyCursorLog.getId());
             } catch (IllegalArgumentException e) {
                 throw new BusinessException(ErrorCode.INVALID_INPUT);
             }
         }
     }
 
-    private String encodeCursor(UUID notificationId) {
+    private String encodeCursor(OffsetDateTime sentAt, UUID notificationId) {
         return Base64.getUrlEncoder()
                 .withoutPadding()
-                .encodeToString(notificationId.toString().getBytes(StandardCharsets.UTF_8));
+                .encodeToString((sentAt + "|" + notificationId).getBytes(StandardCharsets.UTF_8));
     }
+
+    private record NotificationCursor(OffsetDateTime sentAt, UUID id) {}
 }

@@ -54,6 +54,7 @@ class NotificationServiceTest {
     @Mock private StringRedisTemplate stringRedisTemplate;
     @Mock private ValueOperations<String, String> valueOperations;
     @Mock private PushSender pushSender;
+    @Mock private NotificationPersistenceService notificationPersistenceService;
 
     private NotificationService notificationService;
     private UUID userId;
@@ -73,7 +74,8 @@ class NotificationServiceTest {
                 behaviorTaskRepository,
                 stringRedisTemplate,
                 new NotificationMessageMapper(),
-                pushSender
+                pushSender,
+                notificationPersistenceService
         );
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         userId = UUID.randomUUID();
@@ -123,7 +125,7 @@ class NotificationServiceTest {
                 .sentAt(OffsetDateTime.now().minusMinutes(1))
                 .build();
 
-        when(proactiveCareLogRepository.findByUser_IdOrderBySentAtDesc(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 1);
@@ -132,7 +134,7 @@ class NotificationServiceTest {
         assertThat(response.items().get(0).title()).isEqualTo("아침 체크인");
         assertThat(response.items().get(0).body()).isEqualTo("오늘 기분은 어때요? 아침 체크인을 해보세요!");
         assertThat(response.hasMore()).isTrue();
-        assertThat(response.nextCursor()).isEqualTo(encodeCursor(first.getId()));
+        assertThat(response.nextCursor()).isEqualTo(encodeCursor(first.getSentAt(), first.getId()));
     }
 
     @Test
@@ -177,11 +179,14 @@ class NotificationServiceTest {
                 .sentAt(now.minusMinutes(1))
                 .build();
 
-        when(proactiveCareLogRepository.findByIdAndUser_Id(first.getId(), userId)).thenReturn(Optional.of(first));
-        when(proactiveCareLogRepository.findByUser_IdAndSentAtLessThanOrderBySentAtDesc(eq(userId), eq(first.getSentAt()), any(Pageable.class)))
+        when(proactiveCareLogRepository.findPageByUserIdAfterCursor(eq(userId), eq(first.getSentAt()), eq(first.getId()), any(Pageable.class)))
                 .thenReturn(List.of(second));
 
-        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, encodeCursor(first.getId()), 1);
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(
+                userId,
+                encodeCursor(first.getSentAt(), first.getId()),
+                1
+        );
 
         assertThat(response.items()).hasSize(1);
         assertThat(response.items().get(0).notificationId()).isEqualTo(second.getId());
@@ -215,18 +220,72 @@ class NotificationServiceTest {
         when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
         when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), eq("morning"))).thenReturn(false);
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(pushSender.send("fcm-token", "android", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!"))
                 .thenReturn(PushSendResult.SENT);
-        when(valueOperations.increment(anyString())).thenReturn(1L);
-        when(stringRedisTemplate.expireAt(anyString(), any(java.util.Date.class))).thenReturn(true);
 
         notificationService.processScheduledNotifications();
 
-        ArgumentCaptor<ProactiveCareLog> captor = ArgumentCaptor.forClass(ProactiveCareLog.class);
-        verify(proactiveCareLogRepository).save(captor.capture());
-        assertThat(captor.getValue().getTriggerCode()).isEqualTo("checkin_reminder_morning");
-        assertThat(captor.getValue().getNotificationStatus()).isEqualTo("SENT");
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("checkin_reminder_morning"),
+                eq(true),
+                eq(List.of()),
+                eq(true)
+        );
+    }
+
+    @Test
+    @DisplayName("알림 이력 커서는 동일 sentAt 레코드도 누락 없이 넘긴다")
+    void getNotificationHistory_withSameSentAt_usesCompositeCursor() {
+        OffsetDateTime sentAt = OffsetDateTime.now(fixedClock);
+        UUID firstId = UUID.randomUUID();
+        UUID secondId = UUID.randomUUID();
+        if (firstId.compareTo(secondId) < 0) {
+            UUID tmp = firstId;
+            firstId = secondId;
+            secondId = tmp;
+        }
+
+        ProactiveCareLog first = ProactiveCareLog.builder()
+                .id(firstId)
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus("SENT")
+                .sentAt(sentAt)
+                .build();
+        ProactiveCareLog second = ProactiveCareLog.builder()
+                .id(secondId)
+                .user(user)
+                .triggerCode("checkin_reminder_evening")
+                .notificationStatus("SENT")
+                .sentAt(sentAt)
+                .build();
+
+        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+                .thenReturn(List.of(first, second));
+        when(proactiveCareLogRepository.findPageByUserIdAfterCursor(eq(userId), eq(sentAt), eq(firstId), any(Pageable.class)))
+                .thenReturn(List.of(second));
+
+        NotificationHistoryResponse firstPage = notificationService.getNotificationHistory(userId, null, 1);
+        NotificationHistoryResponse secondPage = notificationService.getNotificationHistory(userId, firstPage.nextCursor(), 1);
+
+        assertThat(firstPage.hasMore()).isTrue();
+        assertThat(secondPage.items()).hasSize(1);
+        assertThat(secondPage.items().get(0).notificationId()).isEqualTo(secondId);
+    }
+
+    @Test
+    @DisplayName("스케줄러 페이지 조회는 안정적인 id 정렬을 사용한다")
+    void processScheduledNotifications_usesStableSort() {
+        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of())
+        );
+
+        notificationService.processScheduledNotifications();
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(notificationSettingRepository).findByNotificationAgreeTrue(pageableCaptor.capture());
+        assertThat(pageableCaptor.getValue().getSort().getOrderFor("id")).isNotNull();
     }
 
     private void setUserId(User u, UUID id) {
@@ -243,9 +302,9 @@ class NotificationServiceTest {
         }
     }
 
-    private String encodeCursor(UUID notificationId) {
+    private String encodeCursor(OffsetDateTime sentAt, UUID notificationId) {
         return Base64.getUrlEncoder()
                 .withoutPadding()
-                .encodeToString(notificationId.toString().getBytes(StandardCharsets.UTF_8));
+                .encodeToString((sentAt + "|" + notificationId).getBytes(StandardCharsets.UTF_8));
     }
 }
