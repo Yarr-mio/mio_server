@@ -66,6 +66,20 @@ public class NotificationSetting {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    public void update(Boolean notificationAgree, Boolean checkinEnabled,
+                       LocalTime checkinMorningTime, LocalTime checkinAfternoonTime,
+                       LocalTime checkinEveningTime, Boolean characterEnabled,
+                       Boolean reportEnabled, Boolean todoReminderOn) {
+        if (notificationAgree != null) this.notificationAgree = notificationAgree;
+        if (checkinEnabled != null) this.checkinEnabled = checkinEnabled;
+        if (checkinMorningTime != null) this.checkinMorningTime = checkinMorningTime;
+        if (checkinAfternoonTime != null) this.checkinAfternoonTime = checkinAfternoonTime;
+        if (checkinEveningTime != null) this.checkinEveningTime = checkinEveningTime;
+        if (characterEnabled != null) this.characterEnabled = characterEnabled;
+        if (reportEnabled != null) this.reportEnabled = reportEnabled;
+        if (todoReminderOn != null) this.todoReminderOn = todoReminderOn;
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();

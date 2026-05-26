@@ -43,6 +43,15 @@ public class DeviceToken {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    public void refreshToken(String newToken) {
+        this.token = newToken;
+        this.isValid = true;
+    }
+
+    public void invalidate() {
+        this.isValid = false;
+    }
+
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now();

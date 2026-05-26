@@ -46,6 +46,15 @@ public class ProactiveCareLog {
     @Column(name = "response_action")
     private String responseAction;
 
+    public void markOpened() {
+        if ("OPENED".equals(this.notificationStatus) || this.respondedAt != null) {
+            return;
+        }
+        this.notificationStatus = "OPENED";
+        this.respondedAt = OffsetDateTime.now();
+        this.responseAction = "tapped";
+    }
+
     @PrePersist
     protected void onCreate() {
         if (sentAt == null) {

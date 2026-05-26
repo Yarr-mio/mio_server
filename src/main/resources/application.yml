@@ -88,6 +88,23 @@ apple:
   jwks-url: ${APPLE_JWKS_URL:https://appleid.apple.com/auth/keys}
   app-id: ${APPLE_APP_ID}
 
+apns:
+  key-path: ${APNS_KEY_PATH:}
+  key-id: ${APNS_KEY_ID:}
+  team-id: ${APNS_TEAM_ID:}
+  bundle-id: ${APNS_BUNDLE_ID:}
+  is-production: ${APNS_IS_PRODUCTION:false}
+
+fcm:
+  credentials-json: ${FCM_CREDENTIALS_JSON:}
+
+notification:
+  test-endpoint-enabled: false
+  cron:
+    morning: ${NOTIFICATION_CRON_MORNING:0 0 9 * * *}
+    afternoon: ${NOTIFICATION_CRON_AFTERNOON:0 0 12 * * *}
+    evening: ${NOTIFICATION_CRON_EVENING:0 0 22 * * *}
+
 logging:
   level:
     com.mio: INFO
