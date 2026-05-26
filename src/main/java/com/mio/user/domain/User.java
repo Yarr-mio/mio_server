@@ -98,6 +98,10 @@ public class User {
         this.signupStep = "ONBOARDING_COMPLETED";
     }
 
+    public void changeCharacter(String characterId) {
+        this.preferredCharacterId = characterId;
+    }
+
     public void completeProfile(String nickname, String ageRange, String gender) {
         this.nickname = nickname;
         this.ageRange = ageRange;
