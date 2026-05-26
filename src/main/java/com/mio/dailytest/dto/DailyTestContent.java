@@ -43,6 +43,11 @@ public record DailyTestContent(List<Question> questions) {
                 throw new IllegalArgumentException("Option text must not be null or blank");
             }
             if (tags != null) {
+                tags.forEach(tag -> {
+                    if (tag == null) {
+                        throw new IllegalArgumentException("Option tags must not contain null elements");
+                    }
+                });
                 tags = List.copyOf(tags);
             }
         }
