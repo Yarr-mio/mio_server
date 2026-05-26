@@ -44,7 +44,7 @@ public enum ErrorCode {
     // Daily Test
     DAILY_TEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DAILY_TEST_NOT_FOUND", "오늘의 데일리 테스트가 없습니다."),
     DAILY_TEST_ALREADY_COMPLETED(HttpStatus.CONFLICT, "DAILY_TEST_ALREADY_COMPLETED", "이미 완료한 데일리 테스트입니다."),
-    INVALID_DAILY_TEST_CONTENT(HttpStatus.BAD_REQUEST, "D002", "데일리 테스트 콘텐츠가 올바르지 않습니다"),
+    INVALID_DAILY_TEST_CONTENT(HttpStatus.BAD_REQUEST, "INVALID_DAILY_TEST_CONTENT", "데일리 테스트 콘텐츠가 올바르지 않습니다"),
 
     // Todo
     TODO_NOT_FOUND(HttpStatus.NOT_FOUND, "TODO_NOT_FOUND", "존재하지 않는 할 일입니다."),
