@@ -76,7 +76,7 @@ public class AuthService {
                 user.getSocialProvider(), user.getSignupStep());
 
         LoginResponse.UserInfo userInfo = null;
-        if (!isNewUser.get() && "COMPLETED".equals(user.getSignupStep())) {
+        if (!isNewUser.get() && user.getSignupStep().equals("COMPLETED")) {
             userInfo = new LoginResponse.UserInfo(
                     user.getId().toString(),
                     user.getNickname(),
@@ -105,7 +105,7 @@ public class AuthService {
     public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
         User user = findUser(userId);
 
-        if (!"SOCIAL_AUTHENTICATED".equals(user.getSignupStep())) {
+        if (!user.getSignupStep().equals("SOCIAL_AUTHENTICATED")) {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 
