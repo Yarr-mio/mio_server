@@ -138,7 +138,7 @@ public class AuthService {
     public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
         User user = findUser(userId);
 
-        if (!"CONSENT_AGREED".equals(user.getSignupStep())) {
+        if (user.getSignupStep() != SignupStep.CONSENT_AGREED) {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 

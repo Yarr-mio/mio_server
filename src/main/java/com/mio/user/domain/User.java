@@ -102,7 +102,7 @@ public class User {
 
     public void agreeConsent(boolean privacyConsent) {
         this.privacyConsent = privacyConsent;
-        this.signupStep = "CONSENT_AGREED";
+        this.signupStep = SignupStep.CONSENT_AGREED;
     }
 
     public void completeProfile(String nickname, String ageRange, String gender) {
