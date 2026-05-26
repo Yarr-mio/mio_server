@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.auth.dto.SocialUserInfo;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatusCode;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 @Component
-@RequiredArgsConstructor
 public class KakaoAuthProvider implements SocialAuthProvider {
 
     private static final String USER_INFO_PATH = "/v2/user/me";
@@ -23,7 +21,12 @@ public class KakaoAuthProvider implements SocialAuthProvider {
     private String kakaoApiUrl;
 
     private final ObjectMapper objectMapper;
-    private final RestClient restClient = RestClient.create();
+    private final RestClient restClient;
+
+    public KakaoAuthProvider(ObjectMapper objectMapper, RestClient.Builder restClientBuilder) {
+        this.objectMapper = objectMapper;
+        this.restClient = restClientBuilder.build();
+    }
 
     @Override
     public String provider() {
@@ -40,7 +43,7 @@ public class KakaoAuthProvider implements SocialAuthProvider {
                         .uri(kakaoApiUrl + USER_INFO_PATH)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken)
                         .retrieve()
-                        .onStatus(HttpStatusCode::isError, (req, res) -> {
+                        .onStatus(HttpStatusCode::is4xxClientError, (req, res) -> {
                             throw new BusinessException(ErrorCode.OAUTH_FAILED);
                         })
                         .body(String.class);
