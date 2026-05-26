@@ -26,6 +26,9 @@ public class DailyTestResultEngine {
         if (content == null || content.questions() == null || content.questions().isEmpty()) {
             throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
         }
+        if (answers == null) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
         int totalScore = content.questions().stream()
                 .mapToInt(question -> {
                     String selectedOptionId = answers.get(question.id());
