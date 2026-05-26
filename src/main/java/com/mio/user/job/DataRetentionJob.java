@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 @Slf4j
@@ -23,7 +24,7 @@ public class DataRetentionJob {
     @Scheduled(cron = "0 0 0 * * *")
     @Transactional
     public void hardDeleteExpiredUsers() {
-        OffsetDateTime cutoff = OffsetDateTime.now().minusDays(RETENTION_DAYS);
+        OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusDays(RETENTION_DAYS);
         List<User> targets = userRepository.findAllByStatusAndDeletedAtBefore("DELETED", cutoff);
 
         if (targets.isEmpty()) {

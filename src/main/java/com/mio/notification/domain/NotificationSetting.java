@@ -6,6 +6,7 @@ import lombok.*;
 
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -82,12 +83,12 @@ public class NotificationSetting {
 
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now();
-        updatedAt = OffsetDateTime.now();
+        createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+        updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = OffsetDateTime.now();
+        updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 }

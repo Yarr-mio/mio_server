@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Service
@@ -43,7 +44,7 @@ public class SessionMessagePersistenceService {
 
         saveMessage(session, user, MessageRole.USER, userContent);
         saveMessage(session, user, MessageRole.ASSISTANT, assistantContent);
-        sessionRepository.incrementMessageCountAndSetLastMessageAt(session.getId(), 2, OffsetDateTime.now());
+        sessionRepository.incrementMessageCountAndSetLastMessageAt(session.getId(), 2, OffsetDateTime.now(ZoneOffset.UTC));
     }
 
     private void saveMessage(Session session, User user, MessageRole role, String content) {
