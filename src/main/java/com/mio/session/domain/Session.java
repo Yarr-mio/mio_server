@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 import java.util.UUID;
@@ -57,7 +58,7 @@ public class Session {
 
     @PrePersist
     protected void onCreate() {
-        startedAt = OffsetDateTime.now();
+        startedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public void end() {
@@ -66,7 +67,7 @@ public class Session {
                     com.mio.common.error.ErrorCode.SESSION_ALREADY_ENDED);
         }
         this.status = SessionStatus.ENDED;
-        this.endedAt = OffsetDateTime.now();
+        this.endedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public boolean isEnded() {
@@ -79,7 +80,7 @@ public class Session {
 
     public void incrementMessageCount() {
         this.messageCount += 1;
-        this.lastMessageAt = OffsetDateTime.now();
+        this.lastMessageAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public void updateAvgEmotionScore(int newScore) {

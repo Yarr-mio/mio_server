@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -63,6 +64,6 @@ public class UserOnboardingAnswer {
         this.preferredStyle = preferredStyle;
         this.characterRecommendations = characterRecommendationsJson;
         this.responses = responsesJson;
-        this.submittedAt = OffsetDateTime.now();
+        this.submittedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 }
