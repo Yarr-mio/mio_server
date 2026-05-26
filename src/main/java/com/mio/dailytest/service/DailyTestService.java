@@ -107,10 +107,14 @@ public class DailyTestService {
         try {
             return objectMapper.readValue(contentJson, DailyTestContent.class);
         } catch (JsonProcessingException e) {
-            if (e.getCause() instanceof IllegalArgumentException) {
-                throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
+            for (Throwable cause = e; cause != null; cause = cause.getCause()) {
+                if (cause instanceof IllegalArgumentException) {
+                    throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
+                }
             }
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
         }
     }
 
