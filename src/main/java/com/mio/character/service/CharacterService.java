@@ -4,6 +4,7 @@ import com.mio.character.dto.*;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.User;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -64,8 +65,7 @@ public class CharacterService {
         }
 
         User user = findUser(userId);
-        String step = user.getSignupStep();
-        if (!"ONBOARDING_COMPLETED".equals(step) && !"COMPLETED".equals(step)) {
+        if (!user.getSignupStep().isOnboardingComplete()) {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
 
