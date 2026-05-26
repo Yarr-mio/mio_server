@@ -104,7 +104,11 @@ public class OnboardingService {
 
     @Transactional
     public CharacterSelectResponse selectCharacter(UUID userId, CharacterSelectRequest request) {
-        if (!VALID_CHARACTER_IDS.contains(request.characterId())) {
+        String characterId = (request.characterId() == null || request.characterId().isBlank())
+                ? "mio"
+                : request.characterId();
+
+        if (!VALID_CHARACTER_IDS.contains(characterId)) {
             throw new BusinessException(ErrorCode.INVALID_CHARACTER_ID);
         }
 
@@ -113,7 +117,7 @@ public class OnboardingService {
             throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
         }
 
-        user.completeOnboarding(request.characterId());
+        user.completeOnboarding(characterId);
         return new CharacterSelectResponse(user.getPreferredCharacterId(), user.getSignupStep());
     }
 
