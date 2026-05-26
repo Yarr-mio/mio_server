@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
@@ -50,6 +51,6 @@ public class CharacterInteraction {
     @PrePersist
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = OffsetDateTime.now();
+        updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 }

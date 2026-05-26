@@ -5,6 +5,7 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserConsentRepository;
 import com.mio.user.repository.UserRepository;
@@ -57,7 +58,7 @@ class AuthServiceTest {
     @DisplayName("신규 사용자 로그인 시 isNewUser=true를 반환한다")
     void login_newUser_isNewUserTrue() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", "user@test.com", "kakao");
-        User savedUser = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User savedUser = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findByEmailAndSocialProviderNot(any(), any())).thenReturn(Optional.empty());
@@ -82,7 +83,7 @@ class AuthServiceTest {
                 .socialProvider("kakao")
                 .socialId("social-123")
                 .privacyConsent(true)
-                .signupStep("COMPLETED")
+                .signupStep(SignupStep.COMPLETED)
                 .nickname("테스트닉네임")
                 .status("ACTIVE")
                 .build();
@@ -105,7 +106,7 @@ class AuthServiceTest {
     @DisplayName("동일 이메일로 다른 소셜 계정이 존재하면 PROVIDER_MISMATCH를 던진다")
     void login_providerMismatch_throws() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", "dup@test.com", "kakao");
-        User existingWithSameEmail = buildUser(UUID.randomUUID(), "apple", "apple-id", "COMPLETED", "ACTIVE");
+        User existingWithSameEmail = buildUser(UUID.randomUUID(), "apple", "apple-id", SignupStep.COMPLETED, "ACTIVE");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findByEmailAndSocialProviderNot("dup@test.com", "kakao"))
@@ -121,7 +122,7 @@ class AuthServiceTest {
     @DisplayName("정지된 사용자 로그인 시 USER_SUSPENDED를 던진다")
     void login_suspendedUser_throwsSuspended() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", null, "kakao");
-        User suspendedUser = buildUser(USER_ID, "kakao", "social-123", "COMPLETED", "SUSPENDED");
+        User suspendedUser = buildUser(USER_ID, "kakao", "social-123", SignupStep.COMPLETED, "SUSPENDED");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findBySocialProviderAndSocialId("kakao", "social-123"))
@@ -268,7 +269,7 @@ class AuthServiceTest {
     @Test
     @DisplayName("회원탈퇴 시 social_id가 익명화되고 status가 DELETED가 된다")
     void withdraw_anonymizesSocialIdAndSetsDeleted() {
-        User user = buildUser(USER_ID, "kakao", "original-social-id", "COMPLETED", "ACTIVE");
+        User user = buildUser(USER_ID, "kakao", "original-social-id", SignupStep.COMPLETED, "ACTIVE");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         authService.withdraw(USER_ID);
@@ -282,7 +283,7 @@ class AuthServiceTest {
 
     // ──────────────── helpers ────────────────
 
-    private User buildUser(UUID id, String provider, String socialId, String signupStep, String status) {
+    private User buildUser(UUID id, String provider, String socialId, SignupStep signupStep, String status) {
         return User.builder()
                 .id(id)
                 .socialProvider(provider)

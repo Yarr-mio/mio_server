@@ -49,6 +49,8 @@ dependencies {
 
     // dotenv
     implementation("me.paulschwarz:spring-dotenv:4.0.0")
+    // Firebase Admin SDK — Android FCM push
+    implementation("com.google.firebase:firebase-admin:9.4.1")
 
     // Lombok
     compileOnly("org.projectlombok:lombok")
@@ -65,4 +67,19 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+
+    val envFile = rootProject.file(".env")
+    if (envFile.exists()) {
+        envFile.forEachLine { line ->
+            val trimmed = line.trim()
+            if (trimmed.isNotEmpty() && !trimmed.startsWith("#")) {
+                val idx = trimmed.indexOf('=')
+                if (idx > 0) {
+                    val key = trimmed.substring(0, idx).trim()
+                    val value = trimmed.substring(idx + 1).trim()
+                    environment(key, value)
+                }
+            }
+        }
+    }
 }

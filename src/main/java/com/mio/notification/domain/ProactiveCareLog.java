@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -46,10 +47,19 @@ public class ProactiveCareLog {
     @Column(name = "response_action")
     private String responseAction;
 
+    public void markOpened() {
+        if ("OPENED".equals(this.notificationStatus) || this.respondedAt != null) {
+            return;
+        }
+        this.notificationStatus = "OPENED";
+        this.respondedAt = OffsetDateTime.now(ZoneOffset.UTC);
+        this.responseAction = "tapped";
+    }
+
     @PrePersist
     protected void onCreate() {
         if (sentAt == null) {
-            sentAt = OffsetDateTime.now();
+            sentAt = OffsetDateTime.now(ZoneOffset.UTC);
         }
     }
 }

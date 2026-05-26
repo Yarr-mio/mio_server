@@ -4,8 +4,10 @@ import com.mio.user.domain.User;
 import jakarta.persistence.*;
 import lombok.*;
 
+import com.mio.common.AppConstants;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -63,14 +65,15 @@ public class Checkin {
     @PrePersist
     protected void onCreate() {
         if (checkinDate == null) {
-            checkinDate = LocalDate.now();
+            checkinDate = LocalDate.now(AppConstants.ZONE);
         }
-        createdAt = OffsetDateTime.now();
-        updatedAt = OffsetDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        createdAt = now;
+        updatedAt = now;
     }
 
     @PreUpdate
     protected void onUpdate() {
-        updatedAt = OffsetDateTime.now();
+        updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 }

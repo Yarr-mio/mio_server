@@ -133,6 +133,32 @@ class DailyTestServiceTest {
     }
 
     @Test
+    @DisplayName("getTodayTest - content tags에 null 요소가 있으면 INVALID_DAILY_TEST_CONTENT")
+    void getTodayTest_invalidTagElement_throwsInvalidDailyTestContent() {
+        DailyTest test = buildDailyTest("""
+                {
+                  "questions": [
+                    {
+                      "id": "q1", "order": 1, "text": "질문1",
+                      "options": [
+                        {"id": "q1_a", "text": "옵션A", "score": 0, "tags": [null]}
+                      ]
+                    }
+                  ]
+                }
+                """);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
+        when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
+        when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.getTodayTest(userId))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.INVALID_DAILY_TEST_CONTENT);
+    }
+
+    @Test
     @DisplayName("submitAnswer - 오늘 날짜가 아닌 테스트는 DAILY_TEST_NOT_FOUND")
     void submitAnswer_notTodayTest_throwsNotFound() {
         DailyTest oldTest = buildDailyTest(LocalDate.now(AppConstants.ZONE).minusDays(1));
@@ -234,10 +260,18 @@ class DailyTestServiceTest {
     }
 
     private DailyTest buildDailyTest(LocalDate date) {
+        return buildDailyTest(date, CONTENT_JSON);
+    }
+
+    private DailyTest buildDailyTest(String content) {
+        return buildDailyTest(LocalDate.now(AppConstants.ZONE), content);
+    }
+
+    private DailyTest buildDailyTest(LocalDate date, String content) {
         DailyTest test = DailyTest.builder()
                 .title("오늘의 테스트")
                 .description("설명")
-                .content(CONTENT_JSON)
+                .content(content)
                 .activeDate(date)
                 .build();
         ReflectionTestUtils.setField(test, "id", testId);

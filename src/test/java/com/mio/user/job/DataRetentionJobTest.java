@@ -1,5 +1,6 @@
 package com.mio.user.job;
 
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -73,7 +74,7 @@ class DataRetentionJobTest {
                 .socialProvider("kakao")
                 .socialId("hashed-social-id")
                 .privacyConsent(true)
-                .signupStep("COMPLETED")
+                .signupStep(SignupStep.COMPLETED)
                 .status("DELETED")
                 .build();
     }
