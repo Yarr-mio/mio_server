@@ -2,6 +2,7 @@ package com.mio.auth.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.mio.user.domain.SignupStep;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record LoginResponse(
@@ -10,7 +11,7 @@ public record LoginResponse(
         @JsonProperty("expires_in") int expiresIn,
         @JsonProperty("is_new_user") boolean isNewUser,
         @JsonProperty("is_new_device") boolean isNewDevice,
-        @JsonProperty("signup_step") String signupStep,
+        @JsonProperty("signup_step") SignupStep signupStep,
         @JsonProperty("onboarding_step") int onboardingStep,
         UserInfo user
 ) {

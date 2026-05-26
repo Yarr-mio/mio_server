@@ -19,6 +19,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -36,8 +37,7 @@ public class SessionService {
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
         User user = findUser(userId);
 
-        if (!"ONBOARDING_COMPLETED".equals(user.getSignupStep())
-                && !"COMPLETED".equals(user.getSignupStep())) {
+        if (!user.getSignupStep().isOnboardingComplete()) {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
 
@@ -94,7 +94,7 @@ public class SessionService {
             String assistantReply = "안녕하세요! 오늘 어떤 이야기를 나눠볼까요?";
 
             // session_meta 이벤트
-            sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now()));
+            sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now(ZoneOffset.UTC)));
 
             // 사용자/어시스턴트 메시지를 한 트랜잭션으로 저장
             sessionMessagePersistenceService.saveConversation(session.getId(), user.getId(), request.content(), assistantReply);

@@ -4,6 +4,7 @@ import com.mio.auth.redis.RefreshTokenInfo;
 import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -21,7 +22,7 @@ public class RefreshTokenService {
     private final JwtTokenService jwtTokenService;
     private final UserRepository userRepository;
 
-    public String issue(String userId, String deviceId, String socialProvider, String signupStep) {
+    public String issue(String userId, String deviceId, String socialProvider, SignupStep signupStep) {
         String uuid = UUID.randomUUID().toString();
         RefreshTokenInfo info = new RefreshTokenInfo(userId, deviceId, socialProvider, signupStep);
         refreshTokenRedisRepository.issueToken(userId, deviceId, uuid, info);

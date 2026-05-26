@@ -33,7 +33,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TodoService {
 
-    private static final Set<String> ONBOARDING_COMPLETE_STEPS = Set.of("ONBOARDING_COMPLETED", "COMPLETED");
     private static final Set<String> VALID_SOURCES = Set.of("checkin", "chat");
     private static final Set<String> VALID_CHECKIN_STATUSES = Set.of("completed", "skipped");
 
@@ -204,7 +203,7 @@ public class TodoService {
     }
 
     private void requireOnboardingComplete(User user) {
-        if (!ONBOARDING_COMPLETE_STEPS.contains(user.getSignupStep())) {
+        if (!user.getSignupStep().isOnboardingComplete()) {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
     }

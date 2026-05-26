@@ -5,6 +5,7 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserConsentRepository;
 import com.mio.user.repository.UserRepository;
@@ -57,7 +58,7 @@ class AuthServiceTest {
     @DisplayName("신규 사용자 로그인 시 isNewUser=true를 반환한다")
     void login_newUser_isNewUserTrue() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", "user@test.com", "kakao");
-        User savedUser = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User savedUser = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findByEmailAndSocialProviderNot(any(), any())).thenReturn(Optional.empty());
@@ -82,7 +83,7 @@ class AuthServiceTest {
                 .socialProvider("kakao")
                 .socialId("social-123")
                 .privacyConsent(true)
-                .signupStep("COMPLETED")
+                .signupStep(SignupStep.COMPLETED)
                 .nickname("테스트닉네임")
                 .status("ACTIVE")
                 .build();
@@ -105,7 +106,7 @@ class AuthServiceTest {
     @DisplayName("동일 이메일로 다른 소셜 계정이 존재하면 PROVIDER_MISMATCH를 던진다")
     void login_providerMismatch_throws() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", "dup@test.com", "kakao");
-        User existingWithSameEmail = buildUser(UUID.randomUUID(), "apple", "apple-id", "COMPLETED", "ACTIVE");
+        User existingWithSameEmail = buildUser(UUID.randomUUID(), "apple", "apple-id", SignupStep.COMPLETED, "ACTIVE");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findByEmailAndSocialProviderNot("dup@test.com", "kakao"))
@@ -121,7 +122,7 @@ class AuthServiceTest {
     @DisplayName("정지된 사용자 로그인 시 USER_SUSPENDED를 던진다")
     void login_suspendedUser_throwsSuspended() {
         SocialUserInfo socialUser = new SocialUserInfo("social-123", null, "kakao");
-        User suspendedUser = buildUser(USER_ID, "kakao", "social-123", "COMPLETED", "SUSPENDED");
+        User suspendedUser = buildUser(USER_ID, "kakao", "social-123", SignupStep.COMPLETED, "SUSPENDED");
 
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findBySocialProviderAndSocialId("kakao", "social-123"))
@@ -147,7 +148,7 @@ class AuthServiceTest {
     @Test
     @DisplayName("유효한 동의 항목과 닉네임으로 회원가입을 완료한다")
     void completeSignup_validRequest_returnsResponse() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("닉네임")).thenReturn(false);
 
@@ -162,13 +163,13 @@ class AuthServiceTest {
         SignupCompleteResponse response = authService.completeSignup(USER_ID, request);
 
         assertThat(response.nickname()).isEqualTo("닉네임");
-        assertThat(user.getSignupStep()).isEqualTo("PROFILE_COMPLETED");
+        assertThat(user.getSignupStep()).isEqualTo(SignupStep.PROFILE_COMPLETED);
     }
 
     @Test
     @DisplayName("SOCIAL_AUTHENTICATED 단계가 아니면 SIGNUP_STEP_INVALID를 던진다")
     void completeSignup_wrongStep_throwsStepInvalid() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "PROFILE_COMPLETED", "ACTIVE");
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.PROFILE_COMPLETED, "ACTIVE");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> authService.completeSignup(USER_ID, buildCompleteRequest("닉네임")))
@@ -180,7 +181,7 @@ class AuthServiceTest {
     @Test
     @DisplayName("terms 동의가 없으면 CONSENT_REQUIRED를 던진다")
     void completeSignup_missingTermsConsent_throwsConsentRequired() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         SignupCompleteRequest request = new SignupCompleteRequest(
@@ -197,7 +198,7 @@ class AuthServiceTest {
     @Test
     @DisplayName("이미 사용 중인 닉네임이면 NICKNAME_DUPLICATE를 던진다")
     void completeSignup_duplicateNickname_throwsDuplicate() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("중복닉네임")).thenReturn(true);
 
@@ -224,7 +225,7 @@ class AuthServiceTest {
     @Test
     @DisplayName("회원탈퇴 시 social_id가 익명화되고 status가 DELETED가 된다")
     void withdraw_anonymizesSocialIdAndSetsDeleted() {
-        User user = buildUser(USER_ID, "kakao", "original-social-id", "COMPLETED", "ACTIVE");
+        User user = buildUser(USER_ID, "kakao", "original-social-id", SignupStep.COMPLETED, "ACTIVE");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         authService.withdraw(USER_ID);
@@ -238,7 +239,7 @@ class AuthServiceTest {
 
     // ──────────────── helpers ────────────────
 
-    private User buildUser(UUID id, String provider, String socialId, String signupStep, String status) {
+    private User buildUser(UUID id, String provider, String socialId, SignupStep signupStep, String status) {
         return User.builder()
                 .id(id)
                 .socialProvider(provider)

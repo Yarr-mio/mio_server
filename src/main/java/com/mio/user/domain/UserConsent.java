@@ -4,6 +4,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -37,7 +38,7 @@ public class UserConsent {
     @PrePersist
     protected void onCreate() {
         if (agreedAt == null) {
-            agreedAt = OffsetDateTime.now();
+            agreedAt = OffsetDateTime.now(ZoneOffset.UTC);
         }
     }
 }

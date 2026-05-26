@@ -8,6 +8,7 @@ import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -77,7 +78,7 @@ public class WeeklyReport {
 
     public void markAsGenerated() {
         this.status = "GENERATED";
-        this.generatedAt = OffsetDateTime.now();
+        this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     @PrePersist
