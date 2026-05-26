@@ -264,6 +264,102 @@ class AuthIntegrationTest {
     }
 
     // ──────────────────────────────────────────
+    // 회원가입 플로우
+    // ──────────────────────────────────────────
+
+    @Nested
+    @DisplayName("회원가입 상태 머신")
+    class SignupFlow {
+
+        @Test
+        @DisplayName("로그인 → 약관동의(CONSENT_AGREED) → 프로필완료(PROFILE_COMPLETED) 전이")
+        void consentThenComplete() throws Exception {
+            when(kakaoAuthProvider.verify(any()))
+                    .thenReturn(new SocialUserInfo("kakao-uid-signup", "signup@test.com", "kakao"));
+
+            JsonNode loginData = login("kakao", null, "fake-kakao-token", "device-s-01");
+            String accessToken = loginData.get("access_token").asText();
+            assertThat(loginData.get("signup_step").asText()).isEqualTo("SOCIAL_AUTHENTICATED");
+
+            // 약관 동의
+            MvcResult consentResult = mockMvc.perform(post("/v1/auth/signup/consent")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"consents": [
+                                      {"type": "terms",   "agreed": true, "version": "v1"},
+                                      {"type": "privacy", "agreed": true, "version": "v1"}
+                                    ]}
+                                    """))
+                    .andExpect(status().isOk())
+                    .andReturn();
+
+            String consentStep = parse(consentResult).get("signup_step").asText();
+            assertThat(consentStep).isEqualTo("CONSENT_AGREED");
+
+            // 프로필 입력
+            MvcResult completeResult = mockMvc.perform(post("/v1/auth/signup/complete")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"nickname": "테스트닉", "age_range": "20대", "gender": "male"}
+                                    """))
+                    .andExpect(status().isOk())
+                    .andReturn();
+
+            String completeStep = parse(completeResult).get("signup_step").asText();
+            assertThat(completeStep).isEqualTo("PROFILE_COMPLETED");
+        }
+
+        @Test
+        @DisplayName("약관 동의 없이 프로필 완료 시도 → 403 SIGNUP_STEP_INVALID")
+        void completeWithoutConsent_returns403() throws Exception {
+            when(kakaoAuthProvider.verify(any()))
+                    .thenReturn(new SocialUserInfo("kakao-uid-skipcon", "skipcon@test.com", "kakao"));
+
+            JsonNode loginData = login("kakao", null, "fake-kakao-token", "device-s-02");
+            String accessToken = loginData.get("access_token").asText();
+
+            mockMvc.perform(post("/v1/auth/signup/complete")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"nickname": "테스트닉", "age_range": "20대", "gender": "male"}
+                                    """))
+                    .andExpect(status().isForbidden());
+        }
+
+        @Test
+        @DisplayName("약관 동의를 중복 호출하면 403 SIGNUP_STEP_INVALID")
+        void doubleConsent_returns403() throws Exception {
+            when(kakaoAuthProvider.verify(any()))
+                    .thenReturn(new SocialUserInfo("kakao-uid-dupcon", "dupcon@test.com", "kakao"));
+
+            JsonNode loginData = login("kakao", null, "fake-kakao-token", "device-s-03");
+            String accessToken = loginData.get("access_token").asText();
+
+            String consentBody = """
+                    {"consents": [
+                      {"type": "terms",   "agreed": true, "version": "v1"},
+                      {"type": "privacy", "agreed": true, "version": "v1"}
+                    ]}
+                    """;
+
+            mockMvc.perform(post("/v1/auth/signup/consent")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(consentBody))
+                    .andExpect(status().isOk());
+
+            mockMvc.perform(post("/v1/auth/signup/consent")
+                            .header("Authorization", "Bearer " + accessToken)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(consentBody))
+                    .andExpect(status().isForbidden());
+        }
+    }
+
+    // ──────────────────────────────────────────
     // helpers
     // ──────────────────────────────────────────
 

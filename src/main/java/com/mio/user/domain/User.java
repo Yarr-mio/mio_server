@@ -98,6 +98,11 @@ public class User {
         this.signupStep = "ONBOARDING_COMPLETED";
     }
 
+    public void agreeConsent(boolean privacyConsent) {
+        this.privacyConsent = privacyConsent;
+        this.signupStep = "CONSENT_AGREED";
+    }
+
     public void completeProfile(String nickname, String ageRange, String gender) {
         this.nickname = nickname;
         this.ageRange = ageRange;
