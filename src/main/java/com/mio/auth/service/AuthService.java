@@ -102,7 +102,7 @@ public class AuthService {
     }
 
     @Transactional
-    public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
+    public ConsentResponse agreeConsent(UUID userId, ConsentRequest request) {
         User user = findUser(userId);
 
         if (!"SOCIAL_AUTHENTICATED".equals(user.getSignupStep())) {
@@ -110,7 +110,7 @@ public class AuthService {
         }
 
         boolean hasTerms = false, hasPrivacy = false;
-        for (SignupCompleteRequest.ConsentItem item : request.consents()) {
+        for (ConsentRequest.ConsentItem item : request.consents()) {
             if ("terms".equals(item.type()) && item.agreed()) hasTerms = true;
             if ("privacy".equals(item.type()) && item.agreed()) hasPrivacy = true;
         }
@@ -118,11 +118,7 @@ public class AuthService {
             throw new BusinessException(ErrorCode.CONSENT_REQUIRED);
         }
 
-        if (userRepository.existsByNickname(request.nickname())) {
-            throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
-        }
-
-        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
+        user.agreeConsent(hasPrivacy);
 
         List<UserConsent> consents = request.consents().stream()
                 .map(item -> UserConsent.builder()
@@ -133,6 +129,23 @@ public class AuthService {
                         .build())
                 .toList();
         userConsentRepository.saveAll(consents);
+
+        return new ConsentResponse(user.getSignupStep());
+    }
+
+    @Transactional
+    public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
+        User user = findUser(userId);
+
+        if (!"CONSENT_AGREED".equals(user.getSignupStep())) {
+            throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
+        }
+
+        if (userRepository.existsByNickname(request.nickname())) {
+            throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
+        }
+
+        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
 
         return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
     }

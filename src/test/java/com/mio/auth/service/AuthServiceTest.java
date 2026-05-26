@@ -142,33 +142,94 @@ class AuthServiceTest {
                         .isEqualTo(ErrorCode.INVALID_PROVIDER));
     }
 
+    // ──────────────── agreeConsent ────────────────
+
+    @Test
+    @DisplayName("필수 약관에 모두 동의하면 CONSENT_AGREED 단계로 전이한다")
+    void agreeConsent_validRequest_transitionsToConsentAgreed() {
+        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        ConsentRequest request = new ConsentRequest(List.of(
+                new ConsentRequest.ConsentItem("terms", true, "v1"),
+                new ConsentRequest.ConsentItem("privacy", true, "v1")
+        ));
+
+        ConsentResponse response = authService.agreeConsent(USER_ID, request);
+
+        assertThat(response.signupStep()).isEqualTo("CONSENT_AGREED");
+        assertThat(user.getSignupStep()).isEqualTo("CONSENT_AGREED");
+        verify(userConsentRepository).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("SOCIAL_AUTHENTICATED 단계가 아니면 agreeConsent에서 SIGNUP_STEP_INVALID를 던진다")
+    void agreeConsent_wrongStep_throwsStepInvalid() {
+        User user = buildUser(USER_ID, "kakao", "social-123", "CONSENT_AGREED", "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        ConsentRequest request = new ConsentRequest(List.of(
+                new ConsentRequest.ConsentItem("terms", true, "v1"),
+                new ConsentRequest.ConsentItem("privacy", true, "v1")
+        ));
+
+        assertThatThrownBy(() -> authService.agreeConsent(USER_ID, request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SIGNUP_STEP_INVALID));
+    }
+
+    @Test
+    @DisplayName("terms 동의가 없으면 CONSENT_REQUIRED를 던진다")
+    void agreeConsent_missingTermsConsent_throwsConsentRequired() {
+        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        ConsentRequest request = new ConsentRequest(List.of(
+                new ConsentRequest.ConsentItem("privacy", true, "v1")
+        ));
+
+        assertThatThrownBy(() -> authService.agreeConsent(USER_ID, request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.CONSENT_REQUIRED));
+    }
+
+    @Test
+    @DisplayName("privacy 동의가 없으면 CONSENT_REQUIRED를 던진다")
+    void agreeConsent_missingPrivacyConsent_throwsConsentRequired() {
+        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        ConsentRequest request = new ConsentRequest(List.of(
+                new ConsentRequest.ConsentItem("terms", true, "v1")
+        ));
+
+        assertThatThrownBy(() -> authService.agreeConsent(USER_ID, request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.CONSENT_REQUIRED));
+    }
+
     // ──────────────── completeSignup ────────────────
 
     @Test
-    @DisplayName("유효한 동의 항목과 닉네임으로 회원가입을 완료한다")
+    @DisplayName("CONSENT_AGREED 단계에서 닉네임과 프로필로 회원가입을 완료한다")
     void completeSignup_validRequest_returnsResponse() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User user = buildUser(USER_ID, "kakao", "social-123", "CONSENT_AGREED", "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("닉네임")).thenReturn(false);
 
-        SignupCompleteRequest request = new SignupCompleteRequest(
-                "닉네임", "20대", "male",
-                List.of(
-                        new SignupCompleteRequest.ConsentItem("terms", true, "v1"),
-                        new SignupCompleteRequest.ConsentItem("privacy", true, "v1")
-                )
-        );
-
-        SignupCompleteResponse response = authService.completeSignup(USER_ID, request);
+        SignupCompleteResponse response = authService.completeSignup(USER_ID, buildCompleteRequest("닉네임"));
 
         assertThat(response.nickname()).isEqualTo("닉네임");
         assertThat(user.getSignupStep()).isEqualTo("PROFILE_COMPLETED");
     }
 
     @Test
-    @DisplayName("SOCIAL_AUTHENTICATED 단계가 아니면 SIGNUP_STEP_INVALID를 던진다")
+    @DisplayName("CONSENT_AGREED 단계가 아니면 SIGNUP_STEP_INVALID를 던진다")
     void completeSignup_wrongStep_throwsStepInvalid() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "PROFILE_COMPLETED", "ACTIVE");
+        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> authService.completeSignup(USER_ID, buildCompleteRequest("닉네임")))
@@ -178,26 +239,9 @@ class AuthServiceTest {
     }
 
     @Test
-    @DisplayName("terms 동의가 없으면 CONSENT_REQUIRED를 던진다")
-    void completeSignup_missingTermsConsent_throwsConsentRequired() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-
-        SignupCompleteRequest request = new SignupCompleteRequest(
-                "닉네임", "20대", "male",
-                List.of(new SignupCompleteRequest.ConsentItem("privacy", true, "v1"))
-        );
-
-        assertThatThrownBy(() -> authService.completeSignup(USER_ID, request))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.CONSENT_REQUIRED));
-    }
-
-    @Test
     @DisplayName("이미 사용 중인 닉네임이면 NICKNAME_DUPLICATE를 던진다")
     void completeSignup_duplicateNickname_throwsDuplicate() {
-        User user = buildUser(USER_ID, "kakao", "social-123", "SOCIAL_AUTHENTICATED", "PENDING");
+        User user = buildUser(USER_ID, "kakao", "social-123", "CONSENT_AGREED", "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("중복닉네임")).thenReturn(true);
 
@@ -250,12 +294,6 @@ class AuthServiceTest {
     }
 
     private SignupCompleteRequest buildCompleteRequest(String nickname) {
-        return new SignupCompleteRequest(
-                nickname, "20대", "male",
-                List.of(
-                        new SignupCompleteRequest.ConsentItem("terms", true, "v1"),
-                        new SignupCompleteRequest.ConsentItem("privacy", true, "v1")
-                )
-        );
+        return new SignupCompleteRequest(nickname, "20대", "male");
     }
 }

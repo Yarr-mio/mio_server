@@ -33,6 +33,13 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.getSignupStatus(UUID.fromString(userId))));
     }
 
+    @PostMapping("/signup/consent")
+    public ResponseEntity<ApiResponse<ConsentResponse>> agreeConsent(
+            @AuthenticationPrincipal String userId,
+            @Valid @RequestBody ConsentRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.agreeConsent(UUID.fromString(userId), request)));
+    }
+
     @PostMapping("/signup/complete")
     public ResponseEntity<ApiResponse<SignupCompleteResponse>> completeSignup(
             @AuthenticationPrincipal String userId,
