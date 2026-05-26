@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Entity
@@ -51,14 +52,14 @@ public class ProactiveCareLog {
             return;
         }
         this.notificationStatus = "OPENED";
-        this.respondedAt = OffsetDateTime.now();
+        this.respondedAt = OffsetDateTime.now(ZoneOffset.UTC);
         this.responseAction = "tapped";
     }
 
     @PrePersist
     protected void onCreate() {
         if (sentAt == null) {
-            sentAt = OffsetDateTime.now();
+            sentAt = OffsetDateTime.now(ZoneOffset.UTC);
         }
     }
 }
