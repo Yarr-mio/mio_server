@@ -9,8 +9,8 @@ import org.springframework.http.HttpStatus;
 public enum ErrorCode {
 
     // Common
-    INVALID_INPUT(HttpStatus.BAD_REQUEST, "INVALID_INPUT", "잘못된 입력입니다."),
-    INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_SERVER_ERROR", "서버 오류가 발생했습니다."),
+    INVALID_INPUT(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "잘못된 입력입니다."),
+    INTERNAL_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "서버 오류가 발생했습니다."),
     RESOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", "요청한 리소스를 찾을 수 없습니다."),
     DUPLICATE_REQUEST(HttpStatus.CONFLICT, "DUPLICATE_REQUEST", "중복된 요청입니다."),
 
@@ -24,8 +24,8 @@ public enum ErrorCode {
 
     // User
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다."),
-    USER_SUSPENDED(HttpStatus.FORBIDDEN, "USER_SUSPENDED", "이용이 제한된 계정입니다."),
-    USER_WITHDRAWN(HttpStatus.GONE, "USER_WITHDRAWN", "탈퇴한 계정입니다."),
+    USER_SUSPENDED(HttpStatus.FORBIDDEN, "ACCOUNT_SUSPENDED", "이용이 제한된 계정입니다."),
+    USER_WITHDRAWN(HttpStatus.GONE, "GONE", "탈퇴한 계정입니다."),
     ONBOARDING_REQUIRED(HttpStatus.FORBIDDEN, "ONBOARDING_REQUIRED", "온보딩을 먼저 완료해야 합니다."),
 
     // Onboarding
@@ -56,10 +56,11 @@ public enum ErrorCode {
     DEVICE_TOKEN_NOT_FOUND(HttpStatus.NOT_FOUND, "DEVICE_TOKEN_NOT_FOUND", "디바이스 토큰을 찾을 수 없습니다."),
 
     // Rate Limit
-    RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMIT_EXCEEDED", "요청 한도를 초과했습니다."),
+    RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청 한도를 초과했습니다."),
 
     // External
     UPSTREAM_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "UPSTREAM_UNAVAILABLE", "외부 서비스가 일시적으로 응답하지 않습니다."),
+    UPSTREAM_BAD_GATEWAY(HttpStatus.BAD_GATEWAY, "UPSTREAM_BAD_GATEWAY", "외부 서비스로부터 잘못된 응답을 받았습니다."),
     PROVIDER_MISMATCH(HttpStatus.CONFLICT, "PROVIDER_MISMATCH", "동일 이메일로 다른 소셜 계정이 이미 존재합니다."),
     INVALID_PROVIDER(HttpStatus.BAD_REQUEST, "INVALID_PROVIDER", "지원하지 않는 소셜 로그인 제공자입니다."),
     SIGNUP_STEP_INVALID(HttpStatus.FORBIDDEN, "SIGNUP_STEP_INVALID", "현재 가입 단계에서 허용되지 않는 요청입니다."),
