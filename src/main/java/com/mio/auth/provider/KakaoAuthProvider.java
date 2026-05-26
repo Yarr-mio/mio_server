@@ -22,9 +22,6 @@ public class KakaoAuthProvider implements SocialAuthProvider {
     @Value("${kakao.api-url}")
     private String kakaoApiUrl;
 
-    @Value("${kakao.app-id}")
-    private long kakaoAppId;
-
     private final ObjectMapper objectMapper;
     private final RestClient restClient = RestClient.create();
 
@@ -62,9 +59,6 @@ public class KakaoAuthProvider implements SocialAuthProvider {
     private SocialUserInfo parseUserInfo(String body) {
         try {
             JsonNode root = objectMapper.readTree(body);
-            if (root.path("app_id").asLong() != kakaoAppId) {
-                throw new BusinessException(ErrorCode.OAUTH_FAILED);
-            }
             String socialId = root.path("id").asText();
             if (socialId.isBlank()) {
                 throw new BusinessException(ErrorCode.OAUTH_FAILED);

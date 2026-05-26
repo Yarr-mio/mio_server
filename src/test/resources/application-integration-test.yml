@@ -7,7 +7,7 @@ spring:
   data:
     redis:
       host: localhost
-      port: 6370
+      port: 6379
       password: ""
 
 jwt:
@@ -20,3 +20,6 @@ kakao:
 apple:
   jwks-url: https://appleid.apple.com/auth/keys
   app-id: com.test.app
+
+APP_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+APP_ENCRYPTION_DEK_ID: test-key-v1
