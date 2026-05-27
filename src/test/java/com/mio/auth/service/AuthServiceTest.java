@@ -2,12 +2,13 @@ package com.mio.auth.service;
 
 import com.mio.auth.dto.*;
 import com.mio.auth.provider.SocialAuthProvider;
-import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
+import com.mio.user.domain.UserDevice;
 import com.mio.user.repository.UserConsentRepository;
+import com.mio.user.repository.UserDeviceRepository;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -31,9 +32,9 @@ class AuthServiceTest {
     @Mock private SocialAuthProvider kakaoProvider;
     @Mock private UserRepository userRepository;
     @Mock private UserConsentRepository userConsentRepository;
+    @Mock private UserDeviceRepository userDeviceRepository;
     @Mock private JwtTokenService jwtTokenService;
     @Mock private RefreshTokenService refreshTokenService;
-    @Mock private RefreshTokenRedisRepository refreshTokenRedisRepository;
 
     private AuthService authService;
 
@@ -48,7 +49,7 @@ class AuthServiceTest {
                 .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
-                jwtTokenService, refreshTokenService, refreshTokenRedisRepository
+                userDeviceRepository, jwtTokenService, refreshTokenService
         );
     }
 
@@ -64,7 +65,8 @@ class AuthServiceTest {
         when(userRepository.findByEmailAndSocialProviderNot(any(), any())).thenReturn(Optional.empty());
         when(userRepository.findBySocialProviderAndSocialId("kakao", "social-123")).thenReturn(Optional.empty());
         when(userRepository.save(any())).thenReturn(savedUser);
-        when(refreshTokenRedisRepository.isNewDevice(any(), any())).thenReturn(true);
+        when(userDeviceRepository.findByUser_IdAndDeviceId(any(), any())).thenReturn(Optional.empty());
+        when(userDeviceRepository.save(any())).thenReturn(mock(UserDevice.class));
         when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean())).thenReturn("access-token");
         when(refreshTokenService.issue(any(), any(), any(), any())).thenReturn("mio_refresh_xxx");
 
@@ -91,7 +93,7 @@ class AuthServiceTest {
         when(kakaoProvider.verify(any())).thenReturn(socialUser);
         when(userRepository.findBySocialProviderAndSocialId("kakao", "social-123"))
                 .thenReturn(Optional.of(existingUser));
-        when(refreshTokenRedisRepository.isNewDevice(any(), any())).thenReturn(false);
+        when(userDeviceRepository.findByUser_IdAndDeviceId(any(), any())).thenReturn(Optional.of(mock(UserDevice.class)));
         when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean())).thenReturn("access-token");
         when(refreshTokenService.issue(any(), any(), any(), any())).thenReturn("mio_refresh_xxx");
 
@@ -153,7 +155,9 @@ class AuthServiceTest {
 
         ConsentRequest request = new ConsentRequest(List.of(
                 new ConsentRequest.ConsentItem("terms", true, "v1"),
-                new ConsentRequest.ConsentItem("privacy", true, "v1")
+                new ConsentRequest.ConsentItem("privacy", true, "v1"),
+                new ConsentRequest.ConsentItem("age_verification", true, "v1"),
+                new ConsentRequest.ConsentItem("marketing", false, "v1")
         ));
 
         ConsentResponse response = authService.agreeConsent(USER_ID, request);
@@ -275,6 +279,7 @@ class AuthServiceTest {
         authService.withdraw(USER_ID);
 
         verify(refreshTokenService).invalidateAll(USER_ID.toString());
+        verify(userDeviceRepository).deleteAllByUser_Id(USER_ID);
         assertThat(user.getStatus()).isEqualTo("DELETED");
         assertThat(user.getSocialId()).isNotEqualTo("original-social-id"); // SHA-256 해시로 대체
         assertThat(user.getNickname()).isEqualTo("탈퇴한 사용자");

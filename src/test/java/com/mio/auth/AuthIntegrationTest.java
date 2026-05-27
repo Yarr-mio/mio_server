@@ -287,8 +287,10 @@ class AuthIntegrationTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {"consents": [
-                                      {"type": "terms",   "agreed": true, "version": "v1"},
-                                      {"type": "privacy", "agreed": true, "version": "v1"}
+                                      {"type": "terms",            "agreed": true,  "version": "v1"},
+                                      {"type": "privacy",          "agreed": true,  "version": "v1"},
+                                      {"type": "age_verification", "agreed": true,  "version": "v1"},
+                                      {"type": "marketing",        "agreed": false, "version": "v1"}
                                     ]}
                                     """))
                     .andExpect(status().isOk())
@@ -298,11 +300,11 @@ class AuthIntegrationTest {
             assertThat(consentStep).isEqualTo("CONSENT_AGREED");
 
             // 프로필 입력
-            MvcResult completeResult = mockMvc.perform(post("/v1/auth/signup/complete")
+            MvcResult completeResult = mockMvc.perform(post("/v1/auth/signup/profile")
                             .header("Authorization", "Bearer " + accessToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
-                                    {"nickname": "테스트닉", "age_range": "20대", "gender": "male"}
+                                    {"nickname": "테스트닉", "ageRange": "20대", "gender": "male"}
                                     """))
                     .andExpect(status().isOk())
                     .andReturn();
@@ -320,11 +322,11 @@ class AuthIntegrationTest {
             JsonNode loginData = login("kakao", null, "fake-kakao-token", "device-s-02");
             String accessToken = loginData.get("access_token").asText();
 
-            mockMvc.perform(post("/v1/auth/signup/complete")
+            mockMvc.perform(post("/v1/auth/signup/profile")
                             .header("Authorization", "Bearer " + accessToken)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
-                                    {"nickname": "테스트닉", "age_range": "20대", "gender": "male"}
+                                    {"nickname": "테스트닉", "ageRange": "20대", "gender": "male"}
                                     """))
                     .andExpect(status().isForbidden());
         }
@@ -340,8 +342,10 @@ class AuthIntegrationTest {
 
             String consentBody = """
                     {"consents": [
-                      {"type": "terms",   "agreed": true, "version": "v1"},
-                      {"type": "privacy", "agreed": true, "version": "v1"}
+                      {"type": "terms",            "agreed": true,  "version": "v1"},
+                      {"type": "privacy",          "agreed": true,  "version": "v1"},
+                      {"type": "age_verification", "agreed": true,  "version": "v1"},
+                      {"type": "marketing",        "agreed": false, "version": "v1"}
                     ]}
                     """;
 

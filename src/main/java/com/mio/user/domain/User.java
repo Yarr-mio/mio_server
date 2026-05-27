@@ -105,8 +105,9 @@ public class User {
         this.preferredCharacterId = characterId;
     }
 
-    public void agreeConsent(boolean privacyConsent) {
+    public void agreeConsent(boolean privacyConsent, boolean notificationAgree) {
         this.privacyConsent = privacyConsent;
+        this.notificationAgree = notificationAgree;
         this.signupStep = SignupStep.CONSENT_AGREED;
     }
     public void completeProfile(String nickname, String ageRange, String gender) {
@@ -117,6 +118,11 @@ public class User {
     }
 
     public void activate() {
+        this.status = "ACTIVE";
+    }
+
+    public void finalizeSignup() {
+        this.signupStep = SignupStep.COMPLETED;
         this.status = "ACTIVE";
     }
 
