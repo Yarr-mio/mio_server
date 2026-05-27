@@ -164,7 +164,26 @@ class AuthServiceTest {
 
         assertThat(response.signupStep()).isEqualTo(SignupStep.CONSENT_AGREED);
         assertThat(user.getSignupStep()).isEqualTo(SignupStep.CONSENT_AGREED);
+        assertThat(user.isMarketingAgree()).isFalse();
         verify(userConsentRepository).saveAll(any());
+    }
+
+    @Test
+    @DisplayName("마케팅 동의 시 marketingAgree가 true로 설정된다")
+    void agreeConsent_marketingAgreed_setsMarketingAgreeTrue() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        ConsentRequest request = new ConsentRequest(List.of(
+                new ConsentRequest.ConsentItem("terms", true, "v1"),
+                new ConsentRequest.ConsentItem("privacy", true, "v1"),
+                new ConsentRequest.ConsentItem("age_verification", true, "v1"),
+                new ConsentRequest.ConsentItem("marketing", true, "v1")
+        ));
+
+        authService.agreeConsent(USER_ID, request);
+
+        assertThat(user.isMarketingAgree()).isTrue();
     }
 
     @Test

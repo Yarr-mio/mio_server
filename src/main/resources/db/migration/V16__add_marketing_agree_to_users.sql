@@ -1,0 +1,2 @@
+ALTER TABLE users
+    ADD COLUMN marketing_agree BOOLEAN NOT NULL DEFAULT FALSE;

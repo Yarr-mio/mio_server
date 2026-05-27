@@ -44,6 +44,11 @@ public class User {
     @Builder.Default
     private boolean notificationAgree = true;
 
+    /** 마케팅 활용 동의 (선택) */
+    @Column(name = "marketing_agree", nullable = false)
+    @Builder.Default
+    private boolean marketingAgree = false;
+
     /** 개인정보 및 감정 데이터 활용 동의 */
     @Column(name = "privacy_consent", nullable = false)
     private boolean privacyConsent;
@@ -105,9 +110,9 @@ public class User {
         this.preferredCharacterId = characterId;
     }
 
-    public void agreeConsent(boolean privacyConsent, boolean notificationAgree) {
+    public void agreeConsent(boolean privacyConsent, boolean marketingAgree) {
         this.privacyConsent = privacyConsent;
-        this.notificationAgree = notificationAgree;
+        this.marketingAgree = marketingAgree;
         this.signupStep = SignupStep.CONSENT_AGREED;
     }
     public void completeProfile(String nickname, String ageRange, String gender) {
