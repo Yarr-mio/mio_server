@@ -48,7 +48,7 @@ public class SessionService {
                 ? request.characterId()
                 : user.getPreferredCharacterId();
 
-        if (!ALLOWED_CHARACTER_IDS.contains(characterId)) {
+        if (characterId == null || !ALLOWED_CHARACTER_IDS.contains(characterId)) {
             throw new BusinessException(ErrorCode.INVALID_CHARACTER_ID);
         }
 
