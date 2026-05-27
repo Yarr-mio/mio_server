@@ -47,6 +47,8 @@ dependencies {
     // OpenAPI / Swagger UI
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
 
+    // dotenv
+    implementation("me.paulschwarz:spring-dotenv:4.0.0")
     // Firebase Admin SDK — Android FCM push
     implementation("com.google.firebase:firebase-admin:9.4.1")
 

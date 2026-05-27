@@ -2,13 +2,14 @@ package com.mio.auth.service;
 
 import com.mio.auth.dto.*;
 import com.mio.auth.provider.SocialAuthProvider;
-import com.mio.auth.redis.RefreshTokenRedisRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserConsent;
+import com.mio.user.domain.UserDevice;
 import com.mio.user.repository.UserConsentRepository;
+import com.mio.user.repository.UserDeviceRepository;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -31,9 +32,9 @@ public class AuthService {
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
     private final UserConsentRepository userConsentRepository;
+    private final UserDeviceRepository userDeviceRepository;
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
-    private final RefreshTokenRedisRepository refreshTokenRedisRepository;
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
@@ -66,9 +67,21 @@ public class AuthService {
 
         checkUserStatus(user);
 
-        // issueToken 이전에 체크해야 정확한 신규 기기 여부를 반환할 수 있음
-        boolean isNewDevice = refreshTokenRedisRepository.isNewDevice(
-                user.getId().toString(), request.deviceId());
+        // 신규 유저이거나 가입 미완료 재진입이면 is_new_user = true
+        boolean isNewUserResponse = isNewUser.get() || user.getSignupStep() != SignupStep.COMPLETED;
+
+        // DB 기반 영구 기기 추적 — Redis TTL 만료로 인한 오판정 방지
+        var existingDevice = userDeviceRepository
+                .findByUser_IdAndDeviceId(user.getId(), request.deviceId());
+
+        boolean isNewDevice = existingDevice.isEmpty();
+        existingDevice.ifPresentOrElse(
+                UserDevice::updateLastActiveAt,
+                () -> userDeviceRepository.save(UserDevice.builder()
+                        .user(user)
+                        .deviceId(request.deviceId())
+                        .build())
+        );
 
         String accessToken = jwtTokenService.generateAccessToken(
                 user.getId().toString(), request.deviceId(), user.isMinor());
@@ -77,7 +90,7 @@ public class AuthService {
                 user.getSocialProvider(), user.getSignupStep());
 
         LoginResponse.UserInfo userInfo = null;
-        if (!isNewUser.get() && user.getSignupStep() == SignupStep.COMPLETED) {
+        if (!isNewUserResponse && user.getSignupStep() == SignupStep.COMPLETED) {
             userInfo = new LoginResponse.UserInfo(
                     user.getId().toString(),
                     user.getNickname(),
@@ -90,7 +103,7 @@ public class AuthService {
 
         return new LoginResponse(
                 accessToken, refreshToken, JWT_EXPIRY_SECONDS,
-                isNewUser.get(), isNewDevice,
+                isNewUserResponse, isNewDevice,
                 user.getSignupStep(), user.getOnboardingStep(),
                 userInfo
         );
@@ -103,27 +116,26 @@ public class AuthService {
     }
 
     @Transactional
-    public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
+    public ConsentResponse agreeConsent(UUID userId, ConsentRequest request) {
         User user = findUser(userId);
 
         if (user.getSignupStep() != SignupStep.SOCIAL_AUTHENTICATED) {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 
-        boolean hasTerms = false, hasPrivacy = false;
-        for (SignupCompleteRequest.ConsentItem item : request.consents()) {
+        boolean hasTerms = false, hasPrivacy = false, hasAgeVerification = false, hasMarketing = false;
+        boolean marketingAgreed = false;
+        for (ConsentRequest.ConsentItem item : request.consents()) {
             if ("terms".equals(item.type()) && item.agreed()) hasTerms = true;
             if ("privacy".equals(item.type()) && item.agreed()) hasPrivacy = true;
+            if ("age_verification".equals(item.type()) && item.agreed()) hasAgeVerification = true;
+            if ("marketing".equals(item.type())) { hasMarketing = true; marketingAgreed = item.agreed(); }
         }
-        if (!hasTerms || !hasPrivacy) {
+        if (!hasTerms || !hasPrivacy || !hasAgeVerification || !hasMarketing) {
             throw new BusinessException(ErrorCode.CONSENT_REQUIRED);
         }
 
-        if (userRepository.existsByNickname(request.nickname())) {
-            throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
-        }
-
-        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
+        user.agreeConsent(hasPrivacy, marketingAgreed);
 
         List<UserConsent> consents = request.consents().stream()
                 .map(item -> UserConsent.builder()
@@ -135,12 +147,46 @@ public class AuthService {
                 .toList();
         userConsentRepository.saveAll(consents);
 
+        return new ConsentResponse(user.getSignupStep());
+    }
+
+    @Transactional
+    public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
+        User user = findUser(userId);
+
+        if (user.getSignupStep() != SignupStep.CONSENT_AGREED) {
+            throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
+        }
+
+        if (userRepository.existsByNickname(request.nickname())) {
+            throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
+        }
+
+        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
+
         return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
     }
 
     @Transactional(readOnly = true)
     public boolean checkNicknameDuplicate(String nickname) {
         return userRepository.existsByNickname(nickname);
+    }
+
+    @Transactional
+    public SignupFinalizeResponse finalizeSignup(UUID userId) {
+        User user = findUser(userId);
+
+        // 멱등성 — 이미 완료된 경우 그대로 반환
+        if (user.getSignupStep() == SignupStep.COMPLETED) {
+            return new SignupFinalizeResponse(user.getSignupStep(), user.getStatus());
+        }
+
+        if (user.getSignupStep() != SignupStep.ONBOARDING_COMPLETED) {
+            throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
+        }
+
+        user.finalizeSignup();
+        return new SignupFinalizeResponse(user.getSignupStep(), user.getStatus());
     }
 
     @Transactional
@@ -153,6 +199,7 @@ public class AuthService {
         User user = findUser(userId);
 
         refreshTokenService.invalidateAll(userId.toString());
+        userDeviceRepository.deleteAllByUser_Id(userId);
 
         // PII 비식별화 정책 — social_id를 해시로 대체해 재가입 방지 키만 유지
         String anonymizedSocialId = sha256(user.getSocialId());

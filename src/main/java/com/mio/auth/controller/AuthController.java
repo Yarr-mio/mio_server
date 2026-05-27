@@ -33,11 +33,24 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.getSignupStatus(UUID.fromString(userId))));
     }
 
-    @PostMapping("/signup/complete")
+    @PostMapping("/signup/consent")
+    public ResponseEntity<ApiResponse<ConsentResponse>> agreeConsent(
+            @AuthenticationPrincipal String userId,
+            @Valid @RequestBody ConsentRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.agreeConsent(UUID.fromString(userId), request)));
+    }
+
+    @PostMapping("/signup/profile")
     public ResponseEntity<ApiResponse<SignupCompleteResponse>> completeSignup(
             @AuthenticationPrincipal String userId,
             @Valid @RequestBody SignupCompleteRequest request) {
         return ResponseEntity.ok(ApiResponse.ok(authService.completeSignup(UUID.fromString(userId), request)));
+    }
+
+    @PostMapping("/signup/complete")
+    public ResponseEntity<ApiResponse<SignupFinalizeResponse>> finalizeSignup(
+            @AuthenticationPrincipal String userId) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.finalizeSignup(UUID.fromString(userId))));
     }
 
     @GetMapping("/nickname/duplicate-check")

@@ -33,7 +33,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Set<String> WHITELIST = Set.of(
             "POST /v1/auth/login",
             "POST /v1/auth/refresh",
-            "GET /actuator/health"
+            "GET /v1/health"
     );
 
     private final JwtTokenService jwtTokenService;
