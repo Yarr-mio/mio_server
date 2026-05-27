@@ -33,11 +33,8 @@ public class GlobalExceptionHandler {
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining(", "));
         log.warn("ValidationException: {}", message);
-        var error = ErrorResponse.builder()
-                .success(false)
-                .error(new ErrorResponse.ErrorDetail(ErrorCode.INVALID_INPUT.getCode(), message))
-                .meta(new ErrorResponse.Meta(getTraceId(request)))
-                .build();
+        var error = new ErrorResponse(
+                new ErrorResponse.ErrorDetail(ErrorCode.INVALID_INPUT.getCode(), message, getTraceId(request)));
         return ResponseEntity.badRequest().body(error);
     }
 
