@@ -51,6 +51,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("1단계 제출 성공 시 onboarding_step이 1을 반환한다")
     void submitStep1_success_returnsStep1() {
+        mockUser.completeProfile("테스트", null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -61,6 +62,19 @@ class OnboardingServiceTest {
 
         assertThat(response.onboardingStep()).isEqualTo(1);
         assertThat(mockUser.getOnboardingStep()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("1단계는 PROFILE_COMPLETED 이전 signupStep이면 ONBOARDING_STEP_NOT_COMPLETED 예외를 발생시킨다")
+    void submitStep1_signupStepNotReady_throws() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.submitStep1(
+                userId, new OnboardingStep1Request("anxious", List.of())
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.onboarding.dto.*;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserOnboardingAnswer;
 import com.mio.user.repository.UserOnboardingAnswerRepository;
@@ -48,6 +49,9 @@ public class OnboardingService {
         }
 
         User user = findUser(userId);
+        if (user.getSignupStep().ordinal() < SignupStep.PROFILE_COMPLETED.ordinal()) {
+            throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
+        }
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
         answer.updateStep1(request.emotionState(), toJson(request.responses()));
         user.updateOnboardingStep(1);
