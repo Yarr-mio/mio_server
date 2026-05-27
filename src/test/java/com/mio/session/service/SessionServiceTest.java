@@ -176,6 +176,22 @@ class SessionServiceTest {
     }
 
     @Test
+    @DisplayName("온보딩 미완료 사용자가 활성 세션 조회 시 ONBOARDING_REQUIRED 예외가 발생한다")
+    void getActiveSession_onboardingIncomplete_throws() {
+        User incompleteUser = User.builder()
+                .socialProvider("kakao")
+                .socialId("test-id")
+                .privacyConsent(true)
+                .build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(incompleteUser));
+
+        assertThatThrownBy(() -> sessionService.getActiveSession(userId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_REQUIRED));
+    }
+
+    @Test
     @DisplayName("이미 종료된 세션을 종료하면 SESSION_ALREADY_ENDED 예외가 발생한다")
     void endSession_alreadyEnded_throws() {
         UUID sessionId = UUID.randomUUID();
