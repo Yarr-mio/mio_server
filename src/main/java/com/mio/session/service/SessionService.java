@@ -66,6 +66,10 @@ public class SessionService {
 
     @Transactional(readOnly = true)
     public Optional<ActiveSessionResponse> getActiveSession(UUID userId) {
+        User user = findUser(userId);
+        if (!user.getSignupStep().isOnboardingComplete()) {
+            throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
+        }
         return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)
                 .map(ActiveSessionResponse::from);
     }
