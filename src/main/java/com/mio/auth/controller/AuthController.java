@@ -3,6 +3,8 @@ package com.mio.auth.controller;
 import com.mio.auth.dto.*;
 import com.mio.auth.service.AuthService;
 import com.mio.auth.service.RefreshTokenService;
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -11,6 +13,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.security.Principal;
 import java.util.Map;
 import java.util.UUID;
 
@@ -34,10 +37,8 @@ public class AuthController {
     }
 
     @PostMapping("/signup/complete")
-    public ResponseEntity<ApiResponse<SignupCompleteResponse>> completeSignup(
-            @AuthenticationPrincipal String userId,
-            @Valid @RequestBody SignupCompleteRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(authService.completeSignup(UUID.fromString(userId), request)));
+    public ResponseEntity<ApiResponse<SignupCompleteResponse>> completeSignup(Principal principal) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.completeSignup(resolveUserId(principal))));
     }
 
     @GetMapping("/nickname/duplicate-check")
@@ -66,5 +67,16 @@ public class AuthController {
     public ResponseEntity<ApiResponse<WithdrawResponse>> withdraw(
             @AuthenticationPrincipal String userId) {
         return ResponseEntity.ok(ApiResponse.ok(authService.withdraw(UUID.fromString(userId))));
+    }
+
+    private UUID resolveUserId(Principal principal) {
+        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        try {
+            return UUID.fromString(principal.getName());
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
     }
 }

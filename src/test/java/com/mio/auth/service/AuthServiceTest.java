@@ -7,7 +7,6 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
-import com.mio.user.repository.UserConsentRepository;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,7 +29,6 @@ class AuthServiceTest {
 
     @Mock private SocialAuthProvider kakaoProvider;
     @Mock private UserRepository userRepository;
-    @Mock private UserConsentRepository userConsentRepository;
     @Mock private JwtTokenService jwtTokenService;
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private RefreshTokenRedisRepository refreshTokenRedisRepository;
@@ -47,7 +45,7 @@ class AuthServiceTest {
         lenient().when(userRepository.findBySocialProviderAndSocialId(any(), any()))
                 .thenReturn(Optional.empty());
         authService = new AuthService(
-                List.of(kakaoProvider), userRepository, userConsentRepository,
+                List.of(kakaoProvider), userRepository,
                 jwtTokenService, refreshTokenService, refreshTokenRedisRepository
         );
     }
@@ -146,66 +144,39 @@ class AuthServiceTest {
     // ──────────────── completeSignup ────────────────
 
     @Test
-    @DisplayName("유효한 동의 항목과 닉네임으로 회원가입을 완료한다")
-    void completeSignup_validRequest_returnsResponse() {
-        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
+    @DisplayName("ONBOARDING_COMPLETED 상태에서 가입 완료 시 signupStep=COMPLETED, status=ACTIVE를 반환한다")
+    void completeSignup_onboardingCompleted_returnsActiveCompleted() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.ONBOARDING_COMPLETED, "PENDING");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(userRepository.existsByNickname("닉네임")).thenReturn(false);
 
-        SignupCompleteRequest request = new SignupCompleteRequest(
-                "닉네임", "20대", "male",
-                List.of(
-                        new SignupCompleteRequest.ConsentItem("terms", true, "v1"),
-                        new SignupCompleteRequest.ConsentItem("privacy", true, "v1")
-                )
-        );
+        SignupCompleteResponse response = authService.completeSignup(USER_ID);
 
-        SignupCompleteResponse response = authService.completeSignup(USER_ID, request);
-
-        assertThat(response.nickname()).isEqualTo("닉네임");
-        assertThat(user.getSignupStep()).isEqualTo(SignupStep.PROFILE_COMPLETED);
+        assertThat(response.signupStep()).isEqualTo(SignupStep.COMPLETED);
+        assertThat(response.status()).isEqualTo("ACTIVE");
     }
 
     @Test
-    @DisplayName("SOCIAL_AUTHENTICATED 단계가 아니면 SIGNUP_STEP_INVALID를 던진다")
-    void completeSignup_wrongStep_throwsStepInvalid() {
-        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.PROFILE_COMPLETED, "ACTIVE");
+    @DisplayName("이미 COMPLETED 상태면 현재 상태를 그대로 반환한다 (멱등)")
+    void completeSignup_alreadyCompleted_returnsIdempotently() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.COMPLETED, "ACTIVE");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> authService.completeSignup(USER_ID, buildCompleteRequest("닉네임")))
+        SignupCompleteResponse response = authService.completeSignup(USER_ID);
+
+        assertThat(response.signupStep()).isEqualTo(SignupStep.COMPLETED);
+        assertThat(response.status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    @DisplayName("ONBOARDING_COMPLETED 상태가 아니면 SIGNUP_STEP_INVALID를 던진다")
+    void completeSignup_wrongStep_throwsStepInvalid() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.PROFILE_COMPLETED, "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.completeSignup(USER_ID))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.SIGNUP_STEP_INVALID));
-    }
-
-    @Test
-    @DisplayName("terms 동의가 없으면 CONSENT_REQUIRED를 던진다")
-    void completeSignup_missingTermsConsent_throwsConsentRequired() {
-        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-
-        SignupCompleteRequest request = new SignupCompleteRequest(
-                "닉네임", "20대", "male",
-                List.of(new SignupCompleteRequest.ConsentItem("privacy", true, "v1"))
-        );
-
-        assertThatThrownBy(() -> authService.completeSignup(USER_ID, request))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.CONSENT_REQUIRED));
-    }
-
-    @Test
-    @DisplayName("이미 사용 중인 닉네임이면 NICKNAME_DUPLICATE를 던진다")
-    void completeSignup_duplicateNickname_throwsDuplicate() {
-        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.SOCIAL_AUTHENTICATED, "PENDING");
-        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
-        when(userRepository.existsByNickname("중복닉네임")).thenReturn(true);
-
-        assertThatThrownBy(() -> authService.completeSignup(USER_ID, buildCompleteRequest("중복닉네임")))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.NICKNAME_DUPLICATE));
     }
 
     // ──────────────── checkNicknameDuplicate ────────────────
@@ -250,13 +221,4 @@ class AuthServiceTest {
                 .build();
     }
 
-    private SignupCompleteRequest buildCompleteRequest(String nickname) {
-        return new SignupCompleteRequest(
-                nickname, "20대", "male",
-                List.of(
-                        new SignupCompleteRequest.ConsentItem("terms", true, "v1"),
-                        new SignupCompleteRequest.ConsentItem("privacy", true, "v1")
-                )
-        );
-    }
 }

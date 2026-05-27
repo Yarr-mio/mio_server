@@ -48,12 +48,6 @@ public class OnboardingController {
         return ResponseEntity.ok(ApiResponse.ok(onboardingService.selectCharacter(resolveUserId(principal), request)));
     }
 
-    @PostMapping("/complete")
-    public ResponseEntity<ApiResponse<SignupCompleteResponse>> completeSignup(
-            Principal principal) {
-        return ResponseEntity.ok(ApiResponse.ok(onboardingService.completeSignup(resolveUserId(principal))));
-    }
-
     @GetMapping("/status")
     public ResponseEntity<ApiResponse<OnboardingStatusResponse>> getStatus(
             Principal principal) {

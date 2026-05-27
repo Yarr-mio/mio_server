@@ -5,7 +5,6 @@ import com.mio.user.domain.SignupStep;
 
 public record SignupCompleteResponse(
         @JsonProperty("signup_step") SignupStep signupStep,
-        @JsonProperty("onboarding_step") int onboardingStep,
-        String nickname
+        String status
 ) {
 }

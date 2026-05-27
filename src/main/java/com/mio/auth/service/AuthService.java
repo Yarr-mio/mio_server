@@ -7,8 +7,6 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
-import com.mio.user.domain.UserConsent;
-import com.mio.user.repository.UserConsentRepository;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -30,7 +28,6 @@ public class AuthService {
 
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
-    private final UserConsentRepository userConsentRepository;
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
     private final RefreshTokenRedisRepository refreshTokenRedisRepository;
@@ -103,39 +100,19 @@ public class AuthService {
     }
 
     @Transactional
-    public SignupCompleteResponse completeSignup(UUID userId, SignupCompleteRequest request) {
+    public SignupCompleteResponse completeSignup(UUID userId) {
         User user = findUser(userId);
 
-        if (user.getSignupStep() != SignupStep.SOCIAL_AUTHENTICATED) {
+        if (user.getSignupStep() == SignupStep.COMPLETED) {
+            return new SignupCompleteResponse(user.getSignupStep(), user.getStatus());
+        }
+
+        if (user.getSignupStep() != SignupStep.ONBOARDING_COMPLETED) {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 
-        boolean hasTerms = false, hasPrivacy = false;
-        for (SignupCompleteRequest.ConsentItem item : request.consents()) {
-            if ("terms".equals(item.type()) && item.agreed()) hasTerms = true;
-            if ("privacy".equals(item.type()) && item.agreed()) hasPrivacy = true;
-        }
-        if (!hasTerms || !hasPrivacy) {
-            throw new BusinessException(ErrorCode.CONSENT_REQUIRED);
-        }
-
-        if (userRepository.existsByNickname(request.nickname())) {
-            throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
-        }
-
-        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
-
-        List<UserConsent> consents = request.consents().stream()
-                .map(item -> UserConsent.builder()
-                        .user(user)
-                        .consentType(item.type())
-                        .agreed(item.agreed())
-                        .version(item.version())
-                        .build())
-                .toList();
-        userConsentRepository.saveAll(consents);
-
-        return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
+        user.completeSignup();
+        return new SignupCompleteResponse(user.getSignupStep(), user.getStatus());
     }
 
     @Transactional(readOnly = true)
