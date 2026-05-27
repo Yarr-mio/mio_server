@@ -254,4 +254,51 @@ class OnboardingServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.USER_NOT_FOUND));
     }
+
+    @Test
+    @DisplayName("가입 완료 성공 시 signupStep=COMPLETED, status=ACTIVE를 반환한다")
+    void completeSignup_success_returnsCompleted() {
+        mockUser.completeOnboarding("mio");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        SignupCompleteResponse response = onboardingService.completeSignup(userId);
+
+        assertThat(response.signupStep()).isEqualTo(SignupStep.COMPLETED);
+        assertThat(response.status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    @DisplayName("이미 COMPLETED 상태면 현재 상태를 그대로 반환한다 (멱등)")
+    void completeSignup_alreadyCompleted_returnsIdempotently() {
+        mockUser.completeOnboarding("mio");
+        mockUser.completeSignup();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        SignupCompleteResponse response = onboardingService.completeSignup(userId);
+
+        assertThat(response.signupStep()).isEqualTo(SignupStep.COMPLETED);
+        assertThat(response.status()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    @DisplayName("ONBOARDING_COMPLETED 상태가 아니면 SIGNUP_STEP_INVALID 예외를 발생시킨다")
+    void completeSignup_wrongStep_throwsSignupStepInvalid() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.completeSignup(userId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SIGNUP_STEP_INVALID));
+    }
+
+    @Test
+    @DisplayName("가입 완료 시 사용자를 찾을 수 없으면 USER_NOT_FOUND 예외를 발생시킨다")
+    void completeSignup_userNotFound_throws() {
+        when(userRepository.findById(userId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> onboardingService.completeSignup(userId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.USER_NOT_FOUND));
+    }
 }

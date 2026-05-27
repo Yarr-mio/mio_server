@@ -43,6 +43,21 @@ class UserTest {
     }
 
     @Test
+    @DisplayName("completeSignup은 signupStep을 COMPLETED로, status를 ACTIVE로 바꾼다")
+    void completeSignup_setsCompletedAndActive() {
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("social-id")
+                .privacyConsent(true)
+                .build();
+
+        user.completeSignup();
+
+        assertThat(user.getSignupStep()).isEqualTo(SignupStep.COMPLETED);
+        assertThat(user.getStatus()).isEqualTo("ACTIVE");
+    }
+
+    @Test
     @DisplayName("softDelete는 deletedAt을 UTC로 저장하고 상태를 DELETED로 바꾼다")
     void softDelete_setsUtcDeletedAt() {
         User user = User.builder()

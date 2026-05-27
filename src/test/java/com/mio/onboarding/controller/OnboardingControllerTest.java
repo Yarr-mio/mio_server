@@ -178,4 +178,38 @@ class OnboardingControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
+
+    @Test
+    @DisplayName("POST /v1/onboarding/complete - 성공 시 signup_step=COMPLETED, status=ACTIVE 반환")
+    void completeSignup_success_returns200() throws Exception {
+        when(onboardingService.completeSignup(TEST_USER_ID))
+                .thenReturn(new SignupCompleteResponse(SignupStep.COMPLETED, "ACTIVE"));
+
+        mockMvc.perform(post("/v1/onboarding/complete")
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.signup_step").value("COMPLETED"))
+                .andExpect(jsonPath("$.data.status").value("ACTIVE"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/onboarding/complete - 잘못된 가입 단계면 403 반환")
+    void completeSignup_wrongStep_returns403() throws Exception {
+        when(onboardingService.completeSignup(TEST_USER_ID))
+                .thenThrow(new BusinessException(ErrorCode.SIGNUP_STEP_INVALID));
+
+        mockMvc.perform(post("/v1/onboarding/complete")
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.error.code").value("SIGNUP_STEP_INVALID"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/onboarding/complete - principal 없으면 401 반환")
+    void completeSignup_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/onboarding/complete"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
 }

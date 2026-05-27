@@ -1,8 +1,9 @@
 package com.mio.onboarding.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.user.domain.SignupStep;
 
 public record SignupCompleteResponse(
-        SignupStep signupStep,
+        @JsonProperty("signup_step") SignupStep signupStep,
         String status
 ) {}
