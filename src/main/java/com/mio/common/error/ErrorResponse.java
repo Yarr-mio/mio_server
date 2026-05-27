@@ -10,6 +10,10 @@ public record ErrorResponse(ErrorDetail error) {
         return new ErrorResponse(new ErrorDetail(errorCode.getCode(), errorCode.getMessage(), traceId));
     }
 
+    public static ErrorResponse of(ErrorCode errorCode, String customMessage, String traceId) {
+        return new ErrorResponse(new ErrorDetail(errorCode.getCode(), customMessage, traceId));
+    }
+
     public record ErrorDetail(
             String code,
             String message,
