@@ -8,7 +8,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
@@ -32,9 +31,7 @@ class KakaoAuthProviderTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder();
         mockServer = MockRestServiceServer.bindTo(builder).build();
-        provider = new KakaoAuthProvider(new ObjectMapper(), builder);
-        ReflectionTestUtils.setField(provider, "kakaoApiUrl", KAKAO_API_URL);
-        ReflectionTestUtils.setField(provider, "kakaoAppId", TEST_APP_ID);
+        provider = new KakaoAuthProvider(KAKAO_API_URL, TEST_APP_ID, new ObjectMapper(), builder);
     }
 
     @Test

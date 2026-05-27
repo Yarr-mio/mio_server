@@ -18,16 +18,18 @@ public class KakaoAuthProvider implements SocialAuthProvider {
     private static final String USER_INFO_PATH = "/v2/user/me";
     private static final int MAX_RETRY = 3;
 
-    @Value("${kakao.api-url}")
-    private String kakaoApiUrl;
-
-    @Value("${kakao.app-id}")
-    private long kakaoAppId;
-
+    private final String kakaoApiUrl;
+    private final long kakaoAppId;
     private final ObjectMapper objectMapper;
     private final RestClient restClient;
 
-    public KakaoAuthProvider(ObjectMapper objectMapper, RestClient.Builder restClientBuilder) {
+    public KakaoAuthProvider(
+            @Value("${kakao.api-url}") String kakaoApiUrl,
+            @Value("${kakao.app-id}") long kakaoAppId,
+            ObjectMapper objectMapper,
+            RestClient.Builder restClientBuilder) {
+        this.kakaoApiUrl = kakaoApiUrl;
+        this.kakaoAppId = kakaoAppId;
         this.objectMapper = objectMapper;
         this.restClient = restClientBuilder.build();
     }
