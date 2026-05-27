@@ -150,6 +150,7 @@ class SessionServiceTest {
     @Test
     @DisplayName("활성 세션이 없으면 getActiveSession은 Optional.empty를 반환한다")
     void getActiveSession_noSession_returnsNull() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(Optional.empty());
 
         Optional<ActiveSessionResponse> response = sessionService.getActiveSession(userId);
@@ -160,6 +161,7 @@ class SessionServiceTest {
     @Test
     @DisplayName("활성 세션이 있으면 getActiveSession은 세션 정보를 반환한다")
     void getActiveSession_hasSession_returnsSession() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         Session session = Session.builder()
                 .user(mockUser)
                 .characterId("mio")
