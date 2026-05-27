@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.onboarding.dto.*;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserOnboardingAnswer;
 import com.mio.user.repository.UserOnboardingAnswerRepository;
@@ -119,6 +120,22 @@ public class OnboardingService {
 
         user.completeOnboarding(characterId);
         return new CharacterSelectResponse(user.getPreferredCharacterId(), user.getSignupStep());
+    }
+
+    @Transactional
+    public SignupCompleteResponse completeSignup(UUID userId) {
+        User user = findUser(userId);
+
+        if (user.getSignupStep() == SignupStep.COMPLETED) {
+            return new SignupCompleteResponse(user.getSignupStep(), user.getStatus());
+        }
+
+        if (user.getSignupStep() != SignupStep.ONBOARDING_COMPLETED) {
+            throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
+        }
+
+        user.completeSignup();
+        return new SignupCompleteResponse(user.getSignupStep(), user.getStatus());
     }
 
     @Transactional(readOnly = true)

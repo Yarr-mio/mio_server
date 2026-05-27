@@ -112,6 +112,11 @@ public class User {
         this.signupStep = SignupStep.PROFILE_COMPLETED;
     }
 
+    public void completeSignup() {
+        this.signupStep = SignupStep.COMPLETED;
+        activate();
+    }
+
     public void activate() {
         this.status = "ACTIVE";
     }
