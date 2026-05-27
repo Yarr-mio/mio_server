@@ -77,7 +77,7 @@ public class KakaoAuthProvider implements SocialAuthProvider {
                 .body(String.class);
         try {
             JsonNode root = objectMapper.readTree(body);
-            if (root.path("appId").asLong() != kakaoAppId) {
+            if (root.path("app_id").asLong() != kakaoAppId) {
                 throw new BusinessException(ErrorCode.OAUTH_FAILED);
             }
         } catch (BusinessException e) {

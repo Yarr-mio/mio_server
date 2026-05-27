@@ -43,7 +43,7 @@ class KakaoAuthProviderTest {
         mockServer.expect(requestTo(TOKEN_INFO_URL))
                 .andExpect(header("Authorization", "Bearer test-token"))
                 .andRespond(withSuccess("""
-                        {"id": 123456789, "appId": 12345, "expiresInMillis": 7775971}
+                        {"id": 123456789, "app_id": 12345, "expires_in": 7775971}
                         """, MediaType.APPLICATION_JSON));
         mockServer.expect(requestTo(USER_INFO_URL))
                 .andExpect(header("Authorization", "Bearer test-token"))
@@ -63,7 +63,7 @@ class KakaoAuthProviderTest {
     void verify_noEmail_returnsSocialIdOnly() {
         mockServer.expect(requestTo(TOKEN_INFO_URL))
                 .andRespond(withSuccess("""
-                        {"id": 999888777, "appId": 12345, "expiresInMillis": 7775971}
+                        {"id": 999888777, "app_id": 12345, "expires_in": 7775971}
                         """, MediaType.APPLICATION_JSON));
         mockServer.expect(requestTo(USER_INFO_URL))
                 .andRespond(withSuccess("""
@@ -81,7 +81,7 @@ class KakaoAuthProviderTest {
     void verify_wrongAppId_throwsOauthFailed() {
         mockServer.expect(requestTo(TOKEN_INFO_URL))
                 .andRespond(withSuccess("""
-                        {"id": 123456789, "appId": 99999, "expiresInMillis": 7775971}
+                        {"id": 123456789, "app_id": 99999, "expires_in": 7775971}
                         """, MediaType.APPLICATION_JSON));
 
         assertThatThrownBy(() -> provider.verify("other-app-token"))
@@ -95,7 +95,7 @@ class KakaoAuthProviderTest {
     void verify_missingId_throwsOauthFailed() {
         mockServer.expect(requestTo(TOKEN_INFO_URL))
                 .andRespond(withSuccess("""
-                        {"id": 123456789, "appId": 12345, "expiresInMillis": 7775971}
+                        {"id": 123456789, "app_id": 12345, "expires_in": 7775971}
                         """, MediaType.APPLICATION_JSON));
         mockServer.expect(requestTo(USER_INFO_URL))
                 .andRespond(withSuccess("""
