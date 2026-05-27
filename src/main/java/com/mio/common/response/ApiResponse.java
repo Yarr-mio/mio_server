@@ -27,11 +27,7 @@ public record ApiResponse<T>(
                 .build();
     }
 
-    public static <T> ApiResponse<T> ok(T data, String traceId) {
-        return ok(data, Meta.trace(traceId));
-    }
-
-    public record Meta(
+public record Meta(
             @JsonProperty("trace_id") String traceId,
             @JsonProperty("next_cursor") String nextCursor,
             @JsonProperty("has_more") Boolean hasMore
