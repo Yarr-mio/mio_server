@@ -1,6 +1,7 @@
 package com.mio.dailytest.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -44,13 +46,21 @@ public class DailyTestService {
         DailyTest test = dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))
                 .orElseThrow(() -> new BusinessException(ErrorCode.DAILY_TEST_NOT_FOUND));
 
+        DailyTestContent content = parseContent(test.getContent());
+
         return dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, test.getId())
-                .map(resp -> DailyTestTodayResponse.completed(test.getId(), resp.getResultSummary()))
+                .map(resp -> {
+                    Map<String, String> storedAnswers = deserializeAnswers(resp.getAnswers());
+                    DailyTestResultEngine.TestResult rerun = resultEngine.calculate(content, storedAnswers);
+                    return DailyTestTodayResponse.completed(
+                            new DailyTestTodayResponse.ResultDto(resp.getResultSummary(), rerun.tags())
+                    );
+                })
                 .orElseGet(() -> DailyTestTodayResponse.pending(
                         test.getId(),
                         test.getTitle(),
-                        test.getDescription(),
-                        mapToQuestionDtos(parseContent(test.getContent()))
+                        3,
+                        mapToQuestionDtos(content)
                 ));
     }
 
@@ -71,19 +81,22 @@ public class DailyTestService {
         }
 
         DailyTestContent content = parseContent(test.getContent());
-        String resultSummary = resultEngine.calculate(content, request.answers());
+        DailyTestResultEngine.TestResult testResult = resultEngine.calculate(content, request.answers());
         String answersJson = serializeAnswers(request.answers());
 
         DailyTestResponse response = DailyTestResponse.builder()
                 .user(user)
                 .dailyTest(test)
                 .answers(answersJson)
-                .resultSummary(resultSummary)
+                .resultSummary(testResult.summary())
                 .build();
 
         try {
             DailyTestResponse saved = dailyTestResponseRepository.save(response);
-            return new DailyTestResultResponse(saved.getId(), testId, resultSummary);
+            DailyTestResultResponse.ResultDto resultDto = new DailyTestResultResponse.ResultDto(
+                    testResult.summary(), testResult.description(), testResult.tags(), testResult.characterComment()
+            );
+            return new DailyTestResultResponse(resultDto, saved.getCreatedAt());
         } catch (DataIntegrityViolationException e) {
             if (isDuplicateResponseViolation(e)) {
                 throw new BusinessException(ErrorCode.DAILY_TEST_ALREADY_COMPLETED);
@@ -115,6 +128,14 @@ public class DailyTestService {
             throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
         } catch (IllegalArgumentException e) {
             throw new BusinessException(ErrorCode.INVALID_DAILY_TEST_CONTENT);
+        }
+    }
+
+    private Map<String, String> deserializeAnswers(String answersJson) {
+        try {
+            return objectMapper.readValue(answersJson, new TypeReference<>() {});
+        } catch (JsonProcessingException e) {
+            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
         }
     }
 

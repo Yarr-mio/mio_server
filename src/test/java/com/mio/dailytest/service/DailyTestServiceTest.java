@@ -23,6 +23,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -111,7 +114,7 @@ class DailyTestServiceTest {
 
         DailyTestTodayResponse response = service.getTodayTest(userId);
 
-        assertThat(response.status()).isEqualTo("pending");
+        assertThat(response.completedToday()).isFalse();
         assertThat(response.testId()).isEqualTo(testId);
         assertThat(response.questions()).hasSize(1);
     }
@@ -125,11 +128,14 @@ class DailyTestServiceTest {
         when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.of(existingResponse));
+        when(resultEngine.calculate(any(), any())).thenReturn(
+                new DailyTestResultEngine.TestResult("안정된 하루", "설명", List.of("neutral"), "미오")
+        );
 
         DailyTestTodayResponse response = service.getTodayTest(userId);
 
-        assertThat(response.status()).isEqualTo("completed");
-        assertThat(response.resultSummary()).isEqualTo("안정된 하루");
+        assertThat(response.completedToday()).isTrue();
+        assertThat(response.result().summary()).isEqualTo("안정된 하루");
     }
 
     @Test
@@ -149,8 +155,6 @@ class DailyTestServiceTest {
                 """);
         when(userRepository.findById(userId)).thenReturn(Optional.of(onboardedUser));
         when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
-        when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
-                .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.getTodayTest(userId))
                 .isInstanceOf(BusinessException.class)
@@ -199,16 +203,19 @@ class DailyTestServiceTest {
         when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.empty());
-        when(resultEngine.calculate(any(), any())).thenReturn("오늘은 비교적 안정된 하루였네요.");
+        when(resultEngine.calculate(any(), any())).thenReturn(
+                new DailyTestResultEngine.TestResult("오늘은 비교적 안정된 하루였네요.", "설명", List.of("neutral"), "미오")
+        );
 
         DailyTestResponse savedResponse = buildDailyTestResponse(test, "오늘은 비교적 안정된 하루였네요.");
+        ReflectionTestUtils.setField(savedResponse, "createdAt", OffsetDateTime.now(ZoneOffset.UTC));
         when(dailyTestResponseRepository.save(any())).thenReturn(savedResponse);
 
         AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
         DailyTestResultResponse result = service.submitAnswer(userId, testId, request);
 
-        assertThat(result.testId()).isEqualTo(testId);
-        assertThat(result.resultSummary()).isEqualTo("오늘은 비교적 안정된 하루였네요.");
+        assertThat(result.completedAt()).isNotNull();
+        assertThat(result.result().summary()).isEqualTo("오늘은 비교적 안정된 하루였네요.");
     }
 
     @Test
@@ -219,7 +226,9 @@ class DailyTestServiceTest {
         when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.empty());
-        when(resultEngine.calculate(any(), any())).thenReturn("오늘은 비교적 안정된 하루였네요.");
+        when(resultEngine.calculate(any(), any())).thenReturn(
+                new DailyTestResultEngine.TestResult("오늘은 비교적 안정된 하루였네요.", "설명", List.of("neutral"), "미오")
+        );
         when(dailyTestResponseRepository.save(any()))
                 .thenThrow(new DataIntegrityViolationException(
                         "save failed",
@@ -242,7 +251,9 @@ class DailyTestServiceTest {
         when(dailyTestRepository.findById(testId)).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.empty());
-        when(resultEngine.calculate(any(), any())).thenReturn("오늘은 비교적 안정된 하루였네요.");
+        when(resultEngine.calculate(any(), any())).thenReturn(
+                new DailyTestResultEngine.TestResult("오늘은 비교적 안정된 하루였네요.", "설명", List.of("neutral"), "미오")
+        );
         when(dailyTestResponseRepository.save(any()))
                 .thenThrow(new DataIntegrityViolationException(
                         "save failed",
