@@ -32,7 +32,9 @@ class DailyTestResultEngineTest {
         Map<String, String> answers = Map.of("q1", "q1_a", "q2", "q2_a"); // 0+0=0
         DailyTestResultEngine.TestResult result = engine.calculate(CONTENT, answers);
         assertThat(result.summary()).isEqualTo("오늘은 비교적 안정된 하루였네요.");
+        assertThat(result.description()).isEqualTo("감정이 안정적으로 유지된 하루예요. 작은 스트레스도 잘 다루고 있어요.");
         assertThat(result.tags()).containsExactlyInAnyOrder("neutral");
+        assertThat(result.characterComment()).isEqualTo("미오가 말해요: 차분하게 하루를 보낸 네가 대단해 🐧");
     }
 
     @Test
@@ -41,7 +43,9 @@ class DailyTestResultEngineTest {
         Map<String, String> answers = Map.of("q1", "q1_b", "q2", "q2_b"); // 2+3=5
         DailyTestResultEngine.TestResult result = engine.calculate(CONTENT, answers);
         assertThat(result.summary()).isEqualTo("감정의 기복이 있었던 하루군요.");
+        assertThat(result.description()).isEqualTo("다소 감정의 변화가 있었던 하루예요. 잠시 숨을 고르는 시간을 가져보세요.");
         assertThat(result.tags()).containsExactlyInAnyOrder("moderate");
+        assertThat(result.characterComment()).isEqualTo("미오가 말해요: 기복이 있어도 잘 헤쳐나가고 있어 🐧");
     }
 
     @Test
@@ -50,7 +54,9 @@ class DailyTestResultEngineTest {
         Map<String, String> answers = Map.of("q1", "q1_c", "q2", "q2_c"); // 4+5=9
         DailyTestResultEngine.TestResult result = engine.calculate(CONTENT, answers);
         assertThat(result.summary()).isEqualTo("힘든 하루를 보냈군요. 충분히 쉬어요.");
+        assertThat(result.description()).isEqualTo("오늘은 많이 지쳤을 거예요. 자신을 위한 시간을 충분히 가져보세요.");
         assertThat(result.tags()).containsExactlyInAnyOrder("high");
+        assertThat(result.characterComment()).isEqualTo("미오가 말해요: 힘들었겠지만 여기까지 온 것만으로도 충분해 🐧");
     }
 
     @Test

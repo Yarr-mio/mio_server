@@ -128,14 +128,15 @@ class DailyTestServiceTest {
         when(dailyTestRepository.findByActiveDate(LocalDate.now(AppConstants.ZONE))).thenReturn(Optional.of(test));
         when(dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, testId))
                 .thenReturn(Optional.of(existingResponse));
+        // 재계산 결과는 저장된 summary와 다른 값 사용 → summary 출처가 DB임을 검증
         when(resultEngine.calculate(any(), any())).thenReturn(
-                new DailyTestResultEngine.TestResult("안정된 하루", "설명", List.of("neutral"), "미오")
+                new DailyTestResultEngine.TestResult("재계산된_다른_요약", "설명", List.of("neutral"), "미오")
         );
 
         DailyTestTodayResponse response = service.getTodayTest(userId);
 
         assertThat(response.completedToday()).isTrue();
-        assertThat(response.result().summary()).isEqualTo("안정된 하루");
+        assertThat(response.result().summary()).isEqualTo("안정된 하루"); // 저장된 값 사용
     }
 
     @Test
@@ -208,14 +209,18 @@ class DailyTestServiceTest {
         );
 
         DailyTestResponse savedResponse = buildDailyTestResponse(test, "오늘은 비교적 안정된 하루였네요.");
-        ReflectionTestUtils.setField(savedResponse, "createdAt", OffsetDateTime.now(ZoneOffset.UTC));
+        OffsetDateTime fixedAt = OffsetDateTime.of(2026, 5, 28, 12, 0, 0, 0, ZoneOffset.UTC);
+        ReflectionTestUtils.setField(savedResponse, "createdAt", fixedAt);
         when(dailyTestResponseRepository.save(any())).thenReturn(savedResponse);
 
         AnswerSubmitRequest request = new AnswerSubmitRequest(Map.of("q1", "q1_a"));
         DailyTestResultResponse result = service.submitAnswer(userId, testId, request);
 
-        assertThat(result.completedAt()).isNotNull();
+        assertThat(result.completedAt()).isEqualTo(fixedAt);
         assertThat(result.result().summary()).isEqualTo("오늘은 비교적 안정된 하루였네요.");
+        assertThat(result.result().description()).isEqualTo("설명");
+        assertThat(result.result().tags()).containsExactly("neutral");
+        assertThat(result.result().characterComment()).isEqualTo("미오");
     }
 
     @Test

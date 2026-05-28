@@ -28,7 +28,7 @@ public class DailyTestResultEngine {
         int totalScore = content.questions().stream()
                 .mapToInt(q -> {
                     String selectedOptionId = answers.get(q.id());
-                    if (selectedOptionId == null) return 0;
+                    if (selectedOptionId == null || q.options() == null) return 0;
                     return q.options().stream()
                             .filter(o -> o.id().equals(selectedOptionId))
                             .mapToInt(DailyTestContent.Option::score)
@@ -40,10 +40,10 @@ public class DailyTestResultEngine {
         List<String> tags = content.questions().stream()
                 .flatMap(q -> {
                     String selectedOptionId = answers.get(q.id());
-                    if (selectedOptionId == null) return Stream.empty();
+                    if (selectedOptionId == null || q.options() == null) return Stream.empty();
                     return q.options().stream()
                             .filter(o -> o.id().equals(selectedOptionId))
-                            .flatMap(o -> o.tags() != null ? o.tags().stream() : Stream.empty());
+                            .flatMap(o -> o.tags() != null ? o.tags().stream().filter(t -> t != null) : Stream.empty());
                 })
                 .distinct()
                 .toList();

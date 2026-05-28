@@ -2,6 +2,7 @@ package com.mio.todo.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.todo.domain.BehaviorTask;
+import com.mio.todo.domain.TaskStatus;
 
 public record TodoCheckinResponse(
         String status,
@@ -19,7 +20,7 @@ public record TodoCheckinResponse(
     private static final String REACTION_SKIPPED = "괜찮아, 다음에 또 도전해봐요!";
 
     public static TodoCheckinResponse from(BehaviorTask task) {
-        String reaction = "completed".equals(task.getStatus().value())
+        String reaction = TaskStatus.COMPLETED == task.getStatus()
                 ? REACTION_COMPLETED
                 : REACTION_SKIPPED;
         return new TodoCheckinResponse(

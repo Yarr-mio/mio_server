@@ -69,7 +69,9 @@ class TodoControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.todos").isArray())
-                .andExpect(jsonPath("$.data.todos.length()").value(2));
+                .andExpect(jsonPath("$.data.todos.length()").value(2))
+                .andExpect(jsonPath("$.data.todos[0].character_comment").isNotEmpty())
+                .andExpect(jsonPath("$.data.todos[1].character_comment").isNotEmpty());
     }
 
     @Test
@@ -114,7 +116,8 @@ class TodoControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.todos").isArray())
-                .andExpect(jsonPath("$.data.todos.length()").value(1));
+                .andExpect(jsonPath("$.data.todos.length()").value(1))
+                .andExpect(jsonPath("$.data.todos[0].character_comment").isNotEmpty());
     }
 
     @Test
