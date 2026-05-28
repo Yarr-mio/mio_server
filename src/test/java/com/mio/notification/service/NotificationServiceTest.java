@@ -148,7 +148,7 @@ class NotificationServiceTest {
                 .notificationStatus("SENT")
                 .sentAt(OffsetDateTime.now())
                 .build();
-        when(proactiveCareLogRepository.findByIdAndUser_Id(notificationId, userId)).thenReturn(Optional.of(logEntry));
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
 
         NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
 

@@ -19,6 +19,8 @@ public class NotificationMessageMapper {
                     new NotificationMessage("마음 살피기", "요즘 힘들어 보여서요. 잠깐 마음을 들여다볼까요?");
             case "report_weekly" ->
                     new NotificationMessage("주간 리포트", "이번 주 리포트가 준비됐어요. 지금 확인해보세요.");
+            case "crisis_detected" ->
+                    new NotificationMessage("마음이 걱정돼요", "미오가 함께할게요. 지금 대화를 시작해보세요.");
             default ->
                     new NotificationMessage("Mio 알림", "새로운 알림이 도착했어요.");
         };

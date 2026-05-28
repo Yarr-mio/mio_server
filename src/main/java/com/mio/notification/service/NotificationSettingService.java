@@ -40,8 +40,14 @@ public class NotificationSettingService {
 
     @Transactional
     public NotificationSettingResponse update(UUID userId, NotificationSettingUpdateRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
         NotificationSetting setting = notificationSettingRepository.findByUser_Id(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
+                .orElseGet(() -> notificationSettingRepository.save(
+                        NotificationSetting.builder()
+                                .user(user)
+                                .build()
+                ));
 
         LocalTime morningTime = parseTime(request.checkinTime() == null ? null : request.checkinTime().morning());
         LocalTime afternoonTime = parseTime(request.checkinTime() == null ? null : request.checkinTime().afternoon());

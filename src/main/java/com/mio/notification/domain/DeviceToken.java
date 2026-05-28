@@ -34,6 +34,9 @@ public class DeviceToken {
     @Column(name = "token", nullable = false)
     private String token;
 
+    @Column(name = "app_version")
+    private String appVersion;
+
     @Column(name = "is_valid", nullable = false)
     @Builder.Default
     private boolean isValid = true;
@@ -44,8 +47,9 @@ public class DeviceToken {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
-    public void refreshToken(String newToken) {
+    public void refreshToken(String newToken, String newAppVersion) {
         this.token = newToken;
+        this.appVersion = newAppVersion;
         this.isValid = true;
     }
 

@@ -122,8 +122,11 @@ public class NotificationService {
 
     @Transactional
     public NotificationReadResponse markNotificationAsRead(UUID userId, UUID notificationId) {
-        ProactiveCareLog logEntry = proactiveCareLogRepository.findByIdAndUser_Id(notificationId, userId)
+        ProactiveCareLog logEntry = proactiveCareLogRepository.findById(notificationId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.NOTIFICATION_NOT_FOUND));
+        if (!logEntry.getUser().getId().equals(userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
         logEntry.markOpened();
         proactiveCareLogRepository.save(logEntry);
         return new NotificationReadResponse(logEntry.getId(), logEntry.getNotificationStatus(), logEntry.getRespondedAt());

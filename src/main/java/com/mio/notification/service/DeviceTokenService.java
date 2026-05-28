@@ -28,7 +28,7 @@ public class DeviceTokenService {
 
         DeviceToken token = deviceTokenRepository.findByUser_IdAndDeviceId(userId, request.deviceId())
                 .map(existing -> {
-                    existing.refreshToken(request.pushToken());
+                    existing.refreshToken(request.pushToken(), request.appVersion());
                     return existing;
                 })
                 .orElseGet(() -> deviceTokenRepository.save(
@@ -37,6 +37,7 @@ public class DeviceTokenService {
                                 .deviceId(request.deviceId())
                                 .platform(request.platform())
                                 .token(request.pushToken())
+                                .appVersion(request.appVersion())
                                 .build()
                 ));
 
