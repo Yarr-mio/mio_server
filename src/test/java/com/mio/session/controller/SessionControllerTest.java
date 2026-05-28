@@ -152,6 +152,6 @@ class SessionControllerTest {
         mockMvc.perform(post("/v1/sessions/{id}/end", TEST_SESSION_ID)
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isGone())
-                .andExpect(jsonPath("$.error.code").value("SESSION_ALREADY_ENDED"));
+                .andExpect(jsonPath("$.error.code").value("GONE"));
     }
 }
