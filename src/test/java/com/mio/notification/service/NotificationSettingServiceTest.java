@@ -91,15 +91,19 @@ class NotificationSettingServiceTest {
     }
 
     @Test
-    @DisplayName("알림 설정이 없으면 update 시 NOTIFICATION_NOT_FOUND 예외를 발생시킨다")
-    void update_settingNotFound_throwsNotificationNotFound() {
-        when(notificationSettingRepository.findByUser_Id(userId)).thenReturn(Optional.empty());
+    @DisplayName("알림 설정이 없으면 update 시 기본값으로 설정을 생성한 뒤 업데이트를 적용한다")
+    void update_settingAbsent_createsDefaultThenUpdates() {
+        NotificationSetting created = NotificationSetting.builder().user(user).build();
 
-        assertThatThrownBy(() -> notificationSettingService.update(userId,
-                new NotificationSettingUpdateRequest(false, null, null, null)))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
-                        .isEqualTo(ErrorCode.NOTIFICATION_NOT_FOUND));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(notificationSettingRepository.findByUser_Id(userId)).thenReturn(Optional.empty());
+        when(notificationSettingRepository.save(any())).thenReturn(created);
+
+        NotificationSettingResponse response = notificationSettingService.update(userId,
+                new NotificationSettingUpdateRequest(false, null, null, null));
+
+        assertThat(response.checkinEnabled()).isFalse();
+        verify(notificationSettingRepository).save(any());
     }
 
     @Test
@@ -109,6 +113,7 @@ class NotificationSettingServiceTest {
                 .user(user)
                 .build();
 
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(notificationSettingRepository.findByUser_Id(userId)).thenReturn(Optional.of(setting));
 
         NotificationSettingResponse response = notificationSettingService.update(userId,

@@ -171,7 +171,7 @@ class TodoServiceTest {
         assertThat(response.status()).isEqualTo("completed");
         assertThat(response.beforeEmotion()).isEqualTo(70);
         assertThat(response.afterEmotion()).isEqualTo(40);
-        assertThat(response.characterReaction()).isNotNull();
+        assertThat(response.characterReaction()).isNotBlank();
     }
 
     @Test

@@ -113,9 +113,10 @@ class DailyTestControllerTest {
     @Test
     @DisplayName("POST /v1/daily-test/{testId}/answer - 정상 제출 시 201")
     void submitAnswer_valid_returns201() throws Exception {
+        OffsetDateTime fixedAt = OffsetDateTime.parse("2026-05-28T12:00:00Z");
         DailyTestResultResponse result = new DailyTestResultResponse(
                 new DailyTestResultResponse.ResultDto("오늘은 비교적 안정된 하루였네요.", "설명", List.of("neutral"), "미오"),
-                OffsetDateTime.now()
+                fixedAt
         );
         when(dailyTestService.submitAnswer(eq(USER_ID), eq(TEST_ID), any())).thenReturn(result);
 
@@ -126,7 +127,10 @@ class DailyTestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.result.summary").isString())
+                .andExpect(jsonPath("$.data.result.summary").value("오늘은 비교적 안정된 하루였네요."))
+                .andExpect(jsonPath("$.data.result.description").value("설명"))
+                .andExpect(jsonPath("$.data.result.tags[0]").value("neutral"))
+                .andExpect(jsonPath("$.data.result.character_comment").value("미오"))
                 .andExpect(jsonPath("$.data.completed_at").exists());
     }
 

@@ -35,7 +35,11 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -148,7 +152,7 @@ class NotificationServiceTest {
                 .notificationStatus("SENT")
                 .sentAt(OffsetDateTime.now())
                 .build();
-        when(proactiveCareLogRepository.findByIdAndUser_Id(notificationId, userId)).thenReturn(Optional.of(logEntry));
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
 
         NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
 
@@ -158,6 +162,45 @@ class NotificationServiceTest {
         verify(proactiveCareLogRepository).save(captor.capture());
         assertThat(captor.getValue().getNotificationStatus()).isEqualTo("OPENED");
         assertThat(captor.getValue().getRespondedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 알림을 열람하면 FORBIDDEN 예외를 발생시킨다")
+    void markNotificationAsRead_otherUsersLog_throwsForbidden() {
+        UUID notificationId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        User otherUser = User.builder()
+                .socialProvider("kakao")
+                .socialId("other-social-id")
+                .privacyConsent(true)
+                .build();
+        setUserId(otherUser, otherUserId);
+
+        ProactiveCareLog logEntry = ProactiveCareLog.builder()
+                .id(notificationId)
+                .user(otherUser)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus("SENT")
+                .sentAt(OffsetDateTime.now())
+                .build();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
+
+        assertThatThrownBy(() -> notificationService.markNotificationAsRead(userId, notificationId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 알림을 열람하면 NOTIFICATION_NOT_FOUND 예외를 발생시킨다")
+    void markNotificationAsRead_logNotFound_throwsNotificationNotFound() {
+        UUID notificationId = UUID.randomUUID();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> notificationService.markNotificationAsRead(userId, notificationId))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.NOTIFICATION_NOT_FOUND));
     }
 
     @Test

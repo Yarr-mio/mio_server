@@ -31,6 +31,7 @@ public class DailyTestService {
 
     private static final String DUPLICATE_RESPONSE_CONSTRAINT =
             "daily_test_responses_user_id_daily_test_id_key";
+    private static final int DEFAULT_ESTIMATED_MINUTES = 3;
 
     private final DailyTestRepository dailyTestRepository;
     private final DailyTestResponseRepository dailyTestResponseRepository;
@@ -51,6 +52,7 @@ public class DailyTestService {
         return dailyTestResponseRepository.findByUser_IdAndDailyTest_Id(userId, test.getId())
                 .map(resp -> {
                     Map<String, String> storedAnswers = deserializeAnswers(resp.getAnswers());
+                    // summary는 저장된 값 사용, tags는 저장하지 않으므로 재계산
                     DailyTestResultEngine.TestResult rerun = resultEngine.calculate(content, storedAnswers);
                     return DailyTestTodayResponse.completed(
                             new DailyTestTodayResponse.ResultDto(resp.getResultSummary(), rerun.tags())
@@ -59,7 +61,7 @@ public class DailyTestService {
                 .orElseGet(() -> DailyTestTodayResponse.pending(
                         test.getId(),
                         test.getTitle(),
-                        3,
+                        DEFAULT_ESTIMATED_MINUTES,
                         mapToQuestionDtos(content)
                 ));
     }
@@ -132,6 +134,9 @@ public class DailyTestService {
     }
 
     private Map<String, String> deserializeAnswers(String answersJson) {
+        if (answersJson == null || answersJson.isBlank()) {
+            return Map.of();
+        }
         try {
             return objectMapper.readValue(answersJson, new TypeReference<>() {});
         } catch (JsonProcessingException e) {

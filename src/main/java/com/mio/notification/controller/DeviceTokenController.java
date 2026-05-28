@@ -14,7 +14,7 @@ import java.security.Principal;
 import java.util.Map;
 
 @RestController
-@RequestMapping({"/v1/notifications/devices", "/v1/user/device-token"})
+@RequestMapping("/v1/notifications/devices")
 @RequiredArgsConstructor
 public class DeviceTokenController {
 
