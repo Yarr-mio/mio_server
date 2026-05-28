@@ -16,6 +16,8 @@ import org.springframework.data.domain.Slice;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -84,10 +86,14 @@ public class CheckinService {
         CheckinResponse response = toResponse(checkin, request.memo());
 
         if (idempotencyKey != null) {
-            redisTemplate.opsForValue().set(
-                    idempotencyKey(idempotencyKey),
-                    serializeResponse(response),
-                    IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+            final String cacheKey = idempotencyKey(idempotencyKey);
+            final String cacheValue = serializeResponse(response);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+                }
+            });
         }
 
         return response;
@@ -110,16 +116,17 @@ public class CheckinService {
             throw new BusinessException(ErrorCode.CHECKIN_NOT_TODAY);
         }
 
+        boolean updateMemo = request.memo() != null;
         byte[] ciphertext = null;
         String dekId = null;
-        if (request.memo() != null && !request.memo().isBlank()) {
+        if (updateMemo && !request.memo().isBlank()) {
             ciphertext = messageEncryptor.encrypt(request.memo().getBytes(StandardCharsets.UTF_8));
             dekId = messageEncryptor.dekId();
         }
 
-        checkin.update(request.emotionType(), request.conditionScore(), ciphertext, dekId);
+        checkin.update(request.emotionType(), request.conditionScore(), ciphertext, dekId, updateMemo);
 
-        String memo = request.memo();
+        String memo = updateMemo && !request.memo().isBlank() ? request.memo() : null;
         return toResponse(checkin, memo);
     }
 

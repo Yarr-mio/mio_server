@@ -137,6 +137,20 @@ class CheckinServiceTest {
         }
 
         @Test
+        @DisplayName("memo 빈 문자열 전달 시 메모 삭제")
+        void update_clearMemo() {
+            Checkin c = checkinToday("morning", "anxious", 2);
+            setField(c, "memoCiphertext", new byte[]{1, 2, 3});
+            when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.of(c));
+
+            CheckinResponse result = checkinService.update(userId, UUID.randomUUID(),
+                    new CheckinUpdateRequest(null, null, ""));
+
+            assertThat(result.memo()).isNull();
+            assertThat(c.getMemoCiphertext()).isNull();
+        }
+
+        @Test
         @DisplayName("존재하지 않는 체크인 시 CHECKIN_NOT_FOUND")
         void update_notFound_throws() {
             when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.empty());
