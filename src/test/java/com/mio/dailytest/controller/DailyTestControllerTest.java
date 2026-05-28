@@ -23,6 +23,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -55,7 +56,7 @@ class DailyTestControllerTest {
     @DisplayName("GET /v1/daily-test/today - pending 상태 반환")
     void getTodayTest_pending_returns200() throws Exception {
         DailyTestTodayResponse response = DailyTestTodayResponse.pending(
-                TEST_ID, "오늘의 테스트", "설명",
+                TEST_ID, "오늘의 테스트", 3,
                 List.of(new DailyTestTodayResponse.QuestionDto("q1", 1, "질문1", List.of(
                         new DailyTestTodayResponse.OptionDto("q1_a", "옵션A")
                 )))
@@ -65,22 +66,24 @@ class DailyTestControllerTest {
         mockMvc.perform(get("/v1/daily-test/today")
                         .principal(() -> USER_ID.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("pending"))
-                .andExpect(jsonPath("$.data.testId").value(TEST_ID.toString()))
+                .andExpect(jsonPath("$.data.completed_today").value(false))
+                .andExpect(jsonPath("$.data.test_id").value(TEST_ID.toString()))
                 .andExpect(jsonPath("$.data.questions").isArray());
     }
 
     @Test
     @DisplayName("GET /v1/daily-test/today - completed 상태 반환")
     void getTodayTest_completed_returns200() throws Exception {
-        DailyTestTodayResponse response = DailyTestTodayResponse.completed(TEST_ID, "안정된 하루였네요.");
+        DailyTestTodayResponse response = DailyTestTodayResponse.completed(
+                new DailyTestTodayResponse.ResultDto("안정된 하루였네요.", List.of("neutral"))
+        );
         when(dailyTestService.getTodayTest(USER_ID)).thenReturn(response);
 
         mockMvc.perform(get("/v1/daily-test/today")
                         .principal(() -> USER_ID.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("completed"))
-                .andExpect(jsonPath("$.data.resultSummary").value("안정된 하루였네요."));
+                .andExpect(jsonPath("$.data.completed_today").value(true))
+                .andExpect(jsonPath("$.data.result.summary").value("안정된 하루였네요."));
     }
 
     @Test
@@ -111,7 +114,8 @@ class DailyTestControllerTest {
     @DisplayName("POST /v1/daily-test/{testId}/answer - 정상 제출 시 201")
     void submitAnswer_valid_returns201() throws Exception {
         DailyTestResultResponse result = new DailyTestResultResponse(
-                UUID.randomUUID(), TEST_ID, "오늘은 비교적 안정된 하루였네요."
+                new DailyTestResultResponse.ResultDto("오늘은 비교적 안정된 하루였네요.", "설명", List.of("neutral"), "미오"),
+                OffsetDateTime.now()
         );
         when(dailyTestService.submitAnswer(eq(USER_ID), eq(TEST_ID), any())).thenReturn(result);
 
@@ -122,8 +126,8 @@ class DailyTestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.testId").value(TEST_ID.toString()))
-                .andExpect(jsonPath("$.data.resultSummary").isString());
+                .andExpect(jsonPath("$.data.result.summary").isString())
+                .andExpect(jsonPath("$.data.completed_at").exists());
     }
 
     @Test
