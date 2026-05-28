@@ -132,11 +132,7 @@ public class CheckinService {
         }
 
         checkin.update(request.emotionType(), request.conditionScore(), ciphertext, dekId, updateMemo);
-
-        String memo = updateMemo
-                ? (!request.memo().isBlank() ? request.memo() : null)
-                : decryptMemo(checkin);
-        return toResponse(checkin, memo);
+        return toResponse(checkin, decryptMemo(checkin));
     }
 
     @Transactional(readOnly = true)
