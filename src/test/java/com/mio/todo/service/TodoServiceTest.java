@@ -91,7 +91,7 @@ class TodoServiceTest {
                 .user(completedUser)
                 .timeOfDay("morning")
                 .emotionType("anxious")
-                .emojiScore(3)
+                .conditionScore(3)
                 .build();
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(completedUser));
