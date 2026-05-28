@@ -22,11 +22,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class SessionService {
+
+    private static final Set<String> ALLOWED_CHARACTER_IDS = Set.of("mio", "bau", "rumi", "momo", "chichi");
 
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
@@ -44,6 +47,10 @@ public class SessionService {
         String characterId = (request.characterId() != null && !request.characterId().isBlank())
                 ? request.characterId()
                 : user.getPreferredCharacterId();
+
+        if (characterId == null || !ALLOWED_CHARACTER_IDS.contains(characterId)) {
+            throw new BusinessException(ErrorCode.INVALID_CHARACTER_ID);
+        }
 
         if (sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)) {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
