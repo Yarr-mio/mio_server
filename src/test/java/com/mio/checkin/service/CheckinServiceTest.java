@@ -103,13 +103,17 @@ class CheckinServiceTest {
 
         @Test
         @DisplayName("Idempotency-Key 캐시 히트 시 저장 없이 캐시 응답 반환")
-        void submit_idempotencyHit_returnsCached() {
+        void submit_idempotencyHit_returnsCached() throws Exception {
             UUID checkinId = UUID.randomUUID();
             OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-            String cached = checkinId + "|morning|calm|4|" + now + "|";
+            CheckinResponse cached = new CheckinResponse(checkinId, "morning", "calm", 4, null, null, null, now, null);
+            String cachedJson = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+                    .writeValueAsString(cached);
 
             when(redisTemplate.opsForValue()).thenReturn(valueOps);
-            when(valueOps.get("idempotency:idem-001")).thenReturn(cached);
+            when(valueOps.get("idempotency:idem-001")).thenReturn(cachedJson);
 
             CheckinResponse result = checkinService.submit(userId,
                     new CheckinRequest("morning", "calm", 4, null), "idem-001");
@@ -134,6 +138,23 @@ class CheckinServiceTest {
 
             assertThat(result.emotionType()).isEqualTo("calm");
             assertThat(result.conditionScore()).isEqualTo(4);
+            assertThat(result.memo()).isEqualTo("나아졌어");
+        }
+
+        @Test
+        @DisplayName("memo 미전달(null) 시 기존 메모 응답에 포함")
+        void update_memoNotProvided_returnsExistingMemo() {
+            Checkin c = checkinToday("morning", "anxious", 2);
+            // StubMessageEncryptor: encrypt/decrypt가 평문 그대로 반환
+            byte[] existing = "기존메모".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            setField(c, "memoCiphertext", existing);
+            when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.of(c));
+
+            CheckinResponse result = checkinService.update(userId, UUID.randomUUID(),
+                    new CheckinUpdateRequest("calm", null, null));
+
+            assertThat(result.emotionType()).isEqualTo("calm");
+            assertThat(result.memo()).isEqualTo("기존메모");
         }
 
         @Test

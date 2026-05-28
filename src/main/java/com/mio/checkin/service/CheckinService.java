@@ -1,5 +1,8 @@
 package com.mio.checkin.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.dto.*;
 import com.mio.checkin.repository.CheckinRepository;
@@ -22,7 +25,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
@@ -41,6 +43,9 @@ public class CheckinService {
     private static final List<String> ALL_SLOTS = List.of("morning", "afternoon", "evening");
     private static final int PAGE_SIZE = 20;
     private static final long IDEMPOTENCY_TTL_SECONDS = 86400L;
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .registerModule(new JavaTimeModule())
+            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     private final CheckinRepository checkinRepository;
     private final UserRepository userRepository;
@@ -55,7 +60,9 @@ public class CheckinService {
         if (idempotencyKey != null) {
             String cached = redisTemplate.opsForValue().get(idempotencyKey(idempotencyKey));
             if (cached != null) {
-                return deserializeResponse(cached);
+                CheckinResponse cachedResponse = deserializeResponse(cached);
+                if (cachedResponse != null) return cachedResponse;
+                // 역직렬화 실패 → 캐시 미스로 처리하여 정상 플로우 진행
             }
         }
 
@@ -126,7 +133,9 @@ public class CheckinService {
 
         checkin.update(request.emotionType(), request.conditionScore(), ciphertext, dekId, updateMemo);
 
-        String memo = updateMemo && !request.memo().isBlank() ? request.memo() : null;
+        String memo = updateMemo
+                ? (!request.memo().isBlank() ? request.memo() : null)
+                : decryptMemo(checkin);
         return toResponse(checkin, memo);
     }
 
@@ -214,28 +223,20 @@ public class CheckinService {
     }
 
     private static String serializeResponse(CheckinResponse response) {
-        String memoEncoded = response.memo() != null
-                ? Base64.getEncoder().encodeToString(response.memo().getBytes(StandardCharsets.UTF_8))
-                : "";
-        return response.checkinId() + "|" + response.timeOfDay() + "|" + response.emotionType()
-                + "|" + response.conditionScore() + "|" + response.createdAt() + "|" + memoEncoded;
+        try {
+            return MAPPER.writeValueAsString(response);
+        } catch (Exception e) {
+            log.warn("idempotency 응답 직렬화 실패", e);
+            return null;
+        }
     }
 
     private static CheckinResponse deserializeResponse(String cached) {
-        String[] parts = cached.split("\\|", 6);
-        String memo = parts.length > 5 && !parts[5].isEmpty()
-                ? new String(Base64.getDecoder().decode(parts[5]), StandardCharsets.UTF_8)
-                : null;
-        return new CheckinResponse(
-                UUID.fromString(parts[0]),
-                parts[1],
-                parts[2],
-                Integer.parseInt(parts[3]),
-                memo,
-                null,
-                null,
-                OffsetDateTime.parse(parts[4]),
-                null
-        );
+        try {
+            return MAPPER.readValue(cached, CheckinResponse.class);
+        } catch (Exception e) {
+            log.warn("idempotency 캐시 역직렬화 실패 — 캐시 미스로 처리", e);
+            return null;
+        }
     }
 }
