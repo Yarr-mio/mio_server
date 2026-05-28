@@ -6,6 +6,7 @@ import com.mio.common.response.ApiResponse;
 import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoGenerateRequest;
+import com.mio.todo.dto.TodoListResponse;
 import com.mio.todo.dto.TodoResponse;
 import com.mio.todo.service.TodoService;
 import jakarta.validation.Valid;
@@ -17,7 +18,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -28,21 +28,21 @@ public class TodoController {
     private final TodoService todoService;
 
     @PostMapping("/generate")
-    public ResponseEntity<ApiResponse<List<TodoResponse>>> generate(
+    public ResponseEntity<ApiResponse<TodoListResponse>> generate(
             Principal principal,
             @Valid @RequestBody TodoGenerateRequest request) {
         UUID userId = resolveUserId(principal);
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(ApiResponse.ok(todoService.generate(userId, request)));
+                .body(ApiResponse.ok(new TodoListResponse(todoService.generate(userId, request))));
     }
 
     @GetMapping
-    public ResponseEntity<ApiResponse<List<TodoResponse>>> getTodos(
+    public ResponseEntity<ApiResponse<TodoListResponse>> getTodos(
             Principal principal,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
             @RequestParam(required = false) String status) {
         UUID userId = resolveUserId(principal);
-        return ResponseEntity.ok(ApiResponse.ok(todoService.getTodos(userId, date, status)));
+        return ResponseEntity.ok(ApiResponse.ok(new TodoListResponse(todoService.getTodos(userId, date, status))));
     }
 
     @PostMapping("/{todoId}/checkin")

@@ -55,8 +55,8 @@ class TodoControllerTest {
     @DisplayName("POST /v1/todos/generate - 성공 시 201 반환")
     void generate_success_returns201() throws Exception {
         List<TodoResponse> responses = List.of(
-                new TodoResponse(UUID.randomUUID(), "5분 복식 호흡으로 긴장 풀기", "심리_안정", 1, 5, "suggested", OffsetDateTime.now()),
-                new TodoResponse(UUID.randomUUID(), "걱정 목록 작성 후 통제 가능/불가능 분류하기", "인지_재구성", 2, 10, "suggested", OffsetDateTime.now())
+                new TodoResponse(UUID.randomUUID(), "5분 복식 호흡으로 긴장 풀기", "심리_안정", 1, 5, "suggested", OffsetDateTime.now(), "미오가 응원해요!"),
+                new TodoResponse(UUID.randomUUID(), "걱정 목록 작성 후 통제 가능/불가능 분류하기", "인지_재구성", 2, 10, "suggested", OffsetDateTime.now(), "미오가 응원해요!")
         );
         when(todoService.generate(eq(TEST_USER_ID), any())).thenReturn(responses);
 
@@ -68,8 +68,8 @@ class TodoControllerTest {
                         )))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").isArray())
-                .andExpect(jsonPath("$.data.length()").value(2));
+                .andExpect(jsonPath("$.data.todos").isArray())
+                .andExpect(jsonPath("$.data.todos.length()").value(2));
     }
 
     @Test
@@ -105,7 +105,7 @@ class TodoControllerTest {
     @DisplayName("GET /v1/todos - 성공 시 200 반환")
     void getTodos_success_returns200() throws Exception {
         List<TodoResponse> responses = List.of(
-                new TodoResponse(UUID.randomUUID(), "5분 복식 호흡으로 긴장 풀기", "심리_안정", 1, 5, "suggested", OffsetDateTime.now())
+                new TodoResponse(UUID.randomUUID(), "5분 복식 호흡으로 긴장 풀기", "심리_안정", 1, 5, "suggested", OffsetDateTime.now(), "미오가 응원해요!")
         );
         when(todoService.getTodos(eq(TEST_USER_ID), any(), any())).thenReturn(responses);
 
@@ -113,15 +113,15 @@ class TodoControllerTest {
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").isArray())
-                .andExpect(jsonPath("$.data.length()").value(1));
+                .andExpect(jsonPath("$.data.todos").isArray())
+                .andExpect(jsonPath("$.data.todos.length()").value(1));
     }
 
     @Test
     @DisplayName("POST /v1/todos/{todoId}/checkin - completed 처리 시 200 반환")
     void checkin_completed_returns200() throws Exception {
         UUID todoId = UUID.randomUUID();
-        TodoCheckinResponse response = new TodoCheckinResponse(todoId, "completed", 70, 40, "괜찮았어요", OffsetDateTime.now());
+        TodoCheckinResponse response = new TodoCheckinResponse("completed", 70, 40, "잘했어! 작은 것부터 하나씩 해나가는 게 진짜 대단한 거야 🎉");
         when(todoService.checkin(eq(TEST_USER_ID), eq(todoId), any())).thenReturn(response);
 
         mockMvc.perform(post("/v1/todos/{todoId}/checkin", todoId)
@@ -134,7 +134,7 @@ class TodoControllerTest {
                 .andExpect(jsonPath("$.data.status").value("completed"))
                 .andExpect(jsonPath("$.data.before_emotion").value(70))
                 .andExpect(jsonPath("$.data.after_emotion").value(40))
-                .andExpect(jsonPath("$.data.completed_at").isNotEmpty());
+                .andExpect(jsonPath("$.data.character_reaction").isNotEmpty());
     }
 
     @Test
