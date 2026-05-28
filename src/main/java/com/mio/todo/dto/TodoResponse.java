@@ -23,8 +23,13 @@ public record TodoResponse(
         String status,
 
         @JsonProperty("created_at")
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+
+        @JsonProperty("character_comment")
+        String characterComment
 ) {
+    private static final String MOCK_CHARACTER_COMMENT = "미오가 응원해요!";
+
     public static TodoResponse from(BehaviorTask task) {
         return new TodoResponse(
                 task.getId(),
@@ -33,7 +38,8 @@ public record TodoResponse(
                 task.getDifficulty(),
                 task.getEstimatedMinutes(),
                 task.getStatus().value(),
-                task.getCreatedAt()
+                task.getCreatedAt(),
+                MOCK_CHARACTER_COMMENT
         );
     }
 
@@ -45,7 +51,8 @@ public record TodoResponse(
                 task.getDifficulty(),
                 task.getEstimatedMinutes(),
                 overrideStatus.value(),
-                task.getCreatedAt()
+                task.getCreatedAt(),
+                MOCK_CHARACTER_COMMENT
         );
     }
 }
