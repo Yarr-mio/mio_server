@@ -3,6 +3,8 @@ package com.mio.todo.repository;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.domain.TaskStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -43,4 +45,10 @@ public interface BehaviorTaskRepository extends JpaRepository<BehaviorTask, UUID
             OffsetDateTime from,
             OffsetDateTime to
     );
+
+    // 리포트용: status·category별 집계
+    @Query("SELECT t.status, t.category, COUNT(t) FROM BehaviorTask t WHERE t.user.id = :userId AND t.createdAt >= :start AND t.createdAt < :end GROUP BY t.status, t.category")
+    List<Object[]> findTodoStatsByUserAndPeriod(@Param("userId") UUID userId,
+                                                @Param("start") OffsetDateTime start,
+                                                @Param("end") OffsetDateTime end);
 }
