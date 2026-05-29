@@ -131,6 +131,15 @@ public class User {
         this.status = "ACTIVE";
     }
 
+    public void updateProfile(String nickname, String ageRange, boolean ageRangePresent) {
+        if (nickname != null) {
+            this.nickname = nickname;
+        }
+        if (ageRangePresent) {
+            this.ageRange = ageRange;
+        }
+    }
+
     public void softDelete(String anonymizedSocialId) {
         this.socialId = anonymizedSocialId;
         this.nickname = "탈퇴한 사용자";
