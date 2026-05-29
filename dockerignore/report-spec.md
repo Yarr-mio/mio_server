@@ -1,8 +1,19 @@
 # Mio 리포트 도메인 구현 가이드
 
-> 버전: v1.0.0
+> 버전: v1.1.0
 > 기준 문서: Report API 명세 v1.4.1, Backend Design v1.1.1, DB 설계 v2.4
 > 대상: Claude Code 구현용 전체 컨텍스트
+
+---
+
+## 구현 현황 요약
+
+| Method | Endpoint | 상태 |
+| --- | --- | --- |
+| `GET` | `/v1/reports/weekly` | ✅ 구현됨 |
+| `GET` | `/v1/reports/monthly` | ✅ 구현됨 |
+| `GET` | `/v1/reports/emotion-trend` | ✅ 구현됨 |
+| `ReportAggregationJob` | 배치 사전 생성 | 🔶 stub (post-MVP) |
 
 ---
 
@@ -562,4 +573,4 @@ GET /v1/reports/emotion-trend?period=week
   ORDER BY count DESC LIMIT 3
   ```
 - `narrative` / `coaching_direction`은 2차 개발. 현재 null 고정으로 구현.
-- 월간 리포트는 post-MVP이나 API 엔드포인트는 stub으로 구현해둘 것.
+- 월간 리포트 MVP 구현 완료. `GET /v1/reports/monthly?month_start=YYYY-MM-01` 정상 동작.
