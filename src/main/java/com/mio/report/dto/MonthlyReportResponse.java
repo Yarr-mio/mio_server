@@ -12,10 +12,10 @@ import java.util.List;
 import java.util.UUID;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record WeeklyReportResponse(
+public record MonthlyReportResponse(
         @JsonProperty("report_id") UUID reportId,
-        @JsonProperty("week_start") LocalDate weekStart,
-        @JsonProperty("week_end") LocalDate weekEnd,
+        @JsonProperty("month_start") LocalDate monthStart,
+        @JsonProperty("month_end") LocalDate monthEnd,
         String status,
         @JsonProperty("is_partial") Boolean isPartial,
         @JsonProperty("checkin_count") Integer checkinCount,
@@ -29,9 +29,9 @@ public record WeeklyReportResponse(
         @JsonProperty("generated_at") OffsetDateTime generatedAt,
         String message
 ) {
-    public static WeeklyReportResponse insufficientData(LocalDate weekStart, LocalDate weekEnd, int checkinCount) {
-        return new WeeklyReportResponse(null, weekStart, weekEnd, "INSUFFICIENT_DATA",
-                null, checkinCount, 3, null, null, null, null, null, null, null,
-                "아직 기록이 부족해요. 체크인을 3회 이상 완료하면 리포트를 볼 수 있어요.");
+    public static MonthlyReportResponse insufficientData(LocalDate monthStart, LocalDate monthEnd, int checkinCount) {
+        return new MonthlyReportResponse(null, monthStart, monthEnd, "INSUFFICIENT_DATA",
+                null, checkinCount, 7, null, null, null, null, null, null, null,
+                "아직 기록이 부족해요. 체크인을 7회 이상 완료하면 월간 리포트를 볼 수 있어요.");
     }
 }

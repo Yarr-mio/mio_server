@@ -5,6 +5,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import com.mio.report.dto.EmotionTrendResponse;
+import com.mio.report.dto.MonthlyReportResponse;
 import com.mio.report.dto.WeeklyReportResponse;
 import com.mio.report.service.ReportService;
 import lombok.RequiredArgsConstructor;
@@ -36,9 +37,14 @@ public class ReportController {
     }
 
     @GetMapping("/monthly")
-    public ResponseEntity<ApiResponse<Void>> getMonthly(Principal principal) {
-        // post-MVP
-        throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+    public ResponseEntity<ApiResponse<MonthlyReportResponse>> getMonthly(
+            Principal principal,
+            @RequestParam(value = "month_start", required = false) String monthStartStr) {
+
+        LocalDate monthStart = parseDate(monthStartStr);
+        MonthlyReportResponse response = reportService.getMonthlyReport(
+                PrincipalUtils.resolveUserId(principal), monthStart);
+        return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
     @GetMapping("/emotion-trend")
