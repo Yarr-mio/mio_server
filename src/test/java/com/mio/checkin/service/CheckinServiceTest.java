@@ -1,5 +1,8 @@
 package com.mio.checkin.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.dto.*;
 import com.mio.checkin.repository.CheckinRepository;
@@ -7,6 +10,7 @@ import com.mio.common.AppConstants;
 import com.mio.common.crypto.StubMessageEncryptor;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,13 +51,17 @@ class CheckinServiceTest {
 
     @BeforeEach
     void setUp() {
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         checkinService = new CheckinService(
-                checkinRepository, userRepository, new StubMessageEncryptor(), redisTemplate);
+                checkinRepository, userRepository, new StubMessageEncryptor(), redisTemplate, objectMapper);
         userId = UUID.randomUUID();
         user = User.builder()
                 .socialProvider("kakao")
                 .socialId("kakao-001")
                 .privacyConsent(true)
+                .signupStep(SignupStep.ONBOARDING_COMPLETED)
                 .build();
     }
 
@@ -64,11 +72,13 @@ class CheckinServiceTest {
         @Test
         @DisplayName("정상 등록 시 응답 데이터 반환")
         void submit_success() {
+            when(redisTemplate.opsForValue()).thenReturn(valueOps);
+            when(valueOps.increment(anyString())).thenReturn(1L);
             when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(any(), any(), any())).thenReturn(false);
             when(userRepository.findById(userId)).thenReturn(Optional.of(user));
             when(checkinRepository.save(any())).thenReturn(checkin("morning", "anxious", 3));
 
-            CheckinResponse result = checkinService.submit(userId,
+            CheckinCreateResponse result = checkinService.submit(userId,
                     new CheckinRequest("morning", "anxious", 3, "메모"), null);
 
             assertThat(result.timeOfDay()).isEqualTo("morning");
@@ -106,16 +116,17 @@ class CheckinServiceTest {
         void submit_idempotencyHit_returnsCached() throws Exception {
             UUID checkinId = UUID.randomUUID();
             OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-            CheckinResponse cached = new CheckinResponse(checkinId, "morning", "calm", 4, null, null, null, now, null);
-            String cachedJson = new com.fasterxml.jackson.databind.ObjectMapper()
-                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
-                    .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
+            CheckinCreateResponse cached = new CheckinCreateResponse(checkinId, "morning", "calm", 4, null, null, now);
+            String cachedJson = new ObjectMapper()
+                    .registerModule(new JavaTimeModule())
+                    .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                     .writeValueAsString(cached);
 
             when(redisTemplate.opsForValue()).thenReturn(valueOps);
+            when(valueOps.increment(anyString())).thenReturn(1L);
             when(valueOps.get("idempotency:idem-001")).thenReturn(cachedJson);
 
-            CheckinResponse result = checkinService.submit(userId,
+            CheckinCreateResponse result = checkinService.submit(userId,
                     new CheckinRequest("morning", "calm", 4, null), "idem-001");
 
             assertThat(result.checkinId()).isEqualTo(checkinId);
@@ -133,7 +144,7 @@ class CheckinServiceTest {
             Checkin c = checkinToday("morning", "anxious", 2);
             when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.of(c));
 
-            CheckinResponse result = checkinService.update(userId, UUID.randomUUID(),
+            CheckinUpdateResponse result = checkinService.update(userId, UUID.randomUUID(),
                     new CheckinUpdateRequest("calm", 4, "나아졌어"));
 
             assertThat(result.emotionType()).isEqualTo("calm");
@@ -150,7 +161,7 @@ class CheckinServiceTest {
             setField(c, "memoCiphertext", existing);
             when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.of(c));
 
-            CheckinResponse result = checkinService.update(userId, UUID.randomUUID(),
+            CheckinUpdateResponse result = checkinService.update(userId, UUID.randomUUID(),
                     new CheckinUpdateRequest("calm", null, null));
 
             assertThat(result.emotionType()).isEqualTo("calm");
@@ -164,7 +175,7 @@ class CheckinServiceTest {
             setField(c, "memoCiphertext", new byte[]{1, 2, 3});
             when(checkinRepository.findByIdAndUser_Id(any(), eq(userId))).thenReturn(Optional.of(c));
 
-            CheckinResponse result = checkinService.update(userId, UUID.randomUUID(),
+            CheckinUpdateResponse result = checkinService.update(userId, UUID.randomUUID(),
                     new CheckinUpdateRequest(null, null, ""));
 
             assertThat(result.memo()).isNull();
