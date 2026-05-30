@@ -46,6 +46,12 @@ public enum ErrorCode {
     DAILY_TEST_ALREADY_COMPLETED(HttpStatus.CONFLICT, "DAILY_TEST_ALREADY_COMPLETED", "이미 완료한 데일리 테스트입니다."),
     INVALID_DAILY_TEST_CONTENT(HttpStatus.BAD_REQUEST, "INVALID_DAILY_TEST_CONTENT", "데일리 테스트 콘텐츠가 올바르지 않습니다."),
 
+    // Checkin
+    ALREADY_CHECKED_IN(HttpStatus.CONFLICT, "ALREADY_CHECKED_IN", "해당 슬롯에 이미 체크인이 완료됐습니다."),
+    CHECKIN_NOT_FOUND(HttpStatus.NOT_FOUND, "CHECKIN_NOT_FOUND", "존재하지 않는 체크인입니다."),
+    CHECKIN_FORBIDDEN(HttpStatus.FORBIDDEN, "CHECKIN_FORBIDDEN", "접근 권한이 없습니다."),
+    CHECKIN_NOT_TODAY(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION", "당일 체크인만 수정할 수 있습니다."),
+
     // Todo
     TODO_NOT_FOUND(HttpStatus.NOT_FOUND, "TODO_NOT_FOUND", "존재하지 않는 할 일입니다."),
     TODO_ALREADY_COMPLETED(HttpStatus.CONFLICT, "TODO_ALREADY_COMPLETED", "이미 완료 또는 처리된 할 일입니다."),

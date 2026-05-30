@@ -41,8 +41,8 @@ public class Checkin {
     private String emotionType;
 
     /** 감정 강도 1~5 (체크인용). CBT 측정용 emotion_score 0~100 과 혼용 금지 */
-    @Column(name = "emoji_score", nullable = false)
-    private int emojiScore;
+    @Column(name = "condition_score", nullable = false)
+    private int conditionScore;
 
     @Column(name = "checkin_date", nullable = false, updatable = false)
     private LocalDate checkinDate;
@@ -61,6 +61,15 @@ public class Checkin {
 
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
+
+    public void update(String emotionType, Integer conditionScore, byte[] memoCiphertext, String memoDekId, boolean updateMemo) {
+        if (emotionType != null) this.emotionType = emotionType;
+        if (conditionScore != null) this.conditionScore = conditionScore;
+        if (updateMemo) {
+            this.memoCiphertext = memoCiphertext;
+            this.memoDekId = memoDekId;
+        }
+    }
 
     @PrePersist
     protected void onCreate() {
