@@ -23,7 +23,7 @@ public class CheckinController {
     private final CheckinService checkinService;
 
     @PostMapping
-    public ResponseEntity<ApiResponse<CheckinResponse>> submit(
+    public ResponseEntity<ApiResponse<CheckinCreateResponse>> submit(
             Principal principal,
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody CheckinRequest request) {
@@ -32,7 +32,7 @@ public class CheckinController {
     }
 
     @PutMapping("/{checkinId}")
-    public ResponseEntity<ApiResponse<CheckinResponse>> update(
+    public ResponseEntity<ApiResponse<CheckinUpdateResponse>> update(
             Principal principal,
             @PathVariable UUID checkinId,
             @Valid @RequestBody CheckinUpdateRequest request) {

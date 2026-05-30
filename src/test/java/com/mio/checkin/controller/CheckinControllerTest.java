@@ -53,14 +53,21 @@ class CheckinControllerTest {
     private CheckinResponse sampleResponse() {
         return new CheckinResponse(
                 CHECKIN_ID, "morning", "anxious", 3,
-                "메모", null, null,
+                "메모", null,
                 OffsetDateTime.now(ZoneOffset.UTC), null);
+    }
+
+    private CheckinCreateResponse sampleCreateResponse() {
+        return new CheckinCreateResponse(
+                CHECKIN_ID, "morning", "anxious", 3,
+                "메모", null,
+                OffsetDateTime.now(ZoneOffset.UTC));
     }
 
     @Test
     @DisplayName("POST /v1/checkins - 정상 등록 시 201 반환")
     void submit_success_returns201() throws Exception {
-        when(checkinService.submit(any(), any(), any())).thenReturn(sampleResponse());
+        when(checkinService.submit(any(), any(), any())).thenReturn(sampleCreateResponse());
 
         mockMvc.perform(post("/v1/checkins")
                         .principal(() -> TEST_USER_ID.toString())
@@ -132,10 +139,10 @@ class CheckinControllerTest {
     @Test
     @DisplayName("PUT /v1/checkins/{id} - 정상 수정 시 200 반환")
     void update_success_returns200() throws Exception {
-        CheckinResponse updated = new CheckinResponse(
+        CheckinUpdateResponse updated = new CheckinUpdateResponse(
                 CHECKIN_ID, "morning", "calm", 4,
-                "나아졌어", null, null,
-                OffsetDateTime.now(ZoneOffset.UTC), OffsetDateTime.now(ZoneOffset.UTC));
+                "나아졌어", null,
+                OffsetDateTime.now(ZoneOffset.UTC));
         when(checkinService.update(any(), any(), any())).thenReturn(updated);
 
         mockMvc.perform(put("/v1/checkins/" + CHECKIN_ID)

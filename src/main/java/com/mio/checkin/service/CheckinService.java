@@ -1,8 +1,6 @@
 package com.mio.checkin.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.dto.*;
 import com.mio.checkin.repository.CheckinRepository;
@@ -43,24 +41,24 @@ public class CheckinService {
     private static final List<String> ALL_SLOTS = List.of("morning", "afternoon", "evening");
     private static final int PAGE_SIZE = 20;
     private static final long IDEMPOTENCY_TTL_SECONDS = 86400L;
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .registerModule(new JavaTimeModule())
-            .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-
+    private static final int RATE_LIMIT_MAX = 4;
+    private static final long RATE_LIMIT_TTL_SECONDS = 3600L;
     private final CheckinRepository checkinRepository;
     private final UserRepository userRepository;
     private final MessageEncryptor messageEncryptor;
     private final StringRedisTemplate redisTemplate;
+    private final ObjectMapper objectMapper;
 
     @Transactional
-    public CheckinResponse submit(UUID userId, CheckinRequest request, String idempotencyKey) {
+    public CheckinCreateResponse submit(UUID userId, CheckinRequest request, String idempotencyKey) {
         validateSlot(request.timeOfDay());
         validateEmotion(request.emotionType());
+        checkRateLimit(userId);
 
         if (idempotencyKey != null) {
             String cached = redisTemplate.opsForValue().get(idempotencyKey(idempotencyKey));
             if (cached != null) {
-                CheckinResponse cachedResponse = deserializeResponse(cached);
+                CheckinCreateResponse cachedResponse = deserializeResponse(cached);
                 if (cachedResponse != null) return cachedResponse;
                 // 역직렬화 실패 → 캐시 미스로 처리하여 정상 플로우 진행
             }
@@ -73,6 +71,10 @@ public class CheckinService {
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+
+        if (!user.getSignupStep().isOnboardingComplete()) {
+            throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
+        }
 
         byte[] ciphertext = null;
         String dekId = null;
@@ -90,7 +92,7 @@ public class CheckinService {
                 .memoDekId(dekId)
                 .build());
 
-        CheckinResponse response = toResponse(checkin, request.memo());
+        CheckinCreateResponse response = toCreateResponse(checkin, request.memo());
 
         if (idempotencyKey != null) {
             final String cacheKey = idempotencyKey(idempotencyKey);
@@ -107,7 +109,7 @@ public class CheckinService {
     }
 
     @Transactional
-    public CheckinResponse update(UUID userId, UUID checkinId, CheckinUpdateRequest request) {
+    public CheckinUpdateResponse update(UUID userId, UUID checkinId, CheckinUpdateRequest request) {
         if (request.emotionType() == null && request.conditionScore() == null && request.memo() == null) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
@@ -132,7 +134,7 @@ public class CheckinService {
         }
 
         checkin.update(request.emotionType(), request.conditionScore(), ciphertext, dekId, updateMemo);
-        return toResponse(checkin, decryptMemo(checkin));
+        return toUpdateResponse(checkin, decryptMemo(checkin));
     }
 
     @Transactional(readOnly = true)
@@ -178,6 +180,30 @@ public class CheckinService {
                 .toList();
     }
 
+    private CheckinCreateResponse toCreateResponse(Checkin checkin, String memo) {
+        return new CheckinCreateResponse(
+                checkin.getId(),
+                checkin.getTimeOfDay(),
+                checkin.getEmotionType(),
+                checkin.getConditionScore(),
+                memo,
+                checkin.getAiResponse(),
+                checkin.getCreatedAt()
+        );
+    }
+
+    private CheckinUpdateResponse toUpdateResponse(Checkin checkin, String memo) {
+        return new CheckinUpdateResponse(
+                checkin.getId(),
+                checkin.getTimeOfDay(),
+                checkin.getEmotionType(),
+                checkin.getConditionScore(),
+                memo,
+                checkin.getAiResponse(),
+                checkin.getUpdatedAt()
+        );
+    }
+
     private CheckinResponse toResponse(Checkin checkin, String memo) {
         return new CheckinResponse(
                 checkin.getId(),
@@ -186,7 +212,6 @@ public class CheckinService {
                 checkin.getConditionScore(),
                 memo,
                 checkin.getAiResponse(),
-                checkin.getCharacterId(),
                 checkin.getCreatedAt(),
                 checkin.getUpdatedAt()
         );
@@ -214,22 +239,34 @@ public class CheckinService {
         }
     }
 
+    private void checkRateLimit(UUID userId) {
+        String key = "checkin:ratelimit:" + userId;
+        Long count = redisTemplate.opsForValue().increment(key);
+        if (count == null) return;
+        if (count == 1) {
+            redisTemplate.expire(key, RATE_LIMIT_TTL_SECONDS, TimeUnit.SECONDS);
+        }
+        if (count > RATE_LIMIT_MAX) {
+            throw new BusinessException(ErrorCode.RATE_LIMIT_EXCEEDED);
+        }
+    }
+
     private static String idempotencyKey(String key) {
         return "idempotency:" + key;
     }
 
-    private static String serializeResponse(CheckinResponse response) {
+    private String serializeResponse(CheckinCreateResponse response) {
         try {
-            return MAPPER.writeValueAsString(response);
+            return objectMapper.writeValueAsString(response);
         } catch (Exception e) {
             log.warn("idempotency 응답 직렬화 실패", e);
             return null;
         }
     }
 
-    private static CheckinResponse deserializeResponse(String cached) {
+    private CheckinCreateResponse deserializeResponse(String cached) {
         try {
-            return MAPPER.readValue(cached, CheckinResponse.class);
+            return objectMapper.readValue(cached, CheckinCreateResponse.class);
         } catch (Exception e) {
             log.warn("idempotency 캐시 역직렬화 실패 — 캐시 미스로 처리", e);
             return null;
