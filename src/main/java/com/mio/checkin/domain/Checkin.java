@@ -62,6 +62,15 @@ public class Checkin {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    public void update(String emotionType, Integer conditionScore, byte[] memoCiphertext, String memoDekId, boolean updateMemo) {
+        if (emotionType != null) this.emotionType = emotionType;
+        if (conditionScore != null) this.conditionScore = conditionScore;
+        if (updateMemo) {
+            this.memoCiphertext = memoCiphertext;
+            this.memoDekId = memoDekId;
+        }
+    }
+
     @PrePersist
     protected void onCreate() {
         if (checkinDate == null) {
