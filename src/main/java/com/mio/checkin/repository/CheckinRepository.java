@@ -51,11 +51,6 @@ public interface CheckinRepository extends JpaRepository<Checkin, UUID> {
     List<Object[]> findDailyConditionScores(@Param("userId") UUID userId,
                                             @Param("start") LocalDate start,
                                             @Param("end") LocalDate end);
+
     long countByUser_Id(UUID userId);
-
-    @Query("SELECT DISTINCT c.checkinDate FROM Checkin c WHERE c.user.id = :userId ORDER BY c.checkinDate DESC")
-    List<LocalDate> findDistinctCheckinDatesByUserId(@Param("userId") UUID userId);
-
-    @Query("SELECT c.emotionType, COUNT(c) FROM Checkin c WHERE c.user.id = :userId AND c.checkinDate >= :monthStart GROUP BY c.emotionType ORDER BY COUNT(c) DESC")
-    List<Object[]> countEmotionsByUserIdSince(@Param("userId") UUID userId, @Param("monthStart") LocalDate monthStart);
 }
