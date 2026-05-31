@@ -51,4 +51,5 @@ public interface BehaviorTaskRepository extends JpaRepository<BehaviorTask, UUID
     List<Object[]> findTodoStatsByUserAndPeriod(@Param("userId") UUID userId,
                                                 @Param("start") OffsetDateTime start,
                                                 @Param("end") OffsetDateTime end);
+    long countByUser_IdAndStatus(UUID userId, TaskStatus status);
 }
