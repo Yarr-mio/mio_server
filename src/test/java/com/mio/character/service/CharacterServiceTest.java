@@ -40,14 +40,30 @@ class CharacterServiceTest {
     @Test
     @DisplayName("listCharacters는 5개 캐릭터를 반환한다")
     void listCharacters_returnsFiveCharacters() {
-        CharacterListResponse response = characterService.listCharacters();
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("test")
+                .privacyConsent(true)
+                .build();
+        user.completeOnboarding("mio");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        CharacterListResponse response = characterService.listCharacters(userId);
         assertThat(response.characters()).hasSize(5);
     }
 
     @Test
     @DisplayName("listCharacters는 mio를 포함한다")
     void listCharacters_containsMio() {
-        CharacterListResponse response = characterService.listCharacters();
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("test")
+                .privacyConsent(true)
+                .build();
+        user.completeOnboarding("mio");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        CharacterListResponse response = characterService.listCharacters(userId);
         assertThat(response.characters())
                 .anyMatch(c -> "mio".equals(c.characterId()));
     }
@@ -111,6 +127,6 @@ class CharacterServiceTest {
 
         assertThat(response.characterId()).isEqualTo("rumi");
         assertThat(response.name()).isEqualTo("루미");
-        assertThat(response.thumbnailUrl()).contains("rumi");
+        assertThat(response.animal()).isEqualTo("부엉이");
     }
 }

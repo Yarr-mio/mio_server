@@ -16,5 +16,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
 
     boolean existsByNickname(String nickname);
 
+    boolean existsByNicknameAndIdNot(String nickname, UUID id);
+
     List<User> findAllByStatusAndDeletedAtBefore(String status, OffsetDateTime cutoff);
 }

@@ -43,4 +43,6 @@ public interface BehaviorTaskRepository extends JpaRepository<BehaviorTask, UUID
             OffsetDateTime from,
             OffsetDateTime to
     );
+
+    long countByUser_IdAndStatus(UUID userId, TaskStatus status);
 }

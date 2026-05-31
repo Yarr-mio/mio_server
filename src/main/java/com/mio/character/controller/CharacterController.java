@@ -20,8 +20,8 @@ public class CharacterController {
     private final CharacterService characterService;
 
     @GetMapping("/v1/characters")
-    public ResponseEntity<ApiResponse<CharacterListResponse>> listCharacters() {
-        return ResponseEntity.ok(ApiResponse.ok(characterService.listCharacters()));
+    public ResponseEntity<ApiResponse<CharacterListResponse>> listCharacters(Principal principal) {
+        return ResponseEntity.ok(ApiResponse.ok(characterService.listCharacters(resolveUserId(principal))));
     }
 
     @PostMapping("/v1/user/character")
