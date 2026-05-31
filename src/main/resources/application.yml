@@ -105,6 +105,10 @@ notification:
     afternoon: ${NOTIFICATION_CRON_AFTERNOON:0 0 12 * * *}
     evening: ${NOTIFICATION_CRON_EVENING:0 0 22 * * *}
 
+openai:
+  api-key: ${OPENAI_API_KEY}
+  base-url: https://api.openai.com
+
 logging:
   level:
     com.mio: INFO

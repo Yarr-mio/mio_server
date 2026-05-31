@@ -1,6 +1,6 @@
 package com.mio.session.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -28,7 +28,6 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -40,6 +39,7 @@ class SessionServiceTest {
     @Mock private SessionRepository sessionRepository;
     @Mock private UserRepository userRepository;
     @Mock private SessionMessagePersistenceService sessionMessagePersistenceService;
+    @Mock private ConversationOrchestrator conversationOrchestrator;
 
     private SessionService sessionService;
     private UUID userId;
@@ -48,7 +48,7 @@ class SessionServiceTest {
     @BeforeEach
     void setUp() {
         sessionService = new SessionService(
-                sessionRepository, userRepository, sessionMessagePersistenceService, new ObjectMapper().findAndRegisterModules()
+                sessionRepository, userRepository, sessionMessagePersistenceService, conversationOrchestrator
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()
@@ -221,8 +221,8 @@ class SessionServiceTest {
     }
 
     @Test
-    @DisplayName("streamMessage는 사용자/어시스턴트 메시지를 한 번에 저장한다")
-    void streamMessage_success_persistsConversationAtomically() throws Exception {
+    @DisplayName("streamMessage는 ConversationOrchestrator에 위임한다")
+    void streamMessage_delegates_to_orchestrator() {
         UUID sessionId = UUID.randomUUID();
         Session session = Session.builder()
                 .user(mockUser)
@@ -230,18 +230,10 @@ class SessionServiceTest {
                 .build();
         ReflectionTestUtils.setField(session, "id", sessionId);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
-        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         SseEmitter emitter = mock(SseEmitter.class);
-        doNothing().when(emitter).send(any(SseEmitter.SseEventBuilder.class));
 
         sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter);
 
-        verify(sessionMessagePersistenceService).saveConversation(
-                eq(sessionId),
-                eq(userId),
-                eq("안녕"),
-                eq("안녕하세요! 오늘 어떤 이야기를 나눠볼까요?")
-        );
-        verify(emitter).complete();
+        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter);
     }
 }
