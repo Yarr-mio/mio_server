@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -18,6 +19,11 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     Optional<Session> findByUser_IdAndStatus(UUID userId, SessionStatus status);
 
     boolean existsByUser_IdAndStatus(UUID userId, SessionStatus status);
+
+    @Query("SELECT s FROM Session s WHERE s.user.id = :userId AND s.startedAt >= :start AND s.startedAt < :end AND s.status = com.mio.session.domain.SessionStatus.ENDED AND s.endedAt IS NOT NULL")
+    List<Session> findEndedSessionsByUserAndPeriod(@Param("userId") UUID userId,
+                                                   @Param("start") OffsetDateTime start,
+                                                   @Param("end") OffsetDateTime end);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""

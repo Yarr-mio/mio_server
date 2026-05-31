@@ -35,11 +35,22 @@ public interface CheckinRepository extends JpaRepository<Checkin, UUID> {
     @Query("SELECT c FROM Checkin c WHERE c.user.id = :userId ORDER BY c.createdAt DESC")
     Slice<Checkin> findByUser_IdOrderByCreatedAtDesc(@Param("userId") UUID userId, Pageable pageable);
 
-    long countByUser_Id(UUID userId);
+    // 리포트용: 기간 내 체크인 수
+    long countByUser_IdAndCheckinDateBetween(UUID userId, LocalDate start, LocalDate end);
 
+    // 마이페이지 연속 체크인 계산용
     @Query("SELECT DISTINCT c.checkinDate FROM Checkin c WHERE c.user.id = :userId ORDER BY c.checkinDate DESC")
     List<LocalDate> findDistinctCheckinDatesByUserId(@Param("userId") UUID userId);
 
+    // 마이페이지 월별 감정 분포용
     @Query("SELECT c.emotionType, COUNT(c) FROM Checkin c WHERE c.user.id = :userId AND c.checkinDate >= :monthStart GROUP BY c.emotionType ORDER BY COUNT(c) DESC")
     List<Object[]> countEmotionsByUserIdSince(@Param("userId") UUID userId, @Param("monthStart") LocalDate monthStart);
+
+    // emotion-trend용: 일별 condition_score 평균
+    @Query("SELECT c.checkinDate, AVG(c.conditionScore), COUNT(c) FROM Checkin c WHERE c.user.id = :userId AND c.checkinDate BETWEEN :start AND :end GROUP BY c.checkinDate ORDER BY c.checkinDate")
+    List<Object[]> findDailyConditionScores(@Param("userId") UUID userId,
+                                            @Param("start") LocalDate start,
+                                            @Param("end") LocalDate end);
+
+    long countByUser_Id(UUID userId);
 }

@@ -81,6 +81,11 @@ public class WeeklyReport {
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
+    public void markAsInsufficientData() {
+        this.status = "INSUFFICIENT_DATA";
+        this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
     @PrePersist
     @PreUpdate
     protected void validate() {
