@@ -61,7 +61,7 @@ public class OutputJudge {
 
     private OutputJudgeResult parseJudgeResult(String json) throws Exception {
         JsonNode root = objectMapper.readTree(json);
-        String action = root.path("action").asText("REPLACE").toUpperCase();
+        String action = root.path("action").asText("REPLACE").toUpperCase(java.util.Locale.ROOT);
 
         return switch (action) {
             case "SEND" -> OutputJudgeResult.send();

@@ -140,7 +140,8 @@ public class ConversationOrchestrator {
                         crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId);
                 assistantContent = crisisResult.fixedResponse();
 
-            } else {
+            } else if (decision.action() == DecisionAction.GENERATE) {
+                // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints());
@@ -183,18 +184,34 @@ public class ConversationOrchestrator {
                     assistantContent = contentBuilder.toString();
                     sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
 
-                    // CAUTIOUS_SPECULATIVE: post-stream OutputGuard (best-effort logging only)
+                    // CAUTIOUS_SPECULATIVE: post-stream OutputGuard
+                    // 이미 스트리밍된 응답은 취소 불가하지만, DB에는 안전 버전을 저장해
+                    // 대화 기록 조회 시 유해 원문이 노출되지 않도록 한다.
                     if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
                         preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                         if (!preFilterResult.passed()) {
                             judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
-                            // Already streamed — log violation for tuning
                             log.warn("OutputGuard FAIL post-stream: session={} reasons={} action={}",
                                     sessionId, preFilterResult.failReasons(),
                                     judgeActionResult != null ? judgeActionResult.action() : "none");
+                            if (judgeActionResult != null) {
+                                assistantContent = switch (judgeActionResult.action()) {
+                                    case REWRITE -> judgeActionResult.rewrittenContent() != null
+                                            ? judgeActionResult.rewrittenContent() : assistantContent;
+                                    case REPLACE, CRISIS_FLOW ->
+                                            "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                                    case SEND -> assistantContent;
+                                };
+                            }
                         }
                     }
                 }
+            } else {
+                // FALLBACK 또는 미지원 action — 안전 응답 반환
+                log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
+                assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
+                sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
             }
 
             // 8. Persist messages

@@ -50,8 +50,10 @@ public class SafetySignalCombiner {
         if (security.level() == SecurityLevel.ATTACK) return false;
 
         // §10.2 발동 조건
-        // 1. crisis_keyword 후보 (hardCrisis 아님) — riskCandidate with crisis keyword signal
-        if (l1.riskCandidate() && l1.signals().stream().anyMatch(s -> s.startsWith("crisis_keyword"))) {
+        // 1. riskCandidate (hardCrisis 아닌 위기 후보) — SafetyL1의 RISK_KEYWORDS 매칭 시
+        // SafetyL1에서 crisis_keyword signal은 hardCrisis=true에서만 추가되므로
+        // riskCandidate 자체를 조건으로 사용한다.
+        if (l1.riskCandidate()) {
             return true;
         }
 
