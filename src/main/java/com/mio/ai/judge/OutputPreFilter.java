@@ -50,7 +50,7 @@ public class OutputPreFilter {
     );
 
     public OutputPreFilterResult check(String response) {
-        String lowerResponse = response.toLowerCase();
+        String lowerResponse = response.toLowerCase(java.util.Locale.ROOT);
         List<String> failReasons = new ArrayList<>();
 
         checkRoleBoundary(lowerResponse, failReasons);

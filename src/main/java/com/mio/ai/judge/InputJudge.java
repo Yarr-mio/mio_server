@@ -107,7 +107,7 @@ public class InputJudge {
 
     private SecurityLevel parseSecurityLevel(String value) {
         try {
-            return SecurityLevel.valueOf(value.toUpperCase());
+            return SecurityLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             log.warn("Unknown SecurityLevel from LLM: {}, defaulting to CLEAN", value);
             return SecurityLevel.CLEAN;
@@ -116,7 +116,7 @@ public class InputJudge {
 
     private RiskLevel parseRiskLevel(String value) {
         try {
-            return RiskLevel.valueOf(value.toUpperCase());
+            return RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             log.warn("Unknown RiskLevel from LLM: {}, defaulting to CLEAR_LOW", value);
             return RiskLevel.CLEAR_LOW;
@@ -125,7 +125,7 @@ public class InputJudge {
 
     private GenerationMode parseGenerationMode(String value) {
         try {
-            return GenerationMode.valueOf(value.toUpperCase());
+            return GenerationMode.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             return GenerationMode.NORMAL;
         }
@@ -133,7 +133,7 @@ public class InputJudge {
 
     private DeliveryMode parseDeliveryMode(String value) {
         try {
-            return DeliveryMode.valueOf(value.toUpperCase());
+            return DeliveryMode.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
             return DeliveryMode.SPECULATIVE;
         }
