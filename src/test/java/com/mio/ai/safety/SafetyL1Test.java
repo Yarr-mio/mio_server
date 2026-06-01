@@ -1,6 +1,7 @@
 package com.mio.ai.safety;
 
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.profile.SafetyProfile;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -15,6 +16,10 @@ class SafetyL1Test {
 
     private SafetyL1Input input(String normalizedMessage) {
         return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.failOpen());
+    }
+
+    private SafetyL1Input inputWithProfile(String normalizedMessage, SafetyProfile profile) {
+        return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.failOpen(), profile);
     }
 
     @Test
@@ -57,8 +62,8 @@ class SafetyL1Test {
                 Map.of("self-harm", true),
                 Map.of("self-harm", 0.8)
         );
-        var input = new SafetyL1Input("힘들어", List.of(), moderation);
-        var result = safetyL1.check(input);
+        var inputObj = new SafetyL1Input("힘들어", List.of(), moderation);
+        var result = safetyL1.check(inputObj);
         assertThat(result.moderationFlagged()).isTrue();
         assertThat(result.riskCandidate()).isTrue();
     }
@@ -75,5 +80,17 @@ class SafetyL1Test {
     void combined_confidence_high_for_hard_crisis() {
         var result = safetyL1.check(input("자살"));
         assertThat(result.combinedConfidence()).isGreaterThanOrEqualTo(0.9);
+    }
+
+    @Test
+    @DisplayName("SafetyProfile이 주입되면 동적 임계값을 사용한다 (null-safe)")
+    void safety_profile_injection_does_not_break() {
+        SafetyProfile profile = new SafetyProfile(
+                "user-1", "default",
+                Map.of("emotion_drop_threshold", 25.0, "repetitive_negative_count", 2.0),
+                List.of(), List.of(), List.of(), 0.0, 0, List.of()
+        );
+        var result = safetyL1.check(inputWithProfile("죽고싶다", profile));
+        assertThat(result.hardCrisis()).isTrue();
     }
 }
