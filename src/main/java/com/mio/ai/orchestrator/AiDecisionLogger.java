@@ -28,7 +28,7 @@ public class AiDecisionLogger {
     private final AiPolicyDecisionRepository repository;
     private final ObjectMapper objectMapper;
 
-    @Async
+    @Async("aiDecisionLoggerExecutor")
     public void log(
             UUID userId,
             UUID sessionId,

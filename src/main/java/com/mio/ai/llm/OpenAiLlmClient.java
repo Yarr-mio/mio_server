@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,7 @@ public class OpenAiLlmClient implements LlmClient {
                     .uri(URI.create(CHAT_URL))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(60))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
@@ -62,19 +64,20 @@ public class OpenAiLlmClient implements LlmClient {
                 throw new RuntimeException("OpenAI API error: " + response.statusCode());
             }
 
-            response.body()
-                    .filter(line -> line.startsWith(DATA_PREFIX))
-                    .takeWhile(line -> !line.equals(DONE_MARKER))
-                    .forEach(line -> {
-                        String json = line.substring(DATA_PREFIX.length());
-                        String content = extractDeltaContent(json);
-                        if (content != null && !content.isEmpty()) {
-                            if (ttft.get() == 0) {
-                                ttft.set(System.currentTimeMillis() - startMs);
+            try (Stream<String> lines = response.body()) {
+                lines.filter(line -> line.startsWith(DATA_PREFIX))
+                        .takeWhile(line -> !line.equals(DONE_MARKER))
+                        .forEach(line -> {
+                            String json = line.substring(DATA_PREFIX.length());
+                            String content = extractDeltaContent(json);
+                            if (content != null && !content.isEmpty()) {
+                                if (ttft.get() == 0) {
+                                    ttft.set(System.currentTimeMillis() - startMs);
+                                }
+                                chunkHandler.accept(content);
                             }
-                            chunkHandler.accept(content);
-                        }
-                    });
+                        });
+            }
 
         } catch (Exception e) {
             log.error("LLM streaming error: {}", e.getMessage());
