@@ -67,7 +67,12 @@ public class SafetySignalCombiner {
             return true;
         }
 
-        // 3. emotion_spike + 다른 플래그 1개 이상
+        // 2.7 emotion_spike alone should be reviewed by InputJudge.
+        if (l1.emotionSpike()) {
+            return true;
+        }
+
+        // 3. emotion_spike + 다른 플래그 1개 이상 (2.7로 흡수되어 이 조건은 보조 역할)
         if (l1.emotionSpike() && (l1.riskCandidate() || l1.repetitiveNegative() || l1.dependencyHint())) {
             return true;
         }

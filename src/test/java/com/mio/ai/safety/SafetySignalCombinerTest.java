@@ -38,6 +38,30 @@ class SafetySignalCombinerTest {
     }
 
     @Test
+    @DisplayName("감정 급락 신호 단독도 InputJudge 발동 조건이다")
+    void emotionSpikeRequiresJudge() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false,
+                false,
+                true,
+                false,
+                false,
+                false,
+                List.of("emotion_spike"),
+                0.0
+        );
+
+        CombinedSignal combined = combiner.combine(
+                SecurityAssessment.clean(),
+                l1,
+                ModerationResult.failOpen(),
+                null
+        );
+
+        assertThat(combined.requiresJudge()).isTrue();
+    }
+
+    @Test
     @DisplayName("의존 신호 단독도 InputJudge 발동 조건이다")
     void dependencyHintRequiresJudge() {
         SafetyL1Result l1 = new SafetyL1Result(
