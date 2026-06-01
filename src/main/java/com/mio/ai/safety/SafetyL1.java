@@ -26,7 +26,10 @@ public class SafetyL1 {
 
     private static final Set<String> DEPENDENCY_PHRASES = Set.of(
             "너밖에없어", "네가없으면", "너만있으면돼", "너한테만말할수있어",
-            "다른사람은몰라도너는", "항상네편이잖아"
+            "다른사람은몰라도너는", "항상네편이잖아",
+            "여기뿐인것같아", "여기뿐인것같아요", "여기서만계속",
+            "계속대답해주지않으면", "계속붙잡고이야기하고싶",
+            "다른사람한테는말하고싶지않"
     );
 
     private static final int DEFAULT_EMOTION_SPIKE_THRESHOLD = 30;
