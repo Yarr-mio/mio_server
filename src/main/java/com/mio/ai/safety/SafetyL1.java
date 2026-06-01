@@ -1,6 +1,7 @@
 package com.mio.ai.safety;
 
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.profile.SafetyProfile;
 import com.mio.session.domain.Message;
 import org.springframework.stereotype.Component;
 
@@ -28,14 +29,22 @@ public class SafetyL1 {
             "다른사람은몰라도너는", "항상네편이잖아"
     );
 
-    private static final int EMOTION_SPIKE_THRESHOLD = 30;
-    private static final int REPETITION_THRESHOLD = 3;
-    private static final int BURST_THRESHOLD = 10;
+    private static final int DEFAULT_EMOTION_SPIKE_THRESHOLD = 30;
+    private static final int DEFAULT_REPETITION_THRESHOLD = 3;
+    private static final int DEFAULT_BURST_THRESHOLD = 10;
 
     public SafetyL1Result check(SafetyL1Input input) {
         String msg = input.normalizedMessage().replaceAll("\\s+", "");
         List<Message> history = input.recentMessages();
         ModerationResult moderation = input.moderationResult();
+        SafetyProfile profile = input.profile();
+
+        int emotionSpikeThreshold = profile != null
+                ? (int) profile.emotionDropThreshold()
+                : DEFAULT_EMOTION_SPIKE_THRESHOLD;
+        int repetitionThreshold = profile != null
+                ? profile.repetitiveNegativeCount()
+                : DEFAULT_REPETITION_THRESHOLD;
 
         List<String> signals = new ArrayList<>();
         boolean hardCrisis = false;

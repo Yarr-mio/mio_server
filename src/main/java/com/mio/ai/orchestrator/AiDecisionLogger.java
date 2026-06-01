@@ -3,6 +3,8 @@ package com.mio.ai.orchestrator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.AiPolicyDecision;
+import com.mio.ai.judge.OutputJudgeResult;
+import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
@@ -23,7 +25,7 @@ import java.util.UUID;
 public class AiDecisionLogger {
 
     private static final String SCHEMA_VERSION = "v2.4";
-    private static final String PROMPT_VERSION = "phase1-basic";
+    private static final String PROMPT_VERSION = "phase2";
 
     private final AiPolicyDecisionRepository repository;
     private final ObjectMapper objectMapper;
@@ -38,12 +40,16 @@ public class AiDecisionLogger {
             SecurityAssessment securityAssessment,
             long totalPipelineMs,
             long llmTtftMs,
-            boolean crisisFlowTriggered) {
+            boolean crisisFlowTriggered,
+            boolean inputJudgeCalled,
+            OutputPreFilterResult preFilterResult,
+            OutputJudgeResult outputJudgeResult) {
 
         try {
             Map<String, Object> trace = buildTrace(
                     moderation, l1Result, llmTtftMs, totalPipelineMs,
-                    crisisFlowTriggered, decision);
+                    crisisFlowTriggered, decision,
+                    inputJudgeCalled, preFilterResult, outputJudgeResult);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -67,13 +73,33 @@ public class AiDecisionLogger {
         }
     }
 
+    /** Phase 1 호환 오버로드 */
+    @Async("aiDecisionLoggerExecutor")
+    public void log(
+            UUID userId,
+            UUID sessionId,
+            PolicyDecision decision,
+            ModerationResult moderation,
+            SafetyL1Result l1Result,
+            SecurityAssessment securityAssessment,
+            long totalPipelineMs,
+            long llmTtftMs,
+            boolean crisisFlowTriggered) {
+        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
+                totalPipelineMs, llmTtftMs, crisisFlowTriggered,
+                false, OutputPreFilterResult.pass(), null);
+    }
+
     private Map<String, Object> buildTrace(
             ModerationResult moderation,
             SafetyL1Result l1Result,
             long ttftMs,
             long totalMs,
             boolean crisisFlowTriggered,
-            PolicyDecision decision) {
+            PolicyDecision decision,
+            boolean inputJudgeCalled,
+            OutputPreFilterResult preFilterResult,
+            OutputJudgeResult outputJudgeResult) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -90,13 +116,20 @@ public class AiDecisionLogger {
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
         trace.put("l1_threshold_source", "default");
-        trace.put("input_judge_called", false);
+        trace.put("input_judge_called", inputJudgeCalled);
+        trace.put("risk_level", decision.riskLevel() != null ? decision.riskLevel().name() : null);
         trace.put("safety_profile_cache_hit", false);
         trace.put("memory_cache_hit", false);
         trace.put("llm_model", "gpt-4o");
         trace.put("llm_ttft_ms", ttftMs);
         trace.put("llm_cost_usd", 0.0);
         trace.put("delivery_mode", decision.deliveryMode().name().toLowerCase());
+        trace.put("output_pre_filter_result", preFilterResult != null
+                ? (preFilterResult.passed() ? "PASS" : "FAIL") : null);
+        trace.put("output_pre_filter_fail_reasons", preFilterResult != null
+                ? preFilterResult.failReasons() : null);
+        trace.put("output_judge_action", outputJudgeResult != null
+                ? outputJudgeResult.action().name() : null);
         trace.put("crisis_flow_triggered", crisisFlowTriggered);
         trace.put("total_pipeline_ms", totalMs);
 

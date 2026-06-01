@@ -13,4 +13,13 @@ public interface LlmClient {
      * @return time to first token in milliseconds
      */
     long stream(LlmRequest request, Consumer<String> chunkHandler);
+
+    /**
+     * Sends a non-streaming request and returns the full response content.
+     * Used for Judge calls (InputJudge, OutputJudge) that require structured JSON.
+     *
+     * @param request the LLM request
+     * @return the full response content string
+     */
+    String complete(LlmRequest request);
 }

@@ -1,5 +1,6 @@
 package com.mio.ai.policy;
 
+import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.security.SecurityLevel;
 
 public record PolicyDecision(
@@ -12,6 +13,7 @@ public record PolicyDecision(
         boolean allowStreaming,
         boolean requireOutputGuard,
         InterventionHints interventionHints,
-        String policyVersion
+        String policyVersion,
+        RiskLevel riskLevel
 ) {
 }

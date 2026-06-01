@@ -100,6 +100,51 @@ public class OpenAiLlmClient implements LlmClient {
         return objectMapper.writeValueAsString(body);
     }
 
+    @Override
+    public String complete(LlmRequest request) {
+        try {
+            String requestBody = buildNonStreamingRequestBody(request);
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(CHAT_URL))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(
+                    httpRequest,
+                    HttpResponse.BodyHandlers.ofString()
+            );
+
+            if (response.statusCode() != 200) {
+                throw new RuntimeException("OpenAI API error: " + response.statusCode());
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            return root.path("choices").get(0).path("message").path("content").asText();
+
+        } catch (Exception e) {
+            log.error("LLM complete error: {}", e.getMessage());
+            throw new RuntimeException("LLM complete failed", e);
+        }
+    }
+
+    private String buildNonStreamingRequestBody(LlmRequest request) throws Exception {
+        List<Map<String, String>> messages = request.messages().stream()
+                .map(m -> Map.of("role", m.role(), "content", m.content()))
+                .toList();
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", request.model());
+        body.put("messages", messages);
+        body.put("stream", false);
+        body.put("response_format", Map.of("type", "json_object"));
+
+        return objectMapper.writeValueAsString(body);
+    }
+
     private String extractDeltaContent(String json) {
         try {
             JsonNode root = objectMapper.readTree(json);
