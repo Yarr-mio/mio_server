@@ -64,6 +64,41 @@ class SafetyL1Test {
     }
 
     @Test
+    @DisplayName("직전 emotionScore 대비 30점 이상 하락하면 emotionSpike = true를 반환한다")
+    void emotion_score_drop_triggers_emotion_spike() {
+        var result = safetyL1.check(new SafetyL1Input(
+                "방금 일이 생기고 나서 마음이 확 무너졌어요",
+                List.of(new SafetyL1HistoryMessage("오늘은 괜찮았어요", 70, null)),
+                ModerationResult.failOpen(),
+                null,
+                25,
+                "catastrophizing"
+        ));
+
+        assertThat(result.emotionSpike()).isTrue();
+        assertThat(result.hasAnySignal()).isTrue();
+    }
+
+    @Test
+    @DisplayName("동일 biasType이 임계값만큼 반복되면 repetitiveNegative = true를 반환한다")
+    void repeated_bias_type_triggers_repetitive_negative() {
+        var result = safetyL1.check(new SafetyL1Input(
+                "이번에도 또 안 됐어요",
+                List.of(
+                        new SafetyL1HistoryMessage("지난번에도 비슷했어요", 45, "overgeneralization"),
+                        new SafetyL1HistoryMessage("저는 늘 이런 식이에요", 45, "overgeneralization")
+                ),
+                ModerationResult.failOpen(),
+                null,
+                45,
+                "overgeneralization"
+        ));
+
+        assertThat(result.repetitiveNegative()).isTrue();
+        assertThat(result.hasAnySignal()).isTrue();
+    }
+
+    @Test
     @DisplayName("L0 self-harm flagged는 riskCandidate를 활성화한다")
     void l0_self_harm_activates_risk_candidate() {
         ModerationResult moderation = new ModerationResult(

@@ -2,7 +2,6 @@ package com.mio.ai.safety;
 
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.profile.SafetyProfile;
-import com.mio.session.domain.Message;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -38,7 +37,7 @@ public class SafetyL1 {
 
     public SafetyL1Result check(SafetyL1Input input) {
         String msg = input.normalizedMessage().replaceAll("\\s+", "");
-        List<Message> history = input.recentMessages();
+        List<SafetyL1HistoryMessage> history = input.recentMessages();
         ModerationResult moderation = input.moderationResult();
         SafetyProfile profile = input.profile();
 
@@ -82,6 +81,16 @@ public class SafetyL1 {
             }
         }
 
+        if (isEmotionSpike(input.currentEmotionScore(), history, emotionSpikeThreshold)) {
+            emotionSpike = true;
+            signals.add("emotion_spike");
+        }
+
+        if (isRepetitiveNegative(input.currentBiasType(), history, repetitionThreshold)) {
+            repetitiveNegative = true;
+            signals.add("repetitive_negative");
+        }
+
         boolean moderationFlagged = moderation.flagged() && moderation.isSelfHarmFlagged();
         if (moderationFlagged) {
             signals.add("l0_self_harm");
@@ -90,12 +99,50 @@ public class SafetyL1 {
             }
         }
 
-        double confidence = hardCrisis ? 0.9 : (riskCandidate ? 0.6 : 0.0);
+        double confidence = hardCrisis ? 0.9
+                : (riskCandidate ? 0.6
+                : (emotionSpike || repetitiveNegative || dependencyHint ? 0.45 : 0.0));
 
         return new SafetyL1Result(
                 hardCrisis, riskCandidate, emotionSpike,
                 repetitiveNegative, dependencyHint, moderationFlagged,
                 signals, confidence
         );
+    }
+
+    private boolean isEmotionSpike(
+            Integer currentEmotionScore,
+            List<SafetyL1HistoryMessage> history,
+            int threshold) {
+
+        if (currentEmotionScore == null || history == null || history.isEmpty()) {
+            return false;
+        }
+
+        double previousAverage = history.stream()
+                .map(SafetyL1HistoryMessage::emotionScore)
+                .filter(score -> score != null)
+                .mapToInt(Integer::intValue)
+                .average()
+                .orElse(Double.NaN);
+
+        return !Double.isNaN(previousAverage) && previousAverage - currentEmotionScore >= threshold;
+    }
+
+    private boolean isRepetitiveNegative(
+            String currentBiasType,
+            List<SafetyL1HistoryMessage> history,
+            int threshold) {
+
+        if (currentBiasType == null || currentBiasType.isBlank() || history == null || history.isEmpty()) {
+            return false;
+        }
+
+        long previousSameBiasCount = history.stream()
+                .map(SafetyL1HistoryMessage::biasType)
+                .filter(currentBiasType::equals)
+                .count();
+
+        return previousSameBiasCount + 1 >= threshold;
     }
 }

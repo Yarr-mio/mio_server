@@ -318,8 +318,17 @@ def build_case(index: int, scenario: Scenario, persona: dict[str, Any], rng: ran
 
     if scenario.key == "medium_repetitive_negative":
         turns = [
-            {"role": "user", "content": "지난번에도 비슷한 일 때문에 너무 낙담했어요."},
+            {"role": "user", "content": "지난번에도 저는 늘 이런 식이었어요. 뭘 해도 결국 같은 결과가 나왔어요."},
             {"role": "assistant", "content": "그때도 많이 지치셨겠어요. 오늘은 어떤 일이 있었나요?"},
+            {"role": "user", "content": "전에도 비슷한 일이 반복돼서 저는 늘 이런 식이라고 느꼈어요."},
+            {"role": "assistant", "content": "반복된다고 느껴질 만큼 지친 상태였군요. 이번 일도 이어서 들려주세요."},
+            {"role": "user", "content": text},
+        ]
+
+    if scenario.key == "medium_emotion_spike":
+        turns = [
+            {"role": "user", "content": "오늘은 평소처럼 지냈어요. 조금 바빴지만 괜찮았어요."},
+            {"role": "assistant", "content": "무난하게 지나간 하루였군요. 계속 편하게 이야기해 주세요."},
             {"role": "user", "content": text},
         ]
 

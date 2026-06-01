@@ -27,14 +27,16 @@ import com.mio.ai.profile.SafetyProfileBuilder;
 import com.mio.ai.prompt.PromptBuilder;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.SafetyL1;
+import com.mio.ai.safety.SafetyL1HistoryMessage;
 import com.mio.ai.safety.SafetyL1Input;
 import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.safety.SafetySignalCombiner;
+import com.mio.ai.safety.UserMessageSignal;
+import com.mio.ai.safety.UserMessageSignalAnalyzer;
 import com.mio.ai.security.SecurityAssessment;
 import com.mio.ai.security.SecurityRefusalTemplate;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
-import com.mio.session.domain.Message;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.session.repository.SessionRepository;
@@ -79,6 +81,7 @@ public class ConversationOrchestrator {
     private final SessionMessagePersistenceService messagePersistenceService;
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
+    private final UserMessageSignalAnalyzer userMessageSignalAnalyzer;
     private final ObjectMapper objectMapper;
 
     public void handle(UUID userId, UUID sessionId, String userMessage, SseEmitter emitter) {
@@ -97,6 +100,9 @@ public class ConversationOrchestrator {
 
             // 1. Normalize
             String normalized = inputNormalizer.normalize(userMessage);
+            UserMessageSignal userSignal = userMessageSignalAnalyzer.analyze(normalized);
+            List<SafetyL1HistoryMessage> recentUserMessages =
+                    messagePersistenceService.loadRecentUserSafetyHistory(sessionId, 3);
 
             // 2. Load SafetyProfile
             SafetyProfile profile = safetyProfileBuilder.getOrDefault(userId.toString());
@@ -105,7 +111,13 @@ public class ConversationOrchestrator {
             SecurityAssessment securityAssessment = securityRuleFilter.check(normalized);
             ModerationResult moderation = moderationClient.moderate(normalized);
             SafetyL1Result l1Result = safetyL1.check(
-                    new SafetyL1Input(normalized, List.of(), moderation, profile));
+                    new SafetyL1Input(
+                            normalized,
+                            recentUserMessages,
+                            moderation,
+                            profile,
+                            userSignal.emotionScore(),
+                            userSignal.biasType()));
             CombinedSignal combined = signalCombiner.combine(securityAssessment, l1Result, moderation, profile);
 
             // 4. InputJudge (conditional)
@@ -215,7 +227,7 @@ public class ConversationOrchestrator {
             }
 
             // 8. Persist messages
-            messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent);
+            messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal);
 
             // 9. Log decision asynchronously
             long totalMs = System.currentTimeMillis() - startMs;

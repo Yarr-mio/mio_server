@@ -62,6 +62,11 @@ public class SafetySignalCombiner {
             return true;
         }
 
+        // 2.5 repetitive_negative alone should be reviewed by InputJudge.
+        if (l1.repetitiveNegative()) {
+            return true;
+        }
+
         // 3. emotion_spike + 다른 플래그 1개 이상
         if (l1.emotionSpike() && (l1.riskCandidate() || l1.repetitiveNegative() || l1.dependencyHint())) {
             return true;

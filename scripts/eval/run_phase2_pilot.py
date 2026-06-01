@@ -126,20 +126,38 @@ def run_case(base_url: str, token: str, case: dict[str, Any], timeout: int) -> d
         session_id = create_session(base_url, token, timeout)
         result["session_id"] = session_id
 
-        message = case["turns"][0]["content"]
-        status, sse_body = post_sse(
-            base_url,
-            f"/v1/sessions/{session_id}/messages",
-            {"content": message},
-            token,
-            timeout,
-        )
-        result["message_status"] = status
-        result["sse_bytes"] = len(sse_body.encode("utf-8"))
-        result["has_done_event"] = "event:done" in sse_body
-        result["ok"] = status == 200 and result["has_done_event"]
-        if status != 200:
-            result["error_body_prefix"] = sse_body[:500]
+        user_turns = [turn for turn in case["turns"] if turn.get("role") == "user"]
+        result["user_turn_count"] = len(user_turns)
+        result["turn_results"] = []
+
+        all_ok = True
+        for turn_index, turn in enumerate(user_turns, start=1):
+            status, sse_body = post_sse(
+                base_url,
+                f"/v1/sessions/{session_id}/messages",
+                {"content": turn["content"]},
+                token,
+                timeout,
+            )
+            has_done_event = "event:done" in sse_body
+            turn_result = {
+                "turn_index": turn_index,
+                "message_status": status,
+                "sse_bytes": len(sse_body.encode("utf-8")),
+                "has_done_event": has_done_event,
+            }
+            if status != 200:
+                turn_result["error_body_prefix"] = sse_body[:500]
+            result["turn_results"].append(turn_result)
+
+            result["message_status"] = status
+            result["sse_bytes"] = turn_result["sse_bytes"]
+            result["has_done_event"] = has_done_event
+            all_ok = all_ok and status == 200 and has_done_event
+            if status != 200 or not has_done_event:
+                break
+
+        result["ok"] = all_ok and bool(user_turns)
     except Exception as error:  # noqa: BLE001 - runner should record and continue.
         result["error"] = str(error)
     finally:

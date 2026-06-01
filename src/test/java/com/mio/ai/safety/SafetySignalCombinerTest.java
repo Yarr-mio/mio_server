@@ -14,6 +14,30 @@ class SafetySignalCombinerTest {
     private final SafetySignalCombiner combiner = new SafetySignalCombiner();
 
     @Test
+    @DisplayName("반복 부정 신호 단독도 InputJudge 발동 조건이다")
+    void repetitiveNegativeRequiresJudge() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false,
+                false,
+                false,
+                true,
+                false,
+                false,
+                List.of("repetitive_negative"),
+                0.0
+        );
+
+        CombinedSignal combined = combiner.combine(
+                SecurityAssessment.clean(),
+                l1,
+                ModerationResult.failOpen(),
+                null
+        );
+
+        assertThat(combined.requiresJudge()).isTrue();
+    }
+
+    @Test
     @DisplayName("의존 신호 단독도 InputJudge 발동 조건이다")
     void dependencyHintRequiresJudge() {
         SafetyL1Result l1 = new SafetyL1Result(
@@ -36,4 +60,5 @@ class SafetySignalCombinerTest {
 
         assertThat(combined.requiresJudge()).isTrue();
     }
+
 }
