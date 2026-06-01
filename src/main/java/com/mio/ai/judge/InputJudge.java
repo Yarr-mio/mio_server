@@ -44,7 +44,13 @@ public class InputJudge {
 
             risk_types values: casual_negative, ambiguous_distress, repetitive_negative, dependency_risk, crisis_possible, emotion_spike
 
-            Be conservative: when in doubt, prefer MEDIUM over LOW, SUPPORTIVE over NORMAL.
+            Risk level guidance:
+            - HIGH: passive suicidal ideation (e.g. wondering if others would be fine without you, feeling existence is a burden), isolated with no one to talk to, recurring hopeless thoughts. Use GUARDED + BUFFER.
+            - MEDIUM: clear emotional distress, dependency phrases, cognitive distortions without crisis signals. Use SUPPORTIVE + CAUTIOUS_SPECULATIVE.
+            - LOW: mild negative mood, everyday worry or stress without clinical concern.
+            - CLEAR_LOW: routine emotional sharing, no distress signals.
+
+            Be conservative: when in doubt, prefer MEDIUM over LOW, HIGH over MEDIUM for crisis-adjacent signals.
             Respond ONLY with valid JSON.
             """;
 

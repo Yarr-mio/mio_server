@@ -18,7 +18,7 @@ public class UserMessageSignalAnalyzer {
     );
 
     private static final Set<String> CATASTROPHIZING = Set.of(
-            "끝장", "다망가질", "망가질것같", "큰문제로번질", "모든게끝",
+            "끝장", "다망가질", "망가질것같", "모든게끝",
             "최악", "돌이킬수없"
     );
 
