@@ -31,6 +31,11 @@ public class UserMessageSignalAnalyzer {
             "전부엉망", "좋은건하나도", "나쁜것만보여", "하나도기억이안나", "의미가없는것"
     );
 
+    private static final Set<String> FORTUNE_TELLING = Set.of(
+            "안좋게흘러갈것같", "잘못될것같은", "나빠질것같은", "최악으로흘러갈",
+            "안될것같다", "틀림없이나쁘게"
+    );
+
     public UserMessageSignal analyze(String normalizedMessage) {
         String compact = compact(normalizedMessage);
         return new UserMessageSignal(emotionScore(compact), biasType(compact));
@@ -55,6 +60,9 @@ public class UserMessageSignalAnalyzer {
         }
         if (containsAny(compactMessage, MENTAL_FILTER)) {
             return "mental_filter";
+        }
+        if (containsAny(compactMessage, FORTUNE_TELLING)) {
+            return "fortune_telling";
         }
         return null;
     }

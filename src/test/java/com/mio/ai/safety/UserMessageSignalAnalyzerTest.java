@@ -28,6 +28,13 @@ class UserMessageSignalAnalyzerTest {
     }
 
     @Test
+    @DisplayName("미래 부정 예측 표현은 fortune_telling biasType으로 저장한다")
+    void future_negative_prediction_sets_fortune_telling() {
+        UserMessageSignal signal = analyzer.analyze("안 좋게 흘러갈 것 같다는 생각이 자꾸 듭니다.");
+        assertThat(signal.biasType()).isEqualTo("fortune_telling");
+    }
+
+    @Test
     @DisplayName("부정 필터링 표현은 mental_filter biasType으로 저장한다")
     void negative_filtering_sets_mental_filter() {
         UserMessageSignal signal1 = analyzer.analyze("전부 엉망인 것만 보여요. 좋은 건 하나도 없어요.");

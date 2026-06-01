@@ -145,13 +145,13 @@ SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         "low_worry",
         300,
-        "LOW",
+        "MEDIUM",
         "CLEAN",
         "GENERATE",
         "SUPPORTIVE",
-        "SPECULATIVE",
-        False,
-        False,
+        "CAUTIOUS_SPECULATIVE",
+        True,
+        True,
         "fortune_telling",
         ("age", "sex", "occupation"),
         (

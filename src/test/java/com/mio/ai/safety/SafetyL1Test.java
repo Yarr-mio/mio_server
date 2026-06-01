@@ -99,6 +99,36 @@ class SafetyL1Test {
     }
 
     @Test
+    @DisplayName("catastrophizing biasType 단독 발화는 riskCandidate = true를 반환한다")
+    void catastrophizing_bias_single_turn_triggers_risk_candidate() {
+        var result = safetyL1.check(new SafetyL1Input(
+                "이게 더 큰 문제로 번질까 봐 걱정돼요",
+                List.of(),
+                ModerationResult.failOpen(),
+                null,
+                45,
+                "catastrophizing"
+        ));
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("cognitive_distortion:catastrophizing"));
+    }
+
+    @Test
+    @DisplayName("fortune_telling biasType 단독 발화는 riskCandidate = true를 반환한다")
+    void fortune_telling_bias_single_turn_triggers_risk_candidate() {
+        var result = safetyL1.check(new SafetyL1Input(
+                "안 좋게 흘러갈 것 같다는 생각이 자꾸 들어요",
+                List.of(),
+                ModerationResult.failOpen(),
+                null,
+                45,
+                "fortune_telling"
+        ));
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("cognitive_distortion:fortune_telling"));
+    }
+
+    @Test
     @DisplayName("수동적 자살 사고(내가 없어도)는 riskCandidate = true를 반환한다")
     void passive_suicidal_ideation_triggers_risk_candidate() {
         var result = safetyL1.check(input("내가없어도다들괜찮지않을까하는생각이자꾸들어요"));
