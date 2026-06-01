@@ -83,16 +83,16 @@ public class InputJudge {
         JsonNode root = objectMapper.readTree(json);
 
         JsonNode secNode = root.path("security");
-        SecurityLevel secLevel = SecurityLevel.valueOf(
-                secNode.path("level").asText("CLEAN").toUpperCase());
+        SecurityLevel secLevel = parseSecurityLevel(
+                secNode.hasNonNull("level") ? secNode.path("level").asText() : "CLEAN");
         List<String> attackTypes = new ArrayList<>();
         secNode.path("attack_types").forEach(n -> attackTypes.add(n.asText()));
         boolean requireOutputSecGuard = secNode.path("require_output_security_guard").asBoolean(false);
         SecurityVerdict security = new SecurityVerdict(secLevel, attackTypes, requireOutputSecGuard);
 
         JsonNode riskNode = root.path("risk");
-        RiskLevel riskLevel = RiskLevel.valueOf(
-                riskNode.path("risk_level").asText("CLEAR_LOW").toUpperCase());
+        RiskLevel riskLevel = parseRiskLevel(
+                riskNode.hasNonNull("risk_level") ? riskNode.path("risk_level").asText() : "CLEAR_LOW");
         List<String> riskTypes = new ArrayList<>();
         riskNode.path("risk_types").forEach(n -> riskTypes.add(n.asText()));
         GenerationMode genMode = parseGenerationMode(riskNode.path("recommended_generation_mode").asText("NORMAL"));
@@ -103,6 +103,24 @@ public class InputJudge {
         double confidence = root.path("confidence").asDouble(0.5);
 
         return new InputJudgeResult(security, risk, confidence);
+    }
+
+    private SecurityLevel parseSecurityLevel(String value) {
+        try {
+            return SecurityLevel.valueOf(value.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown SecurityLevel from LLM: {}, defaulting to CLEAN", value);
+            return SecurityLevel.CLEAN;
+        }
+    }
+
+    private RiskLevel parseRiskLevel(String value) {
+        try {
+            return RiskLevel.valueOf(value.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown RiskLevel from LLM: {}, defaulting to CLEAR_LOW", value);
+            return RiskLevel.CLEAR_LOW;
+        }
     }
 
     private GenerationMode parseGenerationMode(String value) {

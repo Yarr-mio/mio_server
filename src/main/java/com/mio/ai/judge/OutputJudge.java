@@ -66,7 +66,9 @@ public class OutputJudge {
         return switch (action) {
             case "SEND" -> OutputJudgeResult.send();
             case "REWRITE" -> {
-                String rewritten = root.path("rewritten_content").asText(SAFE_FALLBACK);
+                String rewritten = root.hasNonNull("rewritten_content")
+                        ? root.path("rewritten_content").asText()
+                        : SAFE_FALLBACK;
                 yield OutputJudgeResult.rewrite(rewritten);
             }
             case "CRISIS_FLOW" -> OutputJudgeResult.crisisFlow();

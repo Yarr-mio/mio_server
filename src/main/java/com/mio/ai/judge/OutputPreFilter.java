@@ -67,10 +67,10 @@ public class OutputPreFilter {
 
     public OutputPreFilterResult checkWithCrisisContext(String response, boolean inputWasCrisis) {
         OutputPreFilterResult base = check(response);
-        if (inputWasCrisis && !base.passed()) {
+        if (!inputWasCrisis) {
             return base;
         }
-        if (inputWasCrisis && isTrivialResponse(response)) {
+        if (isTrivialResponse(response)) {
             List<String> reasons = new ArrayList<>(base.failReasons());
             reasons.add("CRISIS_MISMATCH");
             return OutputPreFilterResult.fail(reasons);

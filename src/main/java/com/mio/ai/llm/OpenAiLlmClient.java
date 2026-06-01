@@ -123,7 +123,7 @@ public class OpenAiLlmClient implements LlmClient {
             }
 
             JsonNode root = objectMapper.readTree(response.body());
-            return root.path("choices").get(0).path("message").path("content").asText();
+            return root.path("choices").path(0).path("message").path("content").asText();
 
         } catch (Exception e) {
             log.error("LLM complete error: {}", e.getMessage());

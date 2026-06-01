@@ -149,12 +149,14 @@ public class ConversationOrchestrator {
 
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
+                boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
+
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
                     llmTtftMs = llmClient.stream(llmRequest, contentBuilder::append);
                     assistantContent = contentBuilder.toString();
 
-                    preFilterResult = outputPreFilter.check(assistantContent);
+                    preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                     if (!preFilterResult.passed()) {
                         judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
                         assistantContent = resolveOutputJudgeAction(
@@ -183,7 +185,7 @@ public class ConversationOrchestrator {
 
                     // CAUTIOUS_SPECULATIVE: post-stream OutputGuard (best-effort logging only)
                     if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
-                        preFilterResult = outputPreFilter.check(assistantContent);
+                        preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                         if (!preFilterResult.passed()) {
                             judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
                             // Already streamed — log violation for tuning
@@ -226,8 +228,9 @@ public class ConversationOrchestrator {
             case REWRITE -> result.rewrittenContent() != null ? result.rewrittenContent() : originalContent;
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
-                crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId);
-                yield "";
+                CrisisFlowService.CrisisHandleResult cr =
+                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId);
+                yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };
     }

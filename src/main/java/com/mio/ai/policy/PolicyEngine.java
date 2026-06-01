@@ -52,20 +52,20 @@ public class PolicyEngine {
                     InterventionHints.empty(), RiskLevel.LOW);
         }
 
-        // 4. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
-        if (combined.l0Flagged() && !combined.hardCrisis() && !combined.riskCandidate()) {
-            return build(decisionId, DecisionAction.GENERATE,
-                    GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
-                    combined.securityLevel(), true, true, true,
-                    InterventionHints.empty(), RiskLevel.MEDIUM);
-        }
-
-        // 5. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
+        // 4. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
         if (combined.l0Flagged() && combined.l1Result().moderationFlagged()) {
             return build(decisionId, DecisionAction.CRISIS_FLOW,
                     GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
                     combined.securityLevel(), false, false, false,
                     InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+        }
+
+        // 5. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
+        if (combined.l0Flagged() && !combined.hardCrisis() && !combined.l1Result().moderationFlagged()) {
+            return build(decisionId, DecisionAction.GENERATE,
+                    GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
+                    combined.securityLevel(), true, true, true,
+                    InterventionHints.empty(), RiskLevel.MEDIUM);
         }
 
         // InputJudge 결과 기반 분기 (6~8)
@@ -118,10 +118,8 @@ public class PolicyEngine {
         return decide(combined, null, null, null);
     }
 
+    // MIO-CBT-011: 소크라테스 2회 제한 도달 시에도 공감(SUPPORTIVE) 유지
     private GenerationMode resolveSupportiveMode(SessionDelta delta) {
-        if (delta != null && delta.socraticLimitReached()) {
-            return GenerationMode.SUPPORTIVE;
-        }
         return GenerationMode.SUPPORTIVE;
     }
 
