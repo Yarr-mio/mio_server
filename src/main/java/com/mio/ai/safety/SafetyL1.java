@@ -20,7 +20,14 @@ public class SafetyL1 {
     private static final Set<String> RISK_KEYWORDS = Set.of(
             "사라지고싶다", "없어지고싶다", "살기싫다", "살고싶지않다",
             "삶이의미없다", "삶이무의미해", "죽는게나을것같다",
-            "모든게끝났으면", "그냥다사라지면", "존재자체가싫다"
+            "모든게끝났으면", "그냥다사라지면", "존재자체가싫다",
+            "내가없어도다들"
+    );
+
+    // 명시적 자살/위기 언어 없이 깊은 절망·무력감을 나타내는 패턴.
+    // 이 신호만으로는 hardCrisis가 아니지만 InputJudge를 통해 HIGH/MEDIUM 여부를 판단한다.
+    private static final Set<String> HOPELESSNESS_KEYWORDS = Set.of(
+            "전부엉망인것만", "의미가없는것같", "아무것도의미없", "좋은건하나도없"
     );
 
     private static final Set<String> DEPENDENCY_PHRASES = Set.of(
@@ -68,6 +75,16 @@ public class SafetyL1 {
                 if (msg.contains(keyword)) {
                     riskCandidate = true;
                     signals.add("risk_keyword:" + keyword);
+                    break;
+                }
+            }
+        }
+
+        if (!hardCrisis && !riskCandidate) {
+            for (String keyword : HOPELESSNESS_KEYWORDS) {
+                if (msg.contains(keyword)) {
+                    riskCandidate = true;
+                    signals.add("hopelessness:" + keyword);
                     break;
                 }
             }

@@ -26,4 +26,21 @@ class UserMessageSignalAnalyzerTest {
         assertThat(signal.emotionScore()).isEqualTo(45);
         assertThat(signal.biasType()).isEqualTo("overgeneralization");
     }
+
+    @Test
+    @DisplayName("부정 필터링 표현은 mental_filter biasType으로 저장한다")
+    void negative_filtering_sets_mental_filter() {
+        UserMessageSignal signal1 = analyzer.analyze("전부 엉망인 것만 보여요. 좋은 건 하나도 없어요.");
+        assertThat(signal1.biasType()).isEqualTo("mental_filter");
+
+        UserMessageSignal signal2 = analyzer.analyze("제가 하는 일은 다 의미가 없는 것 같아요.");
+        assertThat(signal2.biasType()).isEqualTo("mental_filter");
+    }
+
+    @Test
+    @DisplayName("절망 텍스트는 MODERATE_DISTRESS 수준의 emotionScore를 반환한다")
+    void hopelessness_text_returns_moderate_distress_score() {
+        UserMessageSignal signal = analyzer.analyze("전부 엉망인 것만 보여요. 이 상태가 계속될까 봐 무서워요.");
+        assertThat(signal.emotionScore()).isEqualTo(45);
+    }
 }

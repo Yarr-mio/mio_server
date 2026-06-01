@@ -210,12 +210,16 @@ def main() -> None:
     results_path = args.out_dir / f"{run_id}.jsonl"
     summary_path = args.out_dir / f"{run_id}.summary.json"
 
-    token = issue_token(args.base_url.rstrip("/"), args.user_id, args.timeout)
+    base_url = args.base_url.rstrip("/")
+    token = issue_token(base_url, args.user_id, args.timeout)
 
     results: list[dict[str, Any]] = []
     with results_path.open("w", encoding="utf-8") as output:
         for index, case in enumerate(cases, start=1):
-            result = run_case(args.base_url.rstrip("/"), token, case, args.timeout)
+            result = run_case(base_url, token, case, args.timeout)
+            if not result.get("ok") and result.get("error", "").startswith("session create failed: status=401"):
+                token = issue_token(base_url, args.user_id, args.timeout)
+                result = run_case(base_url, token, case, args.timeout)
             result["index"] = index
             results.append(result)
             output.write(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
@@ -229,6 +233,8 @@ def main() -> None:
             )
             if args.sleep_ms > 0 and index < len(cases):
                 time.sleep(args.sleep_ms / 1000)
+            if index % 50 == 0:
+                token = issue_token(base_url, args.user_id, args.timeout)
 
     write_summary(results, summary_path)
     print(f"wrote {results_path}")

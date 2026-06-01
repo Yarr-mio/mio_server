@@ -99,6 +99,35 @@ class SafetyL1Test {
     }
 
     @Test
+    @DisplayName("수동적 자살 사고(내가 없어도)는 riskCandidate = true를 반환한다")
+    void passive_suicidal_ideation_triggers_risk_candidate() {
+        var result = safetyL1.check(input("내가없어도다들괜찮지않을까하는생각이자꾸들어요"));
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.contains("risk_keyword"));
+    }
+
+    @Test
+    @DisplayName("절망 패턴(hopelessness)은 riskCandidate = true를 반환한다")
+    void hopelessness_pattern_triggers_risk_candidate() {
+        var result1 = safetyL1.check(input("전부엉망인것만보여요이상태가계속될까봐무서워요"));
+        assertThat(result1.riskCandidate()).isTrue();
+        assertThat(result1.signals()).anyMatch(s -> s.startsWith("hopelessness"));
+
+        var result2 = safetyL1.check(input("제가하는일은다의미가없는것같아요"));
+        assertThat(result2.riskCandidate()).isTrue();
+        assertThat(result2.signals()).anyMatch(s -> s.startsWith("hopelessness"));
+    }
+
+    @Test
+    @DisplayName("hopelessness는 hardCrisis가 아닌 riskCandidate로 처리된다")
+    void hopelessness_is_risk_not_crisis() {
+        var result = safetyL1.check(input("아무것도의미없는것같고전부엉망인것만보여요"));
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.riskCandidate()).isTrue();
+    }
+
+    @Test
     @DisplayName("L0 self-harm flagged는 riskCandidate를 활성화한다")
     void l0_self_harm_activates_risk_candidate() {
         ModerationResult moderation = new ModerationResult(

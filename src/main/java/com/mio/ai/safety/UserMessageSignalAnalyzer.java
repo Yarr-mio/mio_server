@@ -14,7 +14,7 @@ public class UserMessageSignalAnalyzer {
 
     private static final Set<String> MODERATE_DISTRESS = Set.of(
             "힘들", "낙담", "실패", "외롭", "불안", "걱정", "지쳤", "우울",
-            "안됐", "같은결과"
+            "안됐", "같은결과", "의미가없는것", "전부엉망"
     );
 
     private static final Set<String> CATASTROPHIZING = Set.of(
@@ -25,6 +25,10 @@ public class UserMessageSignalAnalyzer {
     private static final Set<String> OVERGENERALIZATION = Set.of(
             "늘이런식", "항상이래", "매번", "또안됐", "계속실패",
             "뭘해도결국", "같은결과", "앞으로도계속"
+    );
+
+    private static final Set<String> MENTAL_FILTER = Set.of(
+            "전부엉망", "좋은건하나도", "나쁜것만보여", "하나도기억이안나", "의미가없는것"
     );
 
     public UserMessageSignal analyze(String normalizedMessage) {
@@ -48,6 +52,9 @@ public class UserMessageSignalAnalyzer {
         }
         if (containsAny(compactMessage, CATASTROPHIZING)) {
             return "catastrophizing";
+        }
+        if (containsAny(compactMessage, MENTAL_FILTER)) {
+            return "mental_filter";
         }
         return null;
     }
