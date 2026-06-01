@@ -1,7 +1,6 @@
 package com.mio.session.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -17,9 +16,6 @@ import org.springframework.core.NestedExceptionUtils;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.io.IOException;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -34,7 +30,7 @@ public class SessionService {
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
-    private final ObjectMapper objectMapper;
+    private final ConversationOrchestrator conversationOrchestrator;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -95,46 +91,9 @@ public class SessionService {
     }
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request, SseEmitter emitter) {
-        try {
-            Session session = findSession(sessionId);
-            validateSessionOwner(session, userId);
-            User user = findUser(userId);
-
-            String inboundMsgId = "msg_in_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
-            String outboundMsgId = "msg_out_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
-            String assistantReply = "안녕하세요! 오늘 어떤 이야기를 나눠볼까요?";
-
-            // session_meta 이벤트
-            sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now(ZoneOffset.UTC)));
-
-            // 사용자/어시스턴트 메시지를 한 트랜잭션으로 저장
-            sessionMessagePersistenceService.saveConversation(session.getId(), user.getId(), request.content(), assistantReply);
-
-            // stub: delta 이벤트 1개
-            sendEvent(emitter, new SseEventDto.DeltaEvent(assistantReply, outboundMsgId));
-
-            // done 이벤트
-            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
-
-            emitter.complete();
-        } catch (Exception e) {
-            emitter.completeWithError(e);
-        }
-    }
-
-    private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {
-        String json = toJson(event);
-        emitter.send(SseEmitter.event()
-                .name(event.eventName())
-                .data(json));
-    }
-
-    private String toJson(Object value) {
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
-        }
+        Session session = findSession(sessionId);
+        validateSessionOwner(session, userId);
+        conversationOrchestrator.handle(userId, sessionId, request.content(), emitter);
     }
 
     private User findUser(UUID userId) {
