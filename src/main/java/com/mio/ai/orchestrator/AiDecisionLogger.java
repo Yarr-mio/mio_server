@@ -58,6 +58,7 @@ public class AiDecisionLogger {
                     .policyVersion(decision.policyVersion())
                     .promptVersion(PROMPT_VERSION)
                     .securityLevel(decision.securityLevel().name())
+                    .riskLevel(decision.riskLevel() != null ? decision.riskLevel().name() : null)
                     .generationMode(decision.generationMode().name())
                     .deliveryMode(decision.deliveryMode().name())
                     .action(decision.action().name())
