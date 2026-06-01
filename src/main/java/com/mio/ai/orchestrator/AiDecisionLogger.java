@@ -76,16 +76,17 @@ public class AiDecisionLogger {
             PolicyDecision decision) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
-        l1Flags.put("hardCrisis", l1Result.hardCrisis());
-        l1Flags.put("riskCandidate", l1Result.riskCandidate());
-        l1Flags.put("emotionSpike", l1Result.emotionSpike());
-        l1Flags.put("repetitiveNegative", l1Result.repetitiveNegative());
-        l1Flags.put("dependencyHint", l1Result.dependencyHint());
-        l1Flags.put("moderationFlagged", l1Result.moderationFlagged());
+        l1Flags.put("crisis_keyword", l1Result.hardCrisis());
+        l1Flags.put("risk_candidate", l1Result.riskCandidate());
+        l1Flags.put("emotion_spike", l1Result.emotionSpike());
+        l1Flags.put("repetitive_negative", l1Result.repetitiveNegative());
+        l1Flags.put("dependency_phrase", l1Result.dependencyHint());
+        l1Flags.put("moderation_flagged", l1Result.moderationFlagged());
 
         Map<String, Object> trace = new LinkedHashMap<>();
         trace.put("schema_version", SCHEMA_VERSION);
         trace.put("l0_flagged", moderation.flagged());
+        trace.put("l0_category_scores", moderation.categoryScores());
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
         trace.put("l1_threshold_source", "default");
