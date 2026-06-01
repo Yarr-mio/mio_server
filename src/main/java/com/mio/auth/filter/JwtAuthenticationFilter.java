@@ -33,6 +33,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private static final Set<String> WHITELIST = Set.of(
             "POST /v1/auth/login",
             "POST /v1/auth/refresh",
+            "POST /v1/auth/dev/token",
             "GET /v1/health"
     );
 
@@ -41,6 +42,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
+        if ("/error".equals(request.getRequestURI())) {
+            return true;
+        }
         String key = request.getMethod() + " " + request.getRequestURI();
         return WHITELIST.contains(key);
     }
