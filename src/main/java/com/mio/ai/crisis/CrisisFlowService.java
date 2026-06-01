@@ -46,6 +46,7 @@ public class CrisisFlowService {
             String outboundMsgId) {
 
         int severity = determineSeverity(l1Result, originalMessage);
+        String triggerType = l1Result.hardCrisis() ? "keyword" : "moderation";
         String fixedResponse = getFixedResponse(severity);
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
@@ -64,12 +65,20 @@ public class CrisisFlowService {
             log.error("Failed to send crisis SSE event", e);
         }
 
-        persistCrisisEvent(user, session, severity);
+        persistCrisisEvent(user, session, severity, triggerType);
 
         return new CrisisHandleResult(fixedResponse, severity);
     }
 
     private int determineSeverity(SafetyL1Result l1Result, String originalMessage) {
+        // L1 hardCrisis 키워드가 매칭된 경우 severity 3 보장
+        // (SEVERITY_3_KEYWORDS에 없는 HARD_CRISIS_KEYWORDS 항목도 포함)
+        if (l1Result.hardCrisis()) {
+            return 3;
+        }
+        if (originalMessage == null) {
+            return 1;
+        }
         String normalized = originalMessage.replaceAll("\\s+", "").toLowerCase();
 
         for (String keyword : SEVERITY_3_KEYWORDS) {
@@ -103,12 +112,12 @@ public class CrisisFlowService {
         return new SseEventDto.CrisisEvent(severity, fixedResponse, null);
     }
 
-    private void persistCrisisEvent(User user, Session session, int severity) {
+    private void persistCrisisEvent(User user, Session session, int severity, String triggerType) {
         try {
             CrisisEvent event = CrisisEvent.builder()
                     .user(user)
                     .session(session)
-                    .triggerType("keyword")
+                    .triggerType(triggerType)
                     .severity(severity)
                     .operatorReviewed(false)
                     .build();
