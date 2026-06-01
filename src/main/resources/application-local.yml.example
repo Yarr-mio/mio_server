@@ -23,3 +23,6 @@ logging:
 
 notification:
   test-endpoint-enabled: true
+
+auth:
+  dev-token-enabled: true
