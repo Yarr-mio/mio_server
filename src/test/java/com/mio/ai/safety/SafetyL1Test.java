@@ -55,6 +55,15 @@ class SafetyL1Test {
     }
 
     @Test
+    @DisplayName("의존 표현은 dependencyHint = true를 반환한다")
+    void dependency_phrase_triggers_dependency_hint() {
+        var result = safetyL1.check(input("내얘기를들어주는건여기뿐인것같아요계속대답해주지않으면너무불안해요"));
+
+        assertThat(result.dependencyHint()).isTrue();
+        assertThat(result.hasAnySignal()).isTrue();
+    }
+
+    @Test
     @DisplayName("L0 self-harm flagged는 riskCandidate를 활성화한다")
     void l0_self_harm_activates_risk_candidate() {
         ModerationResult moderation = new ModerationResult(

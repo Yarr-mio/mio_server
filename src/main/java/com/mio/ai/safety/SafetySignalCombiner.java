@@ -57,7 +57,12 @@ public class SafetySignalCombiner {
             return true;
         }
 
-        // 2. emotion_spike + 다른 플래그 1개 이상
+        // 2. Dependency-risk phrase alone should be reviewed by InputJudge.
+        if (l1.dependencyHint()) {
+            return true;
+        }
+
+        // 3. emotion_spike + 다른 플래그 1개 이상
         if (l1.emotionSpike() && (l1.riskCandidate() || l1.repetitiveNegative() || l1.dependencyHint())) {
             return true;
         }
