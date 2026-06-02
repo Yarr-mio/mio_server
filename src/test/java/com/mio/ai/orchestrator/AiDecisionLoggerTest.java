@@ -58,7 +58,10 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 null,
-                null
+                null,
+                "default",
+                false,
+                false
         );
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);

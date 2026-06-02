@@ -17,6 +17,7 @@ import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.profile.ContextPreWarmer;
+import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.policy.DecisionAction;
@@ -107,7 +108,9 @@ public class ConversationOrchestrator {
                     messagePersistenceService.loadRecentUserSafetyHistory(sessionId, 3);
 
             // 2. Load SafetyProfile (Redis cache HIT → JSON 역직렬화, MISS → buildSync)
-            SafetyProfile profile = safetyProfileBuilder.getOrDefault(sessionId.toString(), userId.toString());
+            ProfileResult profileResult = safetyProfileBuilder.getWithCacheHit(sessionId.toString(), userId.toString());
+            SafetyProfile profile = profileResult.profile();
+            boolean safetyProfileCacheHit = profileResult.cacheHit();
 
             // 3. Safety checks (parallel in production; sequential with virtual threads)
             SecurityAssessment securityAssessment = securityRuleFilter.check(normalized);
@@ -132,11 +135,11 @@ public class ConversationOrchestrator {
 
             // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
-            String memoryContext = contextPreWarmer.getCachedContext(sessionId);
-            // cache MISS → 동기 fallback build (MemoryRetrievalPlanner 활용, §12.4)
-            if (memoryContext == null) {
-                memoryContext = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
-            }
+            String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
+            boolean memoryCacheHit = cachedMemory != null;
+            String memoryContext = memoryCacheHit
+                    ? cachedMemory
+                    : contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
 
             // 6. Policy decision (10-step)
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
@@ -244,7 +247,8 @@ public class ConversationOrchestrator {
             long totalMs = System.currentTimeMillis() - startMs;
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
-                    inputJudgeCalled, preFilterResult, judgeActionResult);
+                    inputJudgeCalled, preFilterResult, judgeActionResult,
+                    profile.source(), safetyProfileCacheHit, memoryCacheHit);
 
             emitter.complete();
 
