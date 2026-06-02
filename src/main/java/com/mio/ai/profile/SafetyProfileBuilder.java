@@ -61,18 +61,27 @@ public class SafetyProfileBuilder {
      * MISS → buildSync 동기 build.
      */
     public SafetyProfile getOrDefault(String sessionId, String userId) {
+        return getWithCacheHit(sessionId, userId).profile();
+    }
+
+    /**
+     * profile + cache HIT 여부를 함께 반환 — trace 로깅용 (§27.6).
+     */
+    public ProfileResult getWithCacheHit(String sessionId, String userId) {
         try {
             String json = redisTemplate.opsForValue().get(PROFILE_KEY.formatted(sessionId));
             if (json != null) {
-                log.debug("SafetyProfileBuilder: getOrDefault cache HIT sessionId={}", sessionId);
-                return objectMapper.readValue(json, SafetyProfile.class);
+                log.debug("SafetyProfileBuilder: cache HIT sessionId={}", sessionId);
+                SafetyProfile profile = objectMapper.readValue(json, SafetyProfile.class);
+                return new ProfileResult(profile, true);
             }
         } catch (Exception e) {
-            log.warn("SafetyProfileBuilder: getOrDefault cache read failed", e);
+            log.warn("SafetyProfileBuilder: cache read failed", e);
         }
-        // MISS → 동기 build (사실상 세션 시작 직후라 pre-warm이 완료됐어야 함)
-        return buildSync(userId);
+        return new ProfileResult(buildSync(userId), false);
     }
+
+    public record ProfileResult(SafetyProfile profile, boolean cacheHit) {}
 
     /**
      * ContextPreWarmer용 — 세션 시작 시 profile 빌드 후 JSON으로 Redis 캐싱.

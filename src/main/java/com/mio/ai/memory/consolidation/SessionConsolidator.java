@@ -5,6 +5,7 @@ import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.memory.episodic.Thought;
 import com.mio.ai.memory.episodic.ThoughtRepository;
@@ -81,9 +82,7 @@ public class SessionConsolidator {
     private final MessageEncryptor messageEncryptor;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
-
-    // Phase 3-1 (PR #103) 병합 후 OntologyValidator 주입 예정
-    // 현재는 ExtractorLLM 출력을 그대로 수용 (open validation)
+    private final OntologyValidator ontologyValidator;
 
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
@@ -318,16 +317,34 @@ public class SessionConsolidator {
         evidenceAccumulator.accumulate(belief, evidenceKind, sessionId, null);
     }
 
-    // ── OntologyValidator 필터 (Phase 3-1 병합 후 적용) ─────────────
+    // ── OntologyValidator 필터 ────────────────────────────────────
 
     private List<ExtractorResult.ExtractedThought> filterValidThoughts(
             List<ExtractorResult.ExtractedThought> thoughts) {
-        // TODO(Phase 3-1): OntologyValidator.filterValidDistortionCodes() 적용
-        return thoughts;
+        if (thoughts == null || thoughts.isEmpty()) return List.of();
+
+        var result = thoughts.stream()
+                .filter(t -> {
+                    if (t.distortionCode() == null) return true; // distortion 없는 사고는 허용
+                    boolean valid = ontologyValidator.isValidDistortionCode(t.distortionCode());
+                    if (!valid) {
+                        log.warn("SessionConsolidator: discarded unknown distortionCode='{}'", t.distortionCode());
+                    }
+                    return valid;
+                })
+                .toList();
+
+        int discarded = thoughts.size() - result.size();
+        if (discarded > 0) {
+            log.info("SessionConsolidator: OntologyValidator filtered {}/{} thoughts", discarded, thoughts.size());
+        }
+        return result;
     }
 
     private String filterValidEmotion(String emotionCode) {
-        // TODO(Phase 3-1): OntologyValidator.isValidEmotionCode() 적용
-        return emotionCode;
+        if (emotionCode == null) return null;
+        if (ontologyValidator.isValidEmotionCode(emotionCode)) return emotionCode;
+        log.warn("SessionConsolidator: discarded unknown emotionCode='{}'", emotionCode);
+        return null;
     }
 }

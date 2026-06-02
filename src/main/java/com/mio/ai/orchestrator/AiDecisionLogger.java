@@ -43,13 +43,17 @@ public class AiDecisionLogger {
             boolean crisisFlowTriggered,
             boolean inputJudgeCalled,
             OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult) {
+            OutputJudgeResult outputJudgeResult,
+            String l1ThresholdSource,
+            boolean safetyProfileCacheHit,
+            boolean memoryCacheHit) {
 
         try {
             Map<String, Object> trace = buildTrace(
                     moderation, l1Result, llmTtftMs, totalPipelineMs,
                     crisisFlowTriggered, decision,
-                    inputJudgeCalled, preFilterResult, outputJudgeResult);
+                    inputJudgeCalled, preFilterResult, outputJudgeResult,
+                    l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -88,7 +92,8 @@ public class AiDecisionLogger {
             boolean crisisFlowTriggered) {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
-                false, OutputPreFilterResult.pass(), null);
+                false, OutputPreFilterResult.pass(), null,
+                "default", false, false);
     }
 
     private Map<String, Object> buildTrace(
@@ -100,7 +105,10 @@ public class AiDecisionLogger {
             PolicyDecision decision,
             boolean inputJudgeCalled,
             OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult) {
+            OutputJudgeResult outputJudgeResult,
+            String l1ThresholdSource,
+            boolean safetyProfileCacheHit,
+            boolean memoryCacheHit) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -116,11 +124,11 @@ public class AiDecisionLogger {
         trace.put("l0_category_scores", moderation.categoryScores());
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
-        trace.put("l1_threshold_source", "default");
+        trace.put("l1_threshold_source", l1ThresholdSource != null ? l1ThresholdSource : "default");
         trace.put("input_judge_called", inputJudgeCalled);
         trace.put("risk_level", decision.riskLevel() != null ? decision.riskLevel().name() : null);
-        trace.put("safety_profile_cache_hit", false);
-        trace.put("memory_cache_hit", false);
+        trace.put("safety_profile_cache_hit", safetyProfileCacheHit);
+        trace.put("memory_cache_hit", memoryCacheHit);
         trace.put("llm_model", "gpt-4o");
         trace.put("llm_ttft_ms", ttftMs);
         trace.put("llm_cost_usd", 0.0);
