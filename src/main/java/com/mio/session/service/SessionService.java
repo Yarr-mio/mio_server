@@ -1,5 +1,6 @@
 package com.mio.session.service;
 
+import com.mio.ai.memory.consolidation.SessionEndedEvent;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
@@ -11,6 +12,7 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,7 @@ public class SessionService {
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
     private final WorkingMemory workingMemory;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -92,13 +95,17 @@ public class SessionService {
         }
         session.end();
         EndSessionResponse response = EndSessionResponse.from(sessionRepository.save(session));
-        // Redis 정리는 트랜잭션 커밋 후 실행 — 커넥션 점유 최소화
+
+        // Redis 정리 + SessionConsolidator 이벤트: 커밋 후 실행 — 커넥션 점유 최소화
+        String characterId = session.getCharacterId();
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 workingMemory.clear(sessionId);
+                eventPublisher.publishEvent(new SessionEndedEvent(sessionId, userId, characterId));
             }
         });
+
         return response;
     }
 
