@@ -47,6 +47,8 @@ public class ContextComposer {
 
         appendSection(sb, "Recent Emotion Pattern",
                 grouped.get(RetrievalSource.SQL_RHYTHM));
+        appendSection(sb, "Recent Risk Context",
+                grouped.get(RetrievalSource.SQL_RECENT_RISK));
         appendSection(sb, "Past Similar Situations",
                 grouped.get(RetrievalSource.GRAPH_TRIGGER));
         appendSection(sb, "Active Patterns",

@@ -37,11 +37,13 @@ public class ContextSanitizer {
     }
 
     private boolean isWithinCap(String sensitivity, String cap) {
-        if (sensitivity == null) return "normal".equals(cap) || "sensitive".equals(cap) || "restricted".equals(cap);
+        if (cap == null) return false;
+        // null sensitivity → "normal" 처리 (FusionRanker와 동일 정책)
+        String s = sensitivity != null ? sensitivity : "normal";
         return switch (cap) {
             case "restricted" -> true;
-            case "sensitive"  -> !"restricted".equals(sensitivity);
-            default           -> "normal".equals(sensitivity);
+            case "sensitive"  -> !"restricted".equals(s);
+            default           -> "normal".equals(s);
         };
     }
 }
