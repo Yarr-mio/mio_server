@@ -1,5 +1,6 @@
 package com.mio.session.service;
 
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -31,6 +32,7 @@ public class SessionService {
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
+    private final WorkingMemory workingMemory;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -87,7 +89,9 @@ public class SessionService {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
         session.end();
-        return EndSessionResponse.from(sessionRepository.save(session));
+        EndSessionResponse response = EndSessionResponse.from(sessionRepository.save(session));
+        workingMemory.clear(sessionId);
+        return response;
     }
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request, SseEmitter emitter) {

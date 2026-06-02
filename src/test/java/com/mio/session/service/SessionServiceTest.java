@@ -1,5 +1,6 @@
 package com.mio.session.service;
 
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -40,6 +41,7 @@ class SessionServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private SessionMessagePersistenceService sessionMessagePersistenceService;
     @Mock private ConversationOrchestrator conversationOrchestrator;
+    @Mock private WorkingMemory workingMemory;
 
     private SessionService sessionService;
     private UUID userId;
@@ -48,7 +50,7 @@ class SessionServiceTest {
     @BeforeEach
     void setUp() {
         sessionService = new SessionService(
-                sessionRepository, userRepository, sessionMessagePersistenceService, conversationOrchestrator
+                sessionRepository, userRepository, sessionMessagePersistenceService, conversationOrchestrator, workingMemory
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()
