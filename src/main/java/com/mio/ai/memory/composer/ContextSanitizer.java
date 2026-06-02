@@ -18,15 +18,18 @@ public class ContextSanitizer {
      * 민감도 cap을 초과하는 항목 제거 후 토큰 budget 내로 자름.
      */
     public List<RetrievedItem> sanitize(List<RetrievedItem> items, String sensitivityCap) {
+        String effectiveCap = sensitivityCap != null ? sensitivityCap : "normal";
+
         List<RetrievedItem> filtered = items.stream()
-                .filter(item -> isWithinCap(item.sensitivity(), sensitivityCap))
+                .filter(item -> item.content() != null && !item.content().isBlank())
+                .filter(item -> isWithinCap(item.sensitivity(), effectiveCap))
                 .collect(Collectors.toList());
 
         // 토큰 budget 초과 시 상위 항목 우선 유지
         int totalChars = 0;
         List<RetrievedItem> result = new java.util.ArrayList<>();
         for (RetrievedItem item : filtered) {
-            totalChars += item.content() != null ? item.content().length() : 0;
+            totalChars += item.content().length();
             if (totalChars > MAX_CONTEXT_CHARS) break;
             result.add(item);
         }
@@ -34,10 +37,11 @@ public class ContextSanitizer {
     }
 
     private boolean isWithinCap(String sensitivity, String cap) {
+        if (sensitivity == null) return "normal".equals(cap) || "sensitive".equals(cap) || "restricted".equals(cap);
         return switch (cap) {
             case "restricted" -> true;
-            case "sensitive"  -> !sensitivity.equals("restricted");
-            default           -> sensitivity.equals("normal");
+            case "sensitive"  -> !"restricted".equals(sensitivity);
+            default           -> "normal".equals(sensitivity);
         };
     }
 }

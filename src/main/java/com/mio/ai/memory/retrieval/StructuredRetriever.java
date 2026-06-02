@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.sql.Array;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
@@ -119,16 +120,25 @@ public class StructuredRetriever {
         try {
             String[] tagsArray = currentTriggers.toArray(new String[0]);
             return jdbcTemplate.query(
-                    """
-                    SELECT ss.id::text,
-                           ss.summary_text AS content,
-                           1.0 AS score
-                    FROM session_summaries ss
-                    WHERE ss.user_id = ?
-                      AND ss.trigger_tags && ?::text[]
-                    ORDER BY ss.created_at DESC
-                    LIMIT 3
-                    """,
+                    con -> {
+                        var ps = con.prepareStatement(
+                                """
+                                SELECT ss.id::text,
+                                       ss.summary_text AS content,
+                                       1.0 AS score
+                                FROM session_summaries ss
+                                WHERE ss.user_id = ?
+                                  AND ss.trigger_tags && ?
+                                ORDER BY ss.created_at DESC
+                                LIMIT 3
+                                """
+                        );
+                        ps.setObject(1, userId);
+                        // java.sql.Array로 바인딩 → PSQLException 방지
+                        Array pgArray = con.createArrayOf("text", tagsArray);
+                        ps.setArray(2, pgArray);
+                        return ps;
+                    },
                     (rs, rowNum) -> new RetrievedItem(
                             rs.getString("id"),
                             RetrievalSource.GRAPH_TRIGGER,
@@ -136,8 +146,7 @@ public class StructuredRetriever {
                             "normal",
                             rs.getDouble("score"),
                             rowNum + 1
-                    ),
-                    userId, tagsArray
+                    )
             );
         } catch (Exception e) {
             log.warn("StructuredRetriever.retrieveTriggers failed for userId={}", userId, e);

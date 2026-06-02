@@ -133,6 +133,10 @@ public class ConversationOrchestrator {
             // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
             String memoryContext = contextPreWarmer.getCachedContext(sessionId);
+            // cache MISS → 동기 fallback build (MemoryRetrievalPlanner 활용, §12.4)
+            if (memoryContext == null) {
+                memoryContext = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
+            }
 
             // 6. Policy decision (10-step)
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);

@@ -68,8 +68,18 @@ public class SessionService {
 
         try {
             Session saved = sessionRepository.save(session);
-            // 세션 생성 직후 비동기 pre-warming (사용자 타이핑 5~30초 동안 캐싱)
-            contextPreWarmer.preWarm(saved.getId(), userId);
+            // pre-warming은 커밋 후 실행 — 트랜잭션 롤백 시 고아 캐시 방지
+            UUID savedSessionId = saved.getId();
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        contextPreWarmer.preWarm(savedSessionId, userId);
+                    }
+                });
+            } else {
+                contextPreWarmer.preWarm(savedSessionId, userId);
+            }
             return SessionResponse.from(saved);
         } catch (DataIntegrityViolationException e) {
             if (isActiveSessionUniqueViolation(e)) {

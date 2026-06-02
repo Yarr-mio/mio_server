@@ -52,10 +52,11 @@ public class FusionRanker {
     }
 
     private boolean isWithinCap(String sensitivity, String cap) {
+        if (cap == null || sensitivity == null) return false;
         return switch (cap) {
             case "restricted" -> true;
-            case "sensitive"  -> !sensitivity.equals("restricted");
-            default           -> sensitivity.equals("normal");
+            case "sensitive"  -> !"restricted".equals(sensitivity);
+            default           -> "normal".equals(sensitivity);
         };
     }
 }
