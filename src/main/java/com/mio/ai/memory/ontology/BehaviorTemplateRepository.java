@@ -9,8 +9,8 @@ public interface BehaviorTemplateRepository extends JpaRepository<BehaviorTempla
 
     @Query(value = """
             SELECT * FROM behavior_template
-            WHERE :distortionCode = ANY(fits_distortions)
-               OR :emotionCode = ANY(fits_emotions)
+            WHERE (:distortionCode IS NOT NULL AND :distortionCode = ANY(fits_distortions))
+               OR (:emotionCode IS NOT NULL AND :emotionCode = ANY(fits_emotions))
             ORDER BY difficulty ASC
             """, nativeQuery = true)
     List<BehaviorTemplate> findByDistortionOrEmotion(String distortionCode, String emotionCode);

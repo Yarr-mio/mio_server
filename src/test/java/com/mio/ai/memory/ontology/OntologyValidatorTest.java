@@ -5,7 +5,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -123,16 +122,26 @@ class OntologyValidatorTest {
     @Test
     @DisplayName("filterValidDistortionCodes는 미등록 코드를 필터링한다")
     void filter_valid_distortion_codes() {
-        CbtDistortionDef def1 = mock(CbtDistortionDef.class);
-        given(def1.getCode()).willReturn("catastrophizing");
-        CbtDistortionDef def2 = mock(CbtDistortionDef.class);
-        given(def2.getCode()).willReturn("all_or_nothing");
-        given(distortionRepo.findAll()).willReturn(List.of(def1, def2));
-
         Set<String> input = Set.of("catastrophizing", "personalization", "all_or_nothing");
+        given(distortionRepo.findCodesByCodeIn(input)).willReturn(Set.of("catastrophizing", "all_or_nothing"));
+
         Set<String> filtered = validator.filterValidDistortionCodes(input);
 
         assertThat(filtered).containsExactlyInAnyOrder("catastrophizing", "all_or_nothing");
         assertThat(filtered).doesNotContain("personalization");
+    }
+
+    @Test
+    @DisplayName("filterValidDistortionCodes는 null 입력 시 빈 Set을 반환한다")
+    void filter_valid_distortion_codes_null_returns_empty() {
+        Set<String> result = validator.filterValidDistortionCodes(null);
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("filterValidDistortionCodes는 빈 Set 입력 시 빈 Set을 반환한다")
+    void filter_valid_distortion_codes_empty_returns_empty() {
+        Set<String> result = validator.filterValidDistortionCodes(Set.of());
+        assertThat(result).isEmpty();
     }
 }

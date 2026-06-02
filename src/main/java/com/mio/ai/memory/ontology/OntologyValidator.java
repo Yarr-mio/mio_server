@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * ExtractorLLM 출력의 distortion/emotion/intervention 코드가 시드에 존재하는지 검증.
@@ -36,21 +35,13 @@ public class OntologyValidator {
     }
 
     public Set<String> filterValidDistortionCodes(Set<String> codes) {
-        Set<String> allCodes = distortionRepo.findAll().stream()
-                .map(CbtDistortionDef::getCode)
-                .collect(Collectors.toSet());
-        return codes.stream()
-                .filter(allCodes::contains)
-                .collect(Collectors.toSet());
+        if (codes == null || codes.isEmpty()) return Set.of();
+        return distortionRepo.findCodesByCodeIn(codes);
     }
 
     public Set<String> filterValidEmotionCodes(Set<String> codes) {
-        Set<String> allCodes = emotionRepo.findAll().stream()
-                .map(EmotionDef::getCode)
-                .collect(Collectors.toSet());
-        return codes.stream()
-                .filter(allCodes::contains)
-                .collect(Collectors.toSet());
+        if (codes == null || codes.isEmpty()) return Set.of();
+        return emotionRepo.findCodesByCodeIn(codes);
     }
 
     public OntologyValidationResult validate(String distortionCode, String emotionCode, String interventionCode) {
