@@ -8,9 +8,9 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,7 +37,7 @@ public class WorkingMemory {
     private static final String BELIEFS_KEY   = "session:%s:beliefs";
     private static final String TRIGGERS_KEY  = "session:%s:triggers";
 
-    private static final String FIELD_SOCRATIC_COUNT   = "socratic_count";
+    private static final String FIELD_SOCRATIC_COUNT    = "socratic_count";
     private static final String FIELD_RISK_ACCUMULATION = "risk_accumulation";
     private static final String FIELD_DISTORTION_PREFIX = "distortion:";
 
@@ -49,27 +49,36 @@ public class WorkingMemory {
     // ── 메시지 버퍼 ─────────────────────────────────────────────
 
     public void appendMessage(UUID sessionId, String role, String content) {
-        String key = messagesKey(sessionId);
-        String json = serialize(new WorkingMessage(role, content, System.currentTimeMillis()));
-        if (json == null) return;
+        try {
+            String key = messagesKey(sessionId);
+            String json = serialize(new WorkingMessage(role, content, System.currentTimeMillis()));
+            if (json == null) return;
 
-        redisTemplate.opsForList().leftPush(key, json);
-        redisTemplate.opsForList().trim(key, 0, MAX_MESSAGES - 1);
-        redisTemplate.expire(key, SESSION_TTL);
+            redisTemplate.opsForList().leftPush(key, json);
+            redisTemplate.opsForList().trim(key, 0, MAX_MESSAGES - 1);
+            redisTemplate.expire(key, SESSION_TTL);
+        } catch (Exception e) {
+            log.warn("WorkingMemory.appendMessage failed for sessionId={} — skipping", sessionId, e);
+        }
     }
 
     public List<WorkingMessage> getRecentMessages(UUID sessionId) {
-        List<String> raw = redisTemplate.opsForList().range(messagesKey(sessionId), 0, MAX_MESSAGES - 1);
-        if (raw == null || raw.isEmpty()) return Collections.emptyList();
+        try {
+            List<String> raw = redisTemplate.opsForList().range(messagesKey(sessionId), 0, MAX_MESSAGES - 1);
+            if (raw == null || raw.isEmpty()) return Collections.emptyList();
 
-        return raw.stream()
-                .map(this::deserialize)
-                .filter(m -> m != null)
-                // LPUSH 순서는 최신이 앞 → 오래된 순서로 뒤집어 반환
-                .collect(java.util.stream.Collectors.collectingAndThen(
-                        java.util.stream.Collectors.toList(),
-                        list -> { Collections.reverse(list); return list; }
-                ));
+            List<WorkingMessage> messages = new ArrayList<>();
+            for (String json : raw) {
+                WorkingMessage msg = deserialize(json);
+                if (msg != null) messages.add(msg);
+            }
+            // LPUSH 순서는 최신이 앞 → 오래된 순서로 뒤집어 반환
+            Collections.reverse(messages);
+            return messages;
+        } catch (Exception e) {
+            log.warn("WorkingMemory.getRecentMessages failed for sessionId={} — returning empty", sessionId, e);
+            return Collections.emptyList();
+        }
     }
 
     // ── CBT 카운터 ───────────────────────────────────────────────
@@ -148,20 +157,24 @@ public class WorkingMemory {
                 socraticCount,
                 distortionCounts,
                 riskAccumulation,
-                beliefIds != null ? beliefIds : new HashSet<>(),
-                triggers  != null ? triggers  : new HashSet<>()
+                beliefIds != null ? beliefIds : Set.of(),
+                triggers  != null ? triggers  : Set.of()
         );
     }
 
     // ── 세션 종료 ─────────────────────────────────────────────────
 
     public void clear(UUID sessionId) {
-        redisTemplate.delete(List.of(
-                messagesKey(sessionId),
-                workingKey(sessionId),
-                beliefsKey(sessionId),
-                triggersKey(sessionId)
-        ));
+        try {
+            redisTemplate.delete(List.of(
+                    messagesKey(sessionId),
+                    workingKey(sessionId),
+                    beliefsKey(sessionId),
+                    triggersKey(sessionId)
+            ));
+        } catch (Exception e) {
+            log.warn("WorkingMemory.clear failed for sessionId={} — TTL will expire keys", sessionId, e);
+        }
     }
 
     // ── 키 빌더 ──────────────────────────────────────────────────

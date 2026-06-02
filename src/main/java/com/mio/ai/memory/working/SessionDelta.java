@@ -1,7 +1,5 @@
 package com.mio.ai.memory.working;
 
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -13,7 +11,7 @@ public record SessionDelta(
         Set<String> currentSessionTriggers
 ) {
     public static SessionDelta empty() {
-        return new SessionDelta(0, new HashMap<>(), 0, new HashSet<>(), new HashSet<>());
+        return new SessionDelta(0, Map.of(), 0, Set.of(), Set.of());
     }
 
     public boolean socraticLimitReached() {
