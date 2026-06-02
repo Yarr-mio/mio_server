@@ -7,6 +7,7 @@ import com.mio.session.dto.SseEventDto;
 import com.mio.user.domain.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -19,6 +20,7 @@ import java.util.List;
 public class CrisisFlowService {
 
     private final CrisisEventRepository crisisEventRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     private static final List<String> SEVERITY_3_KEYWORDS = List.of(
             "자살", "자해", "죽고싶다", "죽을거야", "목숨을끊", "자살하고싶", "자해하고싶"
@@ -66,6 +68,8 @@ public class CrisisFlowService {
         }
 
         persistCrisisEvent(user, session, severity, triggerType);
+        // SafetyProfile 즉시 invalidate (§17.8)
+        eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
 
         return new CrisisHandleResult(fixedResponse, severity);
     }

@@ -106,8 +106,8 @@ public class ConversationOrchestrator {
             List<SafetyL1HistoryMessage> recentUserMessages =
                     messagePersistenceService.loadRecentUserSafetyHistory(sessionId, 3);
 
-            // 2. Load SafetyProfile
-            SafetyProfile profile = safetyProfileBuilder.getOrDefault(userId.toString());
+            // 2. Load SafetyProfile (Redis cache HIT → JSON 역직렬화, MISS → buildSync)
+            SafetyProfile profile = safetyProfileBuilder.getOrDefault(sessionId.toString(), userId.toString());
 
             // 3. Safety checks (parallel in production; sequential with virtual threads)
             SecurityAssessment securityAssessment = securityRuleFilter.check(normalized);
