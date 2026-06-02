@@ -1,5 +1,6 @@
 package com.mio.session.service;
 
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -10,10 +11,12 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.core.NestedExceptionUtils;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Objects;
@@ -31,6 +34,7 @@ public class SessionService {
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
+    private final WorkingMemory workingMemory;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -87,7 +91,15 @@ public class SessionService {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
         session.end();
-        return EndSessionResponse.from(sessionRepository.save(session));
+        EndSessionResponse response = EndSessionResponse.from(sessionRepository.save(session));
+        // Redis 정리는 트랜잭션 커밋 후 실행 — 커넥션 점유 최소화
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                workingMemory.clear(sessionId);
+            }
+        });
+        return response;
     }
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request, SseEmitter emitter) {

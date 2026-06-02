@@ -1,14 +1,17 @@
 package com.mio.ai.memory.working;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 
 public record SessionDelta(
         int socraticQuestionsUsed,
-        Map<String, Integer> distortionCounts
+        Map<String, Integer> distortionCounts,
+        int sessionRiskAccumulation,
+        Set<String> activatedBeliefIds,
+        Set<String> currentSessionTriggers
 ) {
     public static SessionDelta empty() {
-        return new SessionDelta(0, new HashMap<>());
+        return new SessionDelta(0, Map.of(), 0, Set.of(), Set.of());
     }
 
     public boolean socraticLimitReached() {

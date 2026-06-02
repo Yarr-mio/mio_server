@@ -229,7 +229,11 @@ public class ConversationOrchestrator {
             // 8. Persist messages
             messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal);
 
-            // 9. Log decision asynchronously
+            // 9. Working Memory — 메시지 버퍼에 이번 턴 기록
+            workingMemory.appendMessage(sessionId, "user", userMessage);
+            workingMemory.appendMessage(sessionId, "assistant", assistantContent);
+
+            // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
