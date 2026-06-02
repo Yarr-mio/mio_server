@@ -19,11 +19,13 @@ import com.mio.user.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.event.TransactionPhase;
+import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -83,8 +85,13 @@ public class SessionConsolidator {
     // Phase 3-1 (PR #103) 병합 후 OntologyValidator 주입 예정
     // 현재는 ExtractorLLM 출력을 그대로 수용 (open validation)
 
+    // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
+    // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
+    //   - @TransactionalEventListener와 @Transactional 조합 시 REQUIRES_NEW 또는 NOT_SUPPORTED 필수
+    //   - self-invocation 방지: 진입점(onSessionEnded)에 @Transactional 선언
     @Async
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         try {
@@ -94,7 +101,6 @@ public class SessionConsolidator {
         }
     }
 
-    @Transactional
     public void consolidate(UUID sessionId, UUID userId, String characterId) {
         var session = sessionRepository.findById(sessionId).orElse(null);
         var user = userRepository.findById(userId).orElse(null);
@@ -103,7 +109,7 @@ public class SessionConsolidator {
             return;
         }
 
-        // 1. 메시지 조회 (최근 20개 — working memory TTL 만료 대비)
+        // 1. 메시지 조회 (최근 40개 — 20턴 커버, working memory TTL 만료 대비)
         List<String> conversationLines = loadConversationLines(sessionId);
         if (conversationLines.isEmpty()) {
             log.info("SessionConsolidator: no messages found for sessionId={}", sessionId);
@@ -129,12 +135,12 @@ public class SessionConsolidator {
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType());
 
-        // 7. cbt_patterns 갱신
-        for (ExtractorResult.ExtractedThought thought : validThoughts) {
-            if (thought.distortionCode() != null) {
-                upsertCbtPattern(userId, thought.distortionCode());
-            }
-        }
+        // 7. cbt_patterns 갱신 (세션 내 동일 왜곡 중복 방지 — distinct codes만 처리)
+        validThoughts.stream()
+                .map(ExtractorResult.ExtractedThought::distortionCode)
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .forEach(code -> upsertCbtPattern(userId, code));
 
         // 8. emotional_states INSERT
         if (dominantEmotion != null) {
@@ -223,7 +229,8 @@ public class SessionConsolidator {
                             .summaryDekId(dekId)
                             .dominantEmotion(dominantEmotion)
                             .build();
-                    sessionSummaryRepository.save(summary);
+                    // saveAndFlush: JPA flush 후 jdbcTemplate.update가 실제 row를 찾도록 보장
+                    sessionSummaryRepository.saveAndFlush(summary);
                     jdbcTemplate.update(
                             "UPDATE session_summaries SET trigger_tags = ?, episode_type = ? WHERE session_id = ?",
                             tagsArray, episodeType, session.getId()

@@ -7,7 +7,6 @@ import com.mio.ai.memory.episodic.UserBeliefRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
@@ -24,7 +23,7 @@ public class BeliefEvidenceAccumulator {
     private final UserBeliefRepository beliefRepository;
     private final BeliefEvidenceRepository evidenceRepository;
 
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    @Transactional
     public void accumulate(UserBelief belief, String evidenceKind, UUID sessionId, UUID messageId) {
         BeliefEvidence evidence = BeliefEvidence.builder()
                 .belief(belief)

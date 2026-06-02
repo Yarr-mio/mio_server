@@ -90,6 +90,7 @@ public class UserBelief {
     public void addContradict(double weight) {
         contradictCount++;
         updateConfidence();
+        lastActivatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     /** Beta 분포 평균: (α + support) / (α + support + β + contradict), α=1, β=1 */

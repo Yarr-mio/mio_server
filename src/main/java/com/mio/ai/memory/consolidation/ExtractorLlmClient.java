@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * GPT-4o-mini를 이용해 세션 요약에서 thought/distortion/emotion/trigger를 추출.
@@ -95,8 +96,10 @@ public class ExtractorLlmClient {
                 );
             }
 
-            String episodeType = node.has("episodeType")
-                    ? node.get("episodeType").asText("regular") : "regular";
+            String episodeType = toValidEpisodeType(
+                    node.has("episodeType") && !node.get("episodeType").isNull()
+                            ? node.get("episodeType").asText() : null
+            );
 
             return new ExtractorResult(thoughts, dominantEmotion, triggerTags, episodeType);
 
@@ -104,5 +107,14 @@ public class ExtractorLlmClient {
             log.warn("ExtractorLLM response parsing failed: {}", json, e);
             return ExtractorResult.empty();
         }
+    }
+
+    private static final Set<String> VALID_EPISODE_TYPES =
+            Set.of("regular", "crisis", "cbt_success", "cbt_partial", "support_only");
+
+    private String toValidEpisodeType(String value) {
+        if (value != null && VALID_EPISODE_TYPES.contains(value)) return value;
+        if (value != null) log.warn("ExtractorLLM: unknown episodeType '{}' — defaulting to regular", value);
+        return "regular";
     }
 }

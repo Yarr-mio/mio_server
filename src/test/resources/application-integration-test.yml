@@ -5,7 +5,7 @@ spring:
     password: mio
 
   flyway:
-    ignore-migration-patterns: "*:missing"
+    validate-on-migrate: false
 
   data:
     redis:
