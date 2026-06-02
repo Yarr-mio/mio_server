@@ -32,7 +32,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Tier 1 Worker — 세션 종료 직후 비동기 실행.
@@ -323,15 +325,23 @@ public class SessionConsolidator {
             List<ExtractorResult.ExtractedThought> thoughts) {
         if (thoughts == null || thoughts.isEmpty()) return List.of();
 
+        // 배치 검증: 중복 제거 후 단일 IN 쿼리로 검증 (N+1 방지, §12.8)
+        Set<String> distinctCodes = thoughts.stream()
+                .map(ExtractorResult.ExtractedThought::distortionCode)
+                .filter(code -> code != null && !code.isBlank())
+                .collect(Collectors.toSet());
+
+        Set<String> validCodes = ontologyValidator.filterValidDistortionCodes(distinctCodes);
+
+        Set<String> invalidCodes = distinctCodes.stream()
+                .filter(code -> !validCodes.contains(code))
+                .collect(Collectors.toSet());
+        if (!invalidCodes.isEmpty()) {
+            log.warn("SessionConsolidator: discarded unknown distortionCodes={}", invalidCodes);
+        }
+
         var result = thoughts.stream()
-                .filter(t -> {
-                    if (t.distortionCode() == null) return true; // distortion 없는 사고는 허용
-                    boolean valid = ontologyValidator.isValidDistortionCode(t.distortionCode());
-                    if (!valid) {
-                        log.warn("SessionConsolidator: discarded unknown distortionCode='{}'", t.distortionCode());
-                    }
-                    return valid;
-                })
+                .filter(t -> t.distortionCode() == null || validCodes.contains(t.distortionCode()))
                 .toList();
 
         int discarded = thoughts.size() - result.size();
