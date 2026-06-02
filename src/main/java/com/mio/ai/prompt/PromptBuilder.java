@@ -23,9 +23,16 @@ public class PromptBuilder {
             "단정적 표현을 사용하지 마세요. 사용자의 말을 조심스럽게 반영하세요.";
 
     public String buildSystemPrompt(GenerationMode mode, InterventionHints hints) {
+        return buildSystemPrompt(mode, hints, null);
+    }
+
+    public String buildSystemPrompt(GenerationMode mode, InterventionHints hints, String memoryContext) {
         String base = BASE_PROMPT + buildModeInstruction(mode);
         if (hints != null && !hints.suggestedCodes().isEmpty()) {
             base += buildHintsInstruction(hints);
+        }
+        if (memoryContext != null && !memoryContext.isBlank()) {
+            base += "\n\n" + memoryContext;
         }
         return base;
     }

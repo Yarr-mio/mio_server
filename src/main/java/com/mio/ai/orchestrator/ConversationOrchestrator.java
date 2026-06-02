@@ -16,6 +16,7 @@ import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
+import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.policy.DecisionAction;
@@ -77,6 +78,7 @@ public class ConversationOrchestrator {
     private final CrisisFlowService crisisFlowService;
     private final SecurityRefusalTemplate securityRefusalTemplate;
     private final WorkingMemory workingMemory;
+    private final ContextPreWarmer contextPreWarmer;
     private final AiDecisionLogger decisionLogger;
     private final SessionMessagePersistenceService messagePersistenceService;
     private final SessionRepository sessionRepository;
@@ -128,8 +130,13 @@ public class ConversationOrchestrator {
                 inputJudgeCalled = true;
             }
 
-            // 5. Working Memory (CBT counters)
+            // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
+            String memoryContext = contextPreWarmer.getCachedContext(sessionId);
+            // cache MISS → 동기 fallback build (MemoryRetrievalPlanner 활용, §12.4)
+            if (memoryContext == null) {
+                memoryContext = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
+            }
 
             // 6. Policy decision (10-step)
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
@@ -156,7 +163,7 @@ public class ConversationOrchestrator {
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
-                        decision.generationMode(), decision.interventionHints());
+                        decision.generationMode(), decision.interventionHints(), memoryContext);
                 LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, userMessage);
                 StringBuilder contentBuilder = new StringBuilder();
 

@@ -2,6 +2,7 @@ package com.mio.session.service;
 
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
+import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.common.error.BusinessException;
 import org.springframework.context.ApplicationEventPublisher;
 import com.mio.common.error.ErrorCode;
@@ -44,6 +45,7 @@ class SessionServiceTest {
     @Mock private ConversationOrchestrator conversationOrchestrator;
     @Mock private WorkingMemory workingMemory;
     @Mock private ApplicationEventPublisher eventPublisher;
+    @Mock private ContextPreWarmer contextPreWarmer;
 
     private SessionService sessionService;
     private UUID userId;
@@ -52,7 +54,8 @@ class SessionServiceTest {
     @BeforeEach
     void setUp() {
         sessionService = new SessionService(
-                sessionRepository, userRepository, sessionMessagePersistenceService, conversationOrchestrator, workingMemory, eventPublisher
+                sessionRepository, userRepository, sessionMessagePersistenceService,
+                conversationOrchestrator, workingMemory, eventPublisher, contextPreWarmer
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()

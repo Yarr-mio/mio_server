@@ -3,6 +3,7 @@ package com.mio.session.service;
 import com.mio.ai.memory.consolidation.SessionEndedEvent;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
+import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -38,6 +39,7 @@ public class SessionService {
     private final ConversationOrchestrator conversationOrchestrator;
     private final WorkingMemory workingMemory;
     private final ApplicationEventPublisher eventPublisher;
+    private final ContextPreWarmer contextPreWarmer;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -65,7 +67,20 @@ public class SessionService {
                 .build();
 
         try {
-            return SessionResponse.from(sessionRepository.save(session));
+            Session saved = sessionRepository.save(session);
+            // pre-warming은 커밋 후 실행 — 트랜잭션 롤백 시 고아 캐시 방지
+            UUID savedSessionId = saved.getId();
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        contextPreWarmer.preWarm(savedSessionId, userId);
+                    }
+                });
+            } else {
+                contextPreWarmer.preWarm(savedSessionId, userId);
+            }
+            return SessionResponse.from(saved);
         } catch (DataIntegrityViolationException e) {
             if (isActiveSessionUniqueViolation(e)) {
                 throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
