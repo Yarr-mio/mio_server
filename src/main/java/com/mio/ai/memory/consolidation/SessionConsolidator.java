@@ -31,6 +31,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -85,6 +86,7 @@ public class SessionConsolidator {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final OntologyValidator ontologyValidator;
+    private final TodoRecommendationService todoRecommendationService;
 
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
@@ -153,6 +155,20 @@ public class SessionConsolidator {
             persistThought(user, sessionId, extracted_thought);
         }
 
+        // 10. CBT 개입 감지 시 Todo 3건 자동 생성 (MIO-CBT-015)
+        List<String> distortionCodes = validThoughts.stream()
+                .map(ExtractorResult.ExtractedThought::distortionCode)
+                .filter(code -> code != null && !code.isBlank())
+                .distinct()
+                .toList();
+        if (!distortionCodes.isEmpty()) {
+            try {
+                todoRecommendationService.generateForSession(user, session, distortionCodes, dominantEmotion);
+            } catch (Exception e) {
+                log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
+            }
+        }
+
         log.info("SessionConsolidator: completed sessionId={} thoughts={} emotion={}",
                 sessionId, validThoughts.size(), dominantEmotion);
     }
@@ -161,13 +177,26 @@ public class SessionConsolidator {
 
     private List<String> loadConversationLines(UUID sessionId) {
         try {
-            return jdbcTemplate.queryForList(
+            var rows = jdbcTemplate.queryForList(
                     """
-                    SELECT role || ': ' || content FROM messages
+                    SELECT role, content_ciphertext FROM messages
                     WHERE session_id = ? ORDER BY created_at ASC LIMIT 40
                     """,
-                    String.class, sessionId
+                    sessionId
             );
+            List<String> lines = new ArrayList<>();
+            for (var row : rows) {
+                String role = (String) row.get("role");
+                byte[] cipher = (byte[]) row.get("content_ciphertext");
+                if (cipher == null) continue;
+                try {
+                    String text = new String(messageEncryptor.decrypt(cipher), StandardCharsets.UTF_8);
+                    lines.add(role + ": " + text);
+                } catch (Exception decryptEx) {
+                    log.debug("Skipping message decrypt failure in session={}", sessionId);
+                }
+            }
+            return lines;
         } catch (Exception e) {
             log.warn("Failed to load conversation for sessionId={}", sessionId, e);
             return List.of();
