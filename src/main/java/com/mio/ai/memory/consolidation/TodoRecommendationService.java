@@ -35,7 +35,7 @@ public class TodoRecommendationService {
     private final UserMemoryPreferenceRepository memoryPreferenceRepository;
     private final ObjectMapper objectMapper;
 
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void generateForSession(User user, Session session,
                                    List<String> distortionCodes, String dominantEmotion) {
         List<String> disliked = loadDislikedPatterns(user.getId());

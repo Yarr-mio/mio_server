@@ -112,10 +112,13 @@ public class CheckinService {
                     aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
                 }
             });
-        } else if (idempotencyKey != null) {
-            String cacheKey = idempotencyKey(idempotencyKey);
-            String cacheValue = serializeResponse(response);
-            redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+        } else {
+            if (idempotencyKey != null) {
+                String cacheKey = idempotencyKey(idempotencyKey);
+                String cacheValue = serializeResponse(response);
+                redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+            }
+            aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
         }
 
         return response;

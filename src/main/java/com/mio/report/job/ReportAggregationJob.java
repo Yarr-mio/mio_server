@@ -36,7 +36,6 @@ public class ReportAggregationJob {
     private final ObjectMapper objectMapper;
 
     @Scheduled(cron = "0 0 3 * * MON", zone = "Asia/Seoul")
-    @Transactional
     public void run() {
         LocalDate weekEnd = LocalDate.now(KST).minusDays(1);   // 지난 일요일
         LocalDate weekStart = weekEnd.minusDays(6);             // 지난 월요일
@@ -56,7 +55,8 @@ public class ReportAggregationJob {
         log.info("[ReportAggregationJob] done");
     }
 
-    private void generateReport(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void generateReport(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
         User user = userRepository.findById(userId).orElse(null);
         if (user == null) return;
 
@@ -127,7 +127,8 @@ public class ReportAggregationJob {
         try {
             Map<String, Object> scores = new LinkedHashMap<>();
             jdbcTemplate.query("""
-                    SELECT created_at::date AS d, AVG(intensity)::float AS avg_i
+                    SELECT (created_at AT TIME ZONE 'Asia/Seoul')::date AS d,
+                           AVG(intensity)::float AS avg_i
                     FROM emotional_states
                     WHERE user_id = ? AND created_at >= ? AND created_at < ?
                     GROUP BY d ORDER BY d

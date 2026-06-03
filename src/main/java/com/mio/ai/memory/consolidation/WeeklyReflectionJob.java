@@ -1,6 +1,5 @@
 package com.mio.ai.memory.consolidation;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.UserSelfModel;
 import com.mio.ai.llm.LlmClient;
@@ -11,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
@@ -23,10 +23,9 @@ import java.util.*;
  * 처리:
  * 1. 지난 7일 intervention_outcomes 집계 → effective_interventions 갱신
  * 2. recurring trigger_tags 집계
- * 3. Gemini Flash로 narrative / coaching_direction 생성
- * 4. user_self_model 갱신
+ * 3. GPT-4o-mini로 narrative / coaching_direction 생성
+ * 4. user_self_model 갱신 (사용자별 독립 트랜잭션)
  * 5. weekly_reports.narrative / coaching_direction UPDATE
- *    (row 생성은 ReportAggregationJob — 월요일 03:00 담당)
  */
 @Slf4j
 @Component
@@ -55,7 +54,6 @@ public class WeeklyReflectionJob {
     private final ObjectMapper objectMapper;
 
     @Scheduled(cron = "0 0 0 * * SUN", zone = "Asia/Seoul")
-    @Transactional
     public void run() {
         log.info("[WeeklyReflectionJob] start");
         LocalDate weekStart = LocalDate.now(KST).minusDays(7);
@@ -75,35 +73,20 @@ public class WeeklyReflectionJob {
     }
 
     private void processUser(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
-        // 1. intervention_outcomes 집계
+        // 집계 (읽기 전용, 트랜잭션 불필요)
         Map<String, Double> effectiveMap = aggregateEffectiveInterventions(userId, weekStart);
-
-        // 2. recurring triggers
         List<String> recurringTriggers = aggregateRecurringTriggers(userId, weekStart);
-
-        // 3. dominant emotions
         List<String> dominantEmotions = aggregateDominantEmotions(userId, weekStart);
 
-        // 4. build context for Gemini
+        // LLM 호출 (트랜잭션 외부 — 커넥션 점유 방지)
         String context = buildContext(effectiveMap, recurringTriggers, dominantEmotions);
-
-        // 5. Gemini Flash 호출
         String narrative = generateText(NARRATIVE_SYSTEM, context);
         String coachingDirection = generateText(DIRECTION_SYSTEM, context);
 
-        // 6. user_self_model 갱신
+        // 사용자별 독립 트랜잭션으로 저장 (실패해도 다음 사용자에 영향 없음)
         updateSelfModel(userId, dominantEmotions, recurringTriggers, effectiveMap);
-
-        // 7. weekly_reports UPDATE (row는 ReportAggregationJob이 생성)
         if (narrative != null || coachingDirection != null) {
-            int rows = jdbcTemplate.update("""
-                    UPDATE weekly_reports
-                    SET narrative = COALESCE(?, narrative),
-                        coaching_direction = COALESCE(?, coaching_direction)
-                    WHERE user_id = ? AND week_start = ?
-                    """,
-                    narrative, coachingDirection, userId, weekStart);
-            log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+            updateReport(userId, weekStart, narrative, coachingDirection);
         }
     }
 
@@ -111,7 +94,7 @@ public class WeeklyReflectionJob {
         try {
             return jdbcTemplate.query("""
                     SELECT DISTINCT user_id FROM sessions
-                    WHERE started_at::date >= ? AND status = 'ended'
+                    WHERE (started_at AT TIME ZONE 'Asia/Seoul')::date >= ? AND status = 'ended'
                     """,
                     (rs, i) -> (UUID) rs.getObject(1),
                     weekStart);
@@ -127,13 +110,18 @@ public class WeeklyReflectionJob {
             jdbcTemplate.query("""
                     SELECT intervention_kind, AVG(delta) AS avg_delta
                     FROM intervention_outcomes
-                    WHERE user_id = ? AND created_at::date >= ? AND delta IS NOT NULL
+                    WHERE user_id = ?
+                      AND (created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND delta IS NOT NULL
                     GROUP BY intervention_kind
                     ORDER BY avg_delta DESC
                     LIMIT 5
                     """,
-                    rs -> {
-                        result.put(rs.getString("intervention_kind"), rs.getDouble("avg_delta"));
+                    (org.springframework.jdbc.core.ResultSetExtractor<Void>) rs -> {
+                        while (rs.next()) {
+                            result.put(rs.getString("intervention_kind"), rs.getDouble("avg_delta"));
+                        }
+                        return null;
                     },
                     userId, weekStart);
         } catch (Exception e) {
@@ -148,7 +136,8 @@ public class WeeklyReflectionJob {
                     SELECT t AS trigger, COUNT(*) AS cnt
                     FROM session_summaries ss,
                          UNNEST(ss.trigger_tags) t
-                    WHERE ss.user_id = ? AND ss.created_at::date >= ?
+                    WHERE ss.user_id = ?
+                      AND (ss.created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
                     GROUP BY t ORDER BY cnt DESC LIMIT 5
                     """,
                     (rs, i) -> rs.getString("trigger"),
@@ -163,7 +152,8 @@ public class WeeklyReflectionJob {
             return jdbcTemplate.query("""
                     SELECT primary_emotion, COUNT(*) AS cnt
                     FROM emotional_states
-                    WHERE user_id = ? AND created_at::date >= ?
+                    WHERE user_id = ?
+                      AND (created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
                     GROUP BY primary_emotion ORDER BY cnt DESC LIMIT 3
                     """,
                     (rs, i) -> rs.getString("primary_emotion"),
@@ -187,13 +177,14 @@ public class WeeklyReflectionJob {
         try {
             return llmClient.complete(LlmRequest.of("gpt-4o-mini", systemPrompt, context));
         } catch (Exception e) {
-            log.warn("[WeeklyReflectionJob] Gemini call failed: {}", e.getMessage());
+            log.warn("[WeeklyReflectionJob] LLM call failed: {}", e.getMessage());
             return null;
         }
     }
 
-    private void updateSelfModel(UUID userId, List<String> emotions, List<String> triggers,
-                                 Map<String, Double> effective) {
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void updateSelfModel(UUID userId, List<String> emotions, List<String> triggers,
+                                Map<String, Double> effective) {
         try {
             String effectiveJson = objectMapper.writeValueAsString(effective);
             UserSelfModel model = selfModelRepository.findById(userId)
@@ -202,6 +193,22 @@ public class WeeklyReflectionJob {
             selfModelRepository.save(model);
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] self-model update failed userId={}: {}", userId, e.getMessage());
+        }
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void updateReport(UUID userId, LocalDate weekStart, String narrative, String coachingDirection) {
+        try {
+            int rows = jdbcTemplate.update("""
+                    UPDATE weekly_reports
+                    SET narrative = COALESCE(?, narrative),
+                        coaching_direction = COALESCE(?, coaching_direction)
+                    WHERE user_id = ? AND week_start = ?
+                    """,
+                    narrative, coachingDirection, userId, weekStart);
+            log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+        } catch (Exception e) {
+            log.warn("[WeeklyReflectionJob] report update failed userId={}: {}", userId, e.getMessage());
         }
     }
 }

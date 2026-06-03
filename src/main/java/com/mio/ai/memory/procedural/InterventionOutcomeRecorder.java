@@ -100,8 +100,10 @@ public class InterventionOutcomeRecorder {
         UserMemoryPreference pref = memoryPreferenceRepository.findByUserId(userId).orElse(null);
         if (pref == null) return;
         try {
-            List<String> patterns = objectMapper.readValue(
-                    pref.getDislikedPatterns(), new TypeReference<>() {});
+            String json = pref.getDislikedPatterns();
+            List<String> patterns = (json == null || json.isBlank())
+                    ? new ArrayList<>()
+                    : objectMapper.readValue(json, new TypeReference<>() {});
             if (patterns.contains(interventionKind)) return;
 
             List<String> updated = new ArrayList<>(patterns);

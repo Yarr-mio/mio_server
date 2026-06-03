@@ -14,7 +14,7 @@ import java.time.ZoneId;
  * Tier 2 Worker — 매일 자정 실행.
  *
  * 처리:
- * 1. emotional_rhythm_hourly MV REFRESH
+ * 1. emotional_rhythm_hourly MV REFRESH (트랜잭션 블록 외부 필수)
  * 2. user_beliefs dormancy 체크 (confidence 낮고 60일 이상 미활성 → dormant)
  * 3. 어제 episode trigger 집계 로그 (향후 클러스터링 확장 포인트)
  */
@@ -28,16 +28,12 @@ public class DailyReflectionJob {
     private final JdbcTemplate jdbcTemplate;
 
     @Scheduled(cron = "0 0 0 * * *", zone = "Asia/Seoul")
-    @Transactional
     public void run() {
         log.info("[DailyReflectionJob] start date={}", LocalDate.now(KST));
-        try {
-            refreshRhythmMv();
-            checkBeliefDormancy();
-            logYesterdayTriggers();
-        } catch (Exception e) {
-            log.error("[DailyReflectionJob] failed", e);
-        }
+        // REFRESH MATERIALIZED VIEW CONCURRENTLY는 트랜잭션 블록 내 실행 불가 (PostgreSQL 제약)
+        refreshRhythmMv();
+        checkBeliefDormancy();
+        logYesterdayTriggers();
         log.info("[DailyReflectionJob] done");
     }
 
@@ -50,17 +46,22 @@ public class DailyReflectionJob {
         }
     }
 
-    private void checkBeliefDormancy() {
-        int updated = jdbcTemplate.update("""
-                UPDATE user_beliefs
-                SET status = 'dormant'
-                WHERE status = 'active'
-                  AND confidence < 0.3
-                  AND (last_activated_at IS NULL
-                       OR last_activated_at < now() - INTERVAL '60 days')
-                """);
-        if (updated > 0) {
-            log.info("[DailyReflectionJob] {} beliefs set dormant", updated);
+    @Transactional
+    public void checkBeliefDormancy() {
+        try {
+            int updated = jdbcTemplate.update("""
+                    UPDATE user_beliefs
+                    SET status = 'dormant'
+                    WHERE status = 'active'
+                      AND confidence < 0.3
+                      AND (last_activated_at IS NULL
+                           OR last_activated_at < now() - INTERVAL '60 days')
+                    """);
+            if (updated > 0) {
+                log.info("[DailyReflectionJob] {} beliefs set dormant", updated);
+            }
+        } catch (Exception e) {
+            log.error("[DailyReflectionJob] belief dormancy check failed", e);
         }
     }
 
@@ -72,7 +73,7 @@ public class DailyReflectionJob {
                            array_length(array_agg(DISTINCT t), 1) AS distinct_triggers
                     FROM session_summaries ss,
                          UNNEST(ss.trigger_tags) t
-                    WHERE ss.created_at::date = ?
+                    WHERE (ss.created_at AT TIME ZONE 'Asia/Seoul')::date = ?
                     """, yesterday);
             log.info("[DailyReflectionJob] yesterday episodes={} distinctTriggers={}",
                     result.get("episode_count"), result.get("distinct_triggers"));
