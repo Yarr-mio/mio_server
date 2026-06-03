@@ -14,10 +14,13 @@ import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoGenerateRequest;
 import com.mio.todo.dto.TodoResponse;
+import com.mio.todo.event.TodoCompletedEvent;
+import com.mio.todo.event.TodoSkippedEvent;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,7 @@ public class TodoService {
     private final CheckinRepository checkinRepository;
     private final SessionRepository sessionRepository;
     private final TodoTemplateProvider templateProvider;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public List<TodoResponse> generate(UUID userId, TodoGenerateRequest request) {
@@ -120,8 +124,10 @@ public class TodoService {
 
         if ("completed".equals(request.status())) {
             task.complete(request.beforeEmotion(), request.afterEmotion(), request.feedback());
+            publishCompletedEvent(userId, task, request);
         } else {
             task.skip();
+            publishSkippedEvent(userId, task);
         }
 
         return TodoCheckinResponse.from(task);
@@ -213,6 +219,31 @@ public class TodoService {
         return mostSpecificCause != null
                 && mostSpecificCause.getMessage() != null
                 && mostSpecificCause.getMessage().contains("uq_behavior_tasks_suggested_");
+    }
+
+    private void publishCompletedEvent(UUID userId, BehaviorTask task, TodoCheckinRequest request) {
+        java.util.UUID sessionId = task.getSourceSession() != null
+                ? task.getSourceSession().getId() : null;
+        eventPublisher.publishEvent(new TodoCompletedEvent(
+                userId,
+                task.getId(),
+                sessionId,
+                task.getInterventionKind(),
+                request.beforeEmotion(),
+                request.afterEmotion(),
+                task.getCharacterId()
+        ));
+    }
+
+    private void publishSkippedEvent(UUID userId, BehaviorTask task) {
+        java.util.UUID sessionId = task.getSourceSession() != null
+                ? task.getSourceSession().getId() : null;
+        eventPublisher.publishEvent(new TodoSkippedEvent(
+                userId,
+                task.getId(),
+                sessionId,
+                task.getInterventionKind()
+        ));
     }
 
     private record TaskWithEffectiveStatus(BehaviorTask task, TaskStatus status) {}

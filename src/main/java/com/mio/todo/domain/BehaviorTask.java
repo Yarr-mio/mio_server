@@ -56,6 +56,10 @@ public class BehaviorTask {
     @Column(name = "character_id")
     private String characterId;
 
+    /** behavior_template.intervention_kind 참조 */
+    @Column(name = "intervention_kind")
+    private String interventionKind;
+
     @Column(name = "status", nullable = false)
     @Builder.Default
     private TaskStatus status = TaskStatus.SUGGESTED;

@@ -76,11 +76,31 @@ public class WeeklyReport {
     @Column(name = "generated_at")
     private OffsetDateTime generatedAt;
 
+    public void markAsGenerated(int checkinCount, Double avgEmotionScore,
+                                String emotionScores, String distortionDistribution) {
+        this.checkinCount = checkinCount;
+        this.avgEmotionScore = avgEmotionScore;
+        this.emotionScores = emotionScores != null ? emotionScores : "{}";
+        this.distortionDistribution = distortionDistribution != null ? distortionDistribution : "{}";
+        this.status = "GENERATED";
+        this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    public void markAsInsufficientData(int checkinCount) {
+        this.checkinCount = checkinCount;
+        this.status = "INSUFFICIENT_DATA";
+        this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    /** @deprecated use markAsGenerated(int, Double, String, String) */
+    @Deprecated
     public void markAsGenerated() {
         this.status = "GENERATED";
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
+    /** @deprecated use markAsInsufficientData(int) */
+    @Deprecated
     public void markAsInsufficientData() {
         this.status = "INSUFFICIENT_DATA";
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);

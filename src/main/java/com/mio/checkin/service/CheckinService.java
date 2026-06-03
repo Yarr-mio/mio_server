@@ -48,6 +48,7 @@ public class CheckinService {
     private final MessageEncryptor messageEncryptor;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final CheckinAiResponseGenerator aiResponseGenerator;
 
     @Transactional
     public CheckinCreateResponse submit(UUID userId, CheckinRequest request, String idempotencyKey) {
@@ -94,15 +95,30 @@ public class CheckinService {
 
         CheckinCreateResponse response = toCreateResponse(checkin, request.memo());
 
-        if (idempotencyKey != null) {
-            final String cacheKey = idempotencyKey(idempotencyKey);
-            final String cacheValue = serializeResponse(response);
+        final UUID checkinId = checkin.getId();
+        final String emotionType = checkin.getEmotionType();
+        final int conditionScore = checkin.getConditionScore();
+        final String timeOfDay = checkin.getTimeOfDay();
+
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+                    if (idempotencyKey != null) {
+                        String cacheKey = idempotencyKey(idempotencyKey);
+                        String cacheValue = serializeResponse(response);
+                        redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+                    }
+                    aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
                 }
             });
+        } else {
+            if (idempotencyKey != null) {
+                String cacheKey = idempotencyKey(idempotencyKey);
+                String cacheValue = serializeResponse(response);
+                redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+            }
+            aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
         }
 
         return response;

@@ -44,6 +44,7 @@ class CheckinServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private ValueOperations<String, String> valueOps;
+    @Mock private CheckinAiResponseGenerator aiResponseGenerator;
 
     private CheckinService checkinService;
     private UUID userId;
@@ -55,7 +56,8 @@ class CheckinServiceTest {
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         checkinService = new CheckinService(
-                checkinRepository, userRepository, new StubMessageEncryptor(), redisTemplate, objectMapper);
+                checkinRepository, userRepository, new StubMessageEncryptor(), redisTemplate, objectMapper,
+                aiResponseGenerator);
         userId = UUID.randomUUID();
         user = User.builder()
                 .socialProvider("kakao")
