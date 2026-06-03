@@ -23,6 +23,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import com.mio.common.AppConstants;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -42,6 +43,7 @@ class TodoServiceTest {
     @Mock private BehaviorTaskRepository behaviorTaskRepository;
     @Mock private CheckinRepository checkinRepository;
     @Mock private SessionRepository sessionRepository;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private TodoService todoService;
     private UUID userId;
@@ -53,7 +55,8 @@ class TodoServiceTest {
         todoService = new TodoService(
                 userRepository, behaviorTaskRepository,
                 checkinRepository, sessionRepository,
-                new TodoTemplateProvider()
+                new TodoTemplateProvider(),
+                eventPublisher
         );
         userId = UUID.randomUUID();
 

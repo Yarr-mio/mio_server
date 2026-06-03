@@ -57,11 +57,13 @@ public class InterventionOutcome {
     private OffsetDateTime createdAt;
 
     @Builder
-    private InterventionOutcome(User user, UUID sessionId, String interventionKind,
-                                String target, Integer preEmotionScore, Integer postEmotionScore,
+    private InterventionOutcome(User user, UUID sessionId, UUID behaviorTaskId,
+                                String interventionKind, String target,
+                                Integer preEmotionScore, Integer postEmotionScore,
                                 String userReaction, String characterId) {
         this.user = user;
         this.sessionId = sessionId;
+        this.behaviorTaskId = behaviorTaskId;
         this.interventionKind = interventionKind;
         this.target = target;
         this.preEmotionScore = preEmotionScore;
