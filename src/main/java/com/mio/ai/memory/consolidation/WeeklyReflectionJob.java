@@ -3,7 +3,7 @@ package com.mio.ai.memory.consolidation;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.UserSelfModel;
-import com.mio.ai.llm.GeminiLlmClient;
+import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.repository.UserSelfModelRepository;
 import lombok.RequiredArgsConstructor;
@@ -50,7 +50,7 @@ public class WeeklyReflectionJob {
             """;
 
     private final JdbcTemplate jdbcTemplate;
-    private final GeminiLlmClient geminiLlmClient;
+    private final LlmClient llmClient;
     private final UserSelfModelRepository selfModelRepository;
     private final ObjectMapper objectMapper;
 
@@ -185,7 +185,7 @@ public class WeeklyReflectionJob {
 
     private String generateText(String systemPrompt, String context) {
         try {
-            return geminiLlmClient.complete(LlmRequest.of("gemini-2.0-flash", systemPrompt, context));
+            return llmClient.complete(LlmRequest.of("gpt-4o-mini", systemPrompt, context));
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] Gemini call failed: {}", e.getMessage());
             return null;

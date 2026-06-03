@@ -1,8 +1,7 @@
 package com.mio.checkin.service;
 
-import com.mio.ai.llm.GeminiLlmClient;
+import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
-import com.mio.checkin.repository.CheckinRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.UUID;
 
 /**
- * 체크인 완료 후 Gemini 2.0 Flash로 AI 공감 코멘트 생성 → checkins.ai_response 저장.
+ * 체크인 완료 후 GPT-4o-mini로 AI 공감 코멘트 생성 → checkins.ai_response 저장.
  * 비동기 실행. 실패해도 체크인 자체에 영향 없음 (fail-open).
  */
 @Slf4j
@@ -22,6 +21,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CheckinAiResponseGenerator {
 
+    private static final String MODEL = "gpt-4o-mini";
     private static final String SYSTEM_PROMPT = """
             당신은 감정 코칭 AI 캐릭터입니다.
             사용자의 현재 감정 상태와 강도를 바탕으로 따뜻하고 공감적인 짧은 코멘트를 작성하세요.
@@ -33,7 +33,7 @@ public class CheckinAiResponseGenerator {
             - 자연스럽고 친근한 말투를 사용합니다
             """;
 
-    private final GeminiLlmClient geminiLlmClient;
+    private final LlmClient llmClient;
     private final JdbcTemplate jdbcTemplate;
 
     @Async
@@ -41,8 +41,7 @@ public class CheckinAiResponseGenerator {
     public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay) {
         try {
             String userMessage = buildPrompt(emotionType, conditionScore, timeOfDay);
-            String response = geminiLlmClient.complete(
-                    LlmRequest.of("gemini-2.0-flash", SYSTEM_PROMPT, userMessage));
+            String response = llmClient.complete(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
 
             if (response == null || response.isBlank()) {
                 log.debug("[CheckinAiResponseGenerator] no response for checkinId={}", checkinId);
@@ -65,8 +64,6 @@ public class CheckinAiResponseGenerator {
             case "afternoon" -> "점심";
             default -> "저녁";
         };
-        return String.format(
-                "시간대: %s\n감정: %s\n감정 강도: %d/5",
-                timeLabel, emotionType, conditionScore);
+        return String.format("시간대: %s\n감정: %s\n감정 강도: %d/5", timeLabel, emotionType, conditionScore);
     }
 }
