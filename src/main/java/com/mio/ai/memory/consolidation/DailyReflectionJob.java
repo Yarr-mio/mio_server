@@ -54,8 +54,7 @@ public class DailyReflectionJob {
                     SET status = 'dormant'
                     WHERE status = 'active'
                       AND confidence < 0.3
-                      AND (last_activated_at IS NULL
-                           OR last_activated_at < now() - INTERVAL '60 days')
+                      AND COALESCE(last_activated_at, first_observed_at) < now() - INTERVAL '60 days'
                     """);
             if (updated > 0) {
                 log.info("[DailyReflectionJob] {} beliefs set dormant", updated);
