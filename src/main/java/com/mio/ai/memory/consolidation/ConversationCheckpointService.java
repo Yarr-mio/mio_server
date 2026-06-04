@@ -56,6 +56,8 @@ public class ConversationCheckpointService {
     private final MessageEncryptor messageEncryptor;
     private final JdbcTemplate jdbcTemplate;
 
+    record MessageRecord(String line, OffsetDateTime createdAt) {}
+
     @Async
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void maybeCheckpoint(UUID sessionId, UUID userId) {
@@ -65,14 +67,19 @@ public class ConversationCheckpointService {
 
             if (session.getMessageCount() % CHECKPOINT_INTERVAL != 0) return;
 
-            SessionCheckpoint latest = checkpointRepository.findLatestBySessionId(sessionId).orElse(null);
+            SessionCheckpoint latest =
+                    checkpointRepository.findTopBySession_IdOrderByCheckpointSeqDesc(sessionId).orElse(null);
             OffsetDateTime since = latest != null ? latest.getCoveredUpToAt() : null;
 
-            List<String> lines = loadMessageLinesSince(sessionId, since);
-            if (lines.isEmpty()) return;
+            // 단일 쿼리로 메시지 + created_at 동시 읽기 (두 번 쿼리 시 사이에 끼는 메시지 갭 방지)
+            List<MessageRecord> records = loadMessageRecordsSince(sessionId, since);
+            if (records.isEmpty()) return;
 
-            String summaryText = generateSummary(String.join("\n", lines));
-            OffsetDateTime coveredUpTo = findLastMessageCreatedAt(sessionId, since);
+            String summaryText = generateSummary(records.stream().map(MessageRecord::line).toList());
+            OffsetDateTime coveredUpTo = records.stream()
+                    .map(MessageRecord::createdAt)
+                    .max(OffsetDateTime::compareTo)
+                    .orElse(null);
             if (coveredUpTo == null) return;
 
             int seq = (latest != null ? latest.getCheckpointSeq() : 0) + 1;
@@ -94,61 +101,51 @@ public class ConversationCheckpointService {
         }
     }
 
-    List<String> loadMessageLinesSince(UUID sessionId, OffsetDateTime since) {
+    List<MessageRecord> loadMessageRecordsSince(UUID sessionId, OffsetDateTime since) {
         try {
-            List<?> rows;
+            List<java.util.Map<String, Object>> rows;
             if (since == null) {
                 rows = jdbcTemplate.queryForList(
-                        "SELECT role, content_ciphertext FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+                        "SELECT role, content_ciphertext, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC",
                         sessionId);
             } else {
                 rows = jdbcTemplate.queryForList(
-                        "SELECT role, content_ciphertext FROM messages WHERE session_id = ? AND created_at > ? ORDER BY created_at ASC",
+                        "SELECT role, content_ciphertext, created_at FROM messages WHERE session_id = ? AND created_at > ? ORDER BY created_at ASC",
                         sessionId, since);
             }
 
-            List<String> lines = new ArrayList<>();
-            for (Object rowObj : rows) {
-                @SuppressWarnings("unchecked")
-                var row = (java.util.Map<String, Object>) rowObj;
+            List<MessageRecord> records = new ArrayList<>();
+            for (var row : rows) {
                 String role = (String) row.get("role");
                 byte[] cipher = (byte[]) row.get("content_ciphertext");
-                if (cipher == null) continue;
+                OffsetDateTime createdAt = (OffsetDateTime) row.get("created_at");
+                if (cipher == null || createdAt == null) continue;
                 try {
                     String text = new String(messageEncryptor.decrypt(cipher), StandardCharsets.UTF_8);
-                    lines.add(role + ": " + text);
+                    records.add(new MessageRecord(role + ": " + text, createdAt));
                 } catch (Exception ex) {
                     log.debug("Skipping decrypt failure in checkpoint sessionId={}", sessionId);
                 }
             }
-            return lines;
+            return records;
         } catch (Exception e) {
             log.warn("ConversationCheckpointService: failed to load messages sessionId={}", sessionId, e);
             return List.of();
         }
     }
 
-    private OffsetDateTime findLastMessageCreatedAt(UUID sessionId, OffsetDateTime since) {
-        try {
-            if (since == null) {
-                return jdbcTemplate.queryForObject(
-                        "SELECT MAX(created_at) FROM messages WHERE session_id = ?",
-                        OffsetDateTime.class, sessionId);
-            }
-            return jdbcTemplate.queryForObject(
-                    "SELECT MAX(created_at) FROM messages WHERE session_id = ? AND created_at > ?",
-                    OffsetDateTime.class, sessionId, since);
-        } catch (Exception e) {
-            log.warn("ConversationCheckpointService: failed to find last message at sessionId={}", sessionId, e);
-            return null;
-        }
+    // SessionConsolidator에서 lines만 필요할 때 사용
+    List<String> loadMessageLinesSince(UUID sessionId, OffsetDateTime since) {
+        return loadMessageRecordsSince(sessionId, since).stream()
+                .map(MessageRecord::line)
+                .toList();
     }
 
-    private String generateSummary(String conversationText) {
+    private String generateSummary(List<String> lines) {
         StringBuilder sb = new StringBuilder();
         try {
             llmClient.stream(
-                    LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, conversationText),
+                    LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines)),
                     sb::append
             );
         } catch (Exception e) {

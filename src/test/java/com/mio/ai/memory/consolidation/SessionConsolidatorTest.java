@@ -6,6 +6,7 @@ import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.common.crypto.MessageEncryptor;
+import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.repository.UserRepository;
@@ -36,6 +37,7 @@ class SessionConsolidatorTest {
         SessionConsolidator consolidator = new SessionConsolidator(
                 mock(SessionRepository.class),
                 mock(SessionSummaryRepository.class),
+                mock(SessionCheckpointRepository.class),
                 mock(UserRepository.class),
                 mock(ThoughtRepository.class),
                 mock(UserBeliefRepository.class),

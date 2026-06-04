@@ -18,8 +18,8 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             SELECT s FROM Session s
             WHERE s.status = com.mio.session.domain.SessionStatus.ACTIVE
               AND (
-                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt < :cutoff)
-                OR (s.lastMessageAt IS NULL AND s.startedAt < :cutoff)
+                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt <= :cutoff)
+                OR (s.lastMessageAt IS NULL AND s.startedAt <= :cutoff)
               )
             """)
     List<Session> findTimedOutActiveSessions(@Param("cutoff") OffsetDateTime cutoff);
@@ -36,8 +36,8 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             WHERE s.id = :sessionId
               AND s.status = com.mio.session.domain.SessionStatus.ACTIVE
               AND (
-                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt < :cutoff)
-                OR (s.lastMessageAt IS NULL AND s.startedAt < :cutoff)
+                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt <= :cutoff)
+                OR (s.lastMessageAt IS NULL AND s.startedAt <= :cutoff)
               )
             """)
     int endSessionIfActive(@Param("sessionId") UUID sessionId,

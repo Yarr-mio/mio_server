@@ -48,19 +48,21 @@ public class SessionTimeoutJob {
 
     private void terminateSession(Session session, OffsetDateTime cutoff) {
         try {
-            transactionTemplate.execute(status -> {
+            Boolean ended = transactionTemplate.execute(status -> {
                 OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
                 // 원자적 UPDATE: 상태와 timeout cutoff를 다시 확인해 새 메시지와의 레이스를 방지한다.
                 int updated = sessionRepository.endSessionIfActive(session.getId(), cutoff, now);
                 if (updated == 0) {
                     log.debug("SessionTimeoutJob: sessionId={} no longer timed out, skipping", session.getId());
-                    return null;
+                    return Boolean.FALSE;
                 }
                 eventPublisher.publishEvent(
                         new SessionEndedEvent(session.getId(), session.getUser().getId(), session.getCharacterId()));
-                return null;
+                return Boolean.TRUE;
             });
-            log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
+            if (Boolean.TRUE.equals(ended)) {
+                log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
+            }
         } catch (Exception e) {
             log.error("SessionTimeoutJob: failed to end sessionId={}", session.getId(), e);
         }
