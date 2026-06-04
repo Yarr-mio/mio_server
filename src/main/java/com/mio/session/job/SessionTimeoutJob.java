@@ -8,7 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -16,7 +16,8 @@ import java.util.List;
 
 /**
  * 30분 무응답 세션 자동 종료 Job (MIO-Session-003, MIO-Session-004).
- * 5분마다 실행하여 lastMessageAt 기준 30분 초과 active 세션을 종료한다.
+ * 5분마다 실행하여 lastMessageAt(없으면 startedAt) 기준 30분 초과 active 세션을 종료한다.
+ * 세션별 독립 트랜잭션으로 처리하여 단일 실패가 전체 배치를 롤백하지 않도록 한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -27,9 +28,9 @@ public class SessionTimeoutJob {
 
     private final SessionRepository sessionRepository;
     private final ApplicationEventPublisher eventPublisher;
+    private final TransactionTemplate transactionTemplate;
 
     @Scheduled(fixedDelay = 5 * 60 * 1000)
-    @Transactional
     public void run() {
         OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(TIMEOUT_MINUTES);
         List<Session> timedOut = sessionRepository.findTimedOutActiveSessions(cutoff);
@@ -39,15 +40,24 @@ public class SessionTimeoutJob {
         log.info("SessionTimeoutJob: terminating {} timed-out sessions", timedOut.size());
 
         for (Session session : timedOut) {
-            try {
-                session.end();
-                sessionRepository.save(session);
+            terminateSession(session);
+        }
+    }
+
+    private void terminateSession(Session session) {
+        try {
+            transactionTemplate.execute(status -> {
+                Session managed = sessionRepository.findById(session.getId()).orElse(null);
+                if (managed == null || managed.isEnded()) return null;
+                managed.end();
+                sessionRepository.save(managed);
                 eventPublisher.publishEvent(
-                        new SessionEndedEvent(session.getId(), session.getUser().getId(), session.getCharacterId()));
-                log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
-            } catch (Exception e) {
-                log.error("SessionTimeoutJob: failed to end sessionId={}", session.getId(), e);
-            }
+                        new SessionEndedEvent(managed.getId(), managed.getUser().getId(), managed.getCharacterId()));
+                return null;
+            });
+            log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
+        } catch (Exception e) {
+            log.error("SessionTimeoutJob: failed to end sessionId={}", session.getId(), e);
         }
     }
 }

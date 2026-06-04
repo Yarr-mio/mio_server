@@ -182,10 +182,12 @@ public class ConversationOrchestrator {
                     preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                     if (!preFilterResult.passed()) {
                         judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
-                        assistantContent = resolveOutputJudgeAction(
-                                judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId);
-                        if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
-                            crisisFlowTriggered = true;
+                        if (judgeActionResult != null) {
+                            assistantContent = resolveOutputJudgeAction(
+                                    judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId);
+                            if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
+                                crisisFlowTriggered = true;
+                            }
                         }
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {

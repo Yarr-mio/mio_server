@@ -14,7 +14,14 @@ import java.util.UUID;
 
 public interface SessionRepository extends JpaRepository<Session, UUID> {
 
-    @Query("SELECT s FROM Session s WHERE s.status = com.mio.session.domain.SessionStatus.ACTIVE AND s.lastMessageAt < :cutoff")
+    @Query("""
+            SELECT s FROM Session s
+            WHERE s.status = com.mio.session.domain.SessionStatus.ACTIVE
+              AND (
+                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt < :cutoff)
+                OR (s.lastMessageAt IS NULL AND s.startedAt < :cutoff)
+              )
+            """)
     List<Session> findTimedOutActiveSessions(@Param("cutoff") OffsetDateTime cutoff);
 
     Optional<Session> findByIdAndUser_Id(UUID id, UUID userId);
