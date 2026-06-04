@@ -82,11 +82,15 @@ public class PolicyEngine {
 
             // 7. MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE
             if (riskLevel == RiskLevel.MEDIUM) {
-                GenerationMode genMode = resolveSupportiveMode(sessionDelta);
+                GenerationMode genMode = resolveSupportiveMode();
+                // MIO-CBT-011: 소크라테스 2회 제한 도달 시 CBT 개입 힌트 제거
+                InterventionHints hints = (sessionDelta != null && sessionDelta.socraticLimitReached())
+                        ? InterventionHints.empty()
+                        : generateHints(profile, riskLevel);
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
                         combined.securityLevel(), true, true, true,
-                        generateHints(profile, riskLevel), RiskLevel.MEDIUM);
+                        hints, RiskLevel.MEDIUM);
             }
 
             // 8. LOW → NORMAL + SPECULATIVE
@@ -118,8 +122,7 @@ public class PolicyEngine {
         return decide(combined, null, null, null);
     }
 
-    // MIO-CBT-011: 소크라테스 2회 제한 도달 시에도 공감(SUPPORTIVE) 유지
-    private GenerationMode resolveSupportiveMode(SessionDelta delta) {
+    private GenerationMode resolveSupportiveMode() {
         return GenerationMode.SUPPORTIVE;
     }
 

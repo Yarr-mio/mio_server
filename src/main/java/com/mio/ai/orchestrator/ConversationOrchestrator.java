@@ -3,6 +3,7 @@ package com.mio.ai.orchestrator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
+import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -82,6 +83,7 @@ public class ConversationOrchestrator {
     private final ContextPreWarmer contextPreWarmer;
     private final AiDecisionLogger decisionLogger;
     private final SessionMessagePersistenceService messagePersistenceService;
+    private final ConversationCheckpointService checkpointService;
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
     private final UserMessageSignalAnalyzer userMessageSignalAnalyzer;
@@ -154,12 +156,13 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "security_refusal"));
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
                 CrisisFlowService.CrisisHandleResult crisisResult =
-                        crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId);
+                        crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId,
+                                userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
 
             } else if (decision.action() == DecisionAction.GENERATE) {
@@ -182,15 +185,18 @@ public class ConversationOrchestrator {
                     preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                     if (!preFilterResult.passed()) {
                         judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
-                        assistantContent = resolveOutputJudgeAction(
-                                judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId);
-                        if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
-                            crisisFlowTriggered = true;
+                        if (judgeActionResult != null) {
+                            assistantContent = resolveOutputJudgeAction(
+                                    judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId,
+                                    userSignal.emotionScore());
+                            if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
+                                crisisFlowTriggered = true;
+                            }
                         }
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                     }
 
                 } else {
@@ -204,7 +210,7 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
 
                     // CAUTIOUS_SPECULATIVE: post-stream OutputGuard
                     // 이미 스트리밍된 응답은 취소 불가하지만, DB에는 안전 버전을 저장해
@@ -233,11 +239,14 @@ public class ConversationOrchestrator {
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "error"));
             }
 
             // 8. Persist messages
             messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal);
+
+            // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
+            checkpointService.maybeCheckpoint(sessionId, userId);
 
             // 9. Working Memory — 메시지 버퍼에 이번 턴 기록
             workingMemory.appendMessage(sessionId, "user", userMessage);
@@ -265,7 +274,8 @@ public class ConversationOrchestrator {
             User user,
             Session session,
             SseEmitter emitter,
-            String outboundMsgId) throws IOException {
+            String outboundMsgId,
+            Integer emotionScore) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -273,7 +283,7 @@ public class ConversationOrchestrator {
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 CrisisFlowService.CrisisHandleResult cr =
-                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId);
+                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId, emotionScore);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };

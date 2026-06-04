@@ -12,7 +12,9 @@ import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.common.crypto.MessageEncryptor;
+import com.mio.session.domain.SessionCheckpoint;
 import com.mio.session.domain.SessionSummary;
+import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
@@ -76,6 +78,7 @@ public class SessionConsolidator {
 
     private final SessionRepository sessionRepository;
     private final SessionSummaryRepository sessionSummaryRepository;
+    private final SessionCheckpointRepository checkpointRepository;
     private final UserRepository userRepository;
     private final ThoughtRepository thoughtRepository;
     private final UserBeliefRepository beliefRepository;
@@ -112,13 +115,12 @@ public class SessionConsolidator {
             return;
         }
 
-        // 1. 메시지 조회 (최근 40개 — 20턴 커버, working memory TTL 만료 대비)
-        List<String> conversationLines = loadConversationLines(sessionId);
-        if (conversationLines.isEmpty()) {
+        // 1. 대화 컨텍스트 구성 (체크포인트 요약 + 잔여 메시지)
+        String conversationText = buildConversationContext(sessionId);
+        if (conversationText.isBlank()) {
             log.info("SessionConsolidator: no messages found for sessionId={}", sessionId);
             return;
         }
-        String conversationText = String.join("\n", conversationLines);
 
         // 2. 세션 요약 생성 (LLM)
         String summaryText = generateSummary(conversationText);
@@ -173,17 +175,56 @@ public class SessionConsolidator {
                 sessionId, validThoughts.size(), dominantEmotion);
     }
 
+    // ── 대화 컨텍스트 구성 ────────────────────────────────────────
+
+    /**
+     * 체크포인트 요약 + 마지막 체크포인트 이후 잔여 메시지를 합쳐 반환한다.
+     * 체크포인트가 없으면 전체 메시지를 그대로 반환한다 (기존 동작).
+     */
+    private String buildConversationContext(UUID sessionId) {
+        List<SessionCheckpoint> checkpoints =
+                checkpointRepository.findBySession_IdOrderByCheckpointSeqAsc(sessionId);
+
+        if (checkpoints.isEmpty()) {
+            return String.join("\n", loadConversationLines(sessionId));
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== 이전 대화 요약 ===\n");
+        for (SessionCheckpoint cp : checkpoints) {
+            sb.append("[중간 요약 ").append(cp.getCheckpointSeq()).append("]\n");
+            sb.append(cp.getSummaryText()).append("\n\n");
+        }
+
+        SessionCheckpoint latest = checkpoints.getLast();
+        List<String> recentLines = loadMessageLinesSince(sessionId, latest.getCoveredUpToAt());
+        if (!recentLines.isEmpty()) {
+            sb.append("=== 최근 대화 ===\n");
+            sb.append(String.join("\n", recentLines));
+        }
+
+        return sb.toString().trim();
+    }
+
     // ── 세션 메시지 로드 ─────────────────────────────────────────
 
     private List<String> loadConversationLines(UUID sessionId) {
+        return loadMessageLinesSince(sessionId, null);
+    }
+
+    private List<String> loadMessageLinesSince(UUID sessionId, java.time.OffsetDateTime since) {
         try {
-            var rows = jdbcTemplate.queryForList(
-                    """
-                    SELECT role, content_ciphertext FROM messages
-                    WHERE session_id = ? ORDER BY created_at ASC LIMIT 40
-                    """,
-                    sessionId
-            );
+            List<java.util.Map<String, Object>> rows;
+            if (since == null) {
+                rows = jdbcTemplate.queryForList(
+                        "SELECT role, content_ciphertext FROM messages WHERE session_id = ? ORDER BY created_at ASC",
+                        sessionId);
+            } else {
+                rows = jdbcTemplate.queryForList(
+                        "SELECT role, content_ciphertext FROM messages WHERE session_id = ? AND created_at > ? ORDER BY created_at ASC",
+                        sessionId, since);
+            }
+
             List<String> lines = new ArrayList<>();
             for (var row : rows) {
                 String role = (String) row.get("role");
