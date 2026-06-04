@@ -17,6 +17,8 @@ import java.util.List;
 /**
  * 30분 무응답 세션 자동 종료 Job (MIO-Session-003, MIO-Session-004).
  * 5분마다 실행하여 lastMessageAt(없으면 startedAt) 기준 30분 초과 active 세션을 종료한다.
+ *
+ * 동시성: endSessionIfActive()의 원자적 UPDATE로 멀티 인스턴스 중복 처리를 방지한다.
  * 세션별 독립 트랜잭션으로 처리하여 단일 실패가 전체 배치를 롤백하지 않도록 한다.
  */
 @Component
@@ -37,7 +39,7 @@ public class SessionTimeoutJob {
 
         if (timedOut.isEmpty()) return;
 
-        log.info("SessionTimeoutJob: terminating {} timed-out sessions", timedOut.size());
+        log.info("SessionTimeoutJob: {} timed-out sessions found", timedOut.size());
 
         for (Session session : timedOut) {
             terminateSession(session);
@@ -47,12 +49,15 @@ public class SessionTimeoutJob {
     private void terminateSession(Session session) {
         try {
             transactionTemplate.execute(status -> {
-                Session managed = sessionRepository.findById(session.getId()).orElse(null);
-                if (managed == null || managed.isEnded()) return null;
-                managed.end();
-                sessionRepository.save(managed);
+                OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+                // 원자적 UPDATE: 이미 ended 상태인 경우 0 반환 → skip
+                int updated = sessionRepository.endSessionIfActive(session.getId(), now);
+                if (updated == 0) {
+                    log.debug("SessionTimeoutJob: sessionId={} already ended, skipping", session.getId());
+                    return null;
+                }
                 eventPublisher.publishEvent(
-                        new SessionEndedEvent(managed.getId(), managed.getUser().getId(), managed.getCharacterId()));
+                        new SessionEndedEvent(session.getId(), session.getUser().getId(), session.getCharacterId()));
                 return null;
             });
             log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());

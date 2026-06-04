@@ -24,6 +24,19 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             """)
     List<Session> findTimedOutActiveSessions(@Param("cutoff") OffsetDateTime cutoff);
 
+    /**
+     * 원자적 상태 전이: ACTIVE → ENDED (조건부 UPDATE).
+     * 동시 실행 환경에서 단일 인스턴스만 처리하도록 보장.
+     * 반환값 1 = 성공(해당 인스턴스가 처리), 0 = 이미 종료됨(skip).
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.status = com.mio.session.domain.SessionStatus.ENDED, s.endedAt = :endedAt
+            WHERE s.id = :sessionId AND s.status = com.mio.session.domain.SessionStatus.ACTIVE
+            """)
+    int endSessionIfActive(@Param("sessionId") UUID sessionId, @Param("endedAt") OffsetDateTime endedAt);
+
     Optional<Session> findByIdAndUser_Id(UUID id, UUID userId);
 
     Optional<Session> findByUser_IdAndStatus(UUID userId, SessionStatus status);
