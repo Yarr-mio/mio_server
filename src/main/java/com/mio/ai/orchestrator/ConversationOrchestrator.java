@@ -154,7 +154,7 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "security_refusal"));
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
@@ -190,7 +190,7 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                     }
 
                 } else {
@@ -204,7 +204,7 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
 
                     // CAUTIOUS_SPECULATIVE: post-stream OutputGuard
                     // 이미 스트리밍된 응답은 취소 불가하지만, DB에는 안전 버전을 저장해
@@ -233,7 +233,7 @@ public class ConversationOrchestrator {
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, "stop"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "error"));
             }
 
             // 8. Persist messages

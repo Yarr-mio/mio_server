@@ -177,10 +177,13 @@ public class SessionConsolidator {
 
     private List<String> loadConversationLines(UUID sessionId) {
         try {
+            // DESC LIMIT 40으로 최신 40개 조회 후 ASC 역정렬 — 시간 순서로 LLM에 전달
             var rows = jdbcTemplate.queryForList(
                     """
-                    SELECT role, content_ciphertext FROM messages
-                    WHERE session_id = ? ORDER BY created_at ASC LIMIT 40
+                    SELECT role, content_ciphertext FROM (
+                        SELECT role, content_ciphertext, created_at FROM messages
+                        WHERE session_id = ? ORDER BY created_at DESC LIMIT 40
+                    ) sub ORDER BY created_at ASC
                     """,
                     sessionId
             );
