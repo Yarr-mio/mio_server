@@ -3,6 +3,7 @@ package com.mio.ai.orchestrator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
+import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -82,6 +83,7 @@ public class ConversationOrchestrator {
     private final ContextPreWarmer contextPreWarmer;
     private final AiDecisionLogger decisionLogger;
     private final SessionMessagePersistenceService messagePersistenceService;
+    private final ConversationCheckpointService checkpointService;
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
     private final UserMessageSignalAnalyzer userMessageSignalAnalyzer;
@@ -242,6 +244,9 @@ public class ConversationOrchestrator {
 
             // 8. Persist messages
             messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal);
+
+            // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
+            checkpointService.maybeCheckpoint(sessionId, userId);
 
             // 9. Working Memory — 메시지 버퍼에 이번 턴 기록
             workingMemory.appendMessage(sessionId, "user", userMessage);
