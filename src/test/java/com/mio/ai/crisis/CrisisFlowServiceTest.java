@@ -9,9 +9,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -58,6 +58,7 @@ class CrisisFlowServiceTest {
 
         SseEventDto.DoneEvent doneEvent = eventCaptor.getAllValues().stream()
                 .flatMap(builder -> extractData(builder).stream())
+                .map(ResponseBodyEmitter.DataWithMediaType::getData)
                 .filter(SseEventDto.DoneEvent.class::isInstance)
                 .map(SseEventDto.DoneEvent.class::cast)
                 .findFirst()
@@ -70,21 +71,7 @@ class CrisisFlowServiceTest {
         verify(eventPublisher).publishEvent(any(CrisisDetectedEvent.class));
     }
 
-    private Set<?> extractData(SseEmitter.SseEventBuilder builder) {
-        Object value = readField(builder, "dataToSend");
-        if (value instanceof Set<?> set) {
-            return set;
-        }
-        return Set.of();
-    }
-
-    private Object readField(Object target, String name) {
-        try {
-            Field field = target.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(target);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
-        }
+    private Set<ResponseBodyEmitter.DataWithMediaType> extractData(SseEmitter.SseEventBuilder builder) {
+        return builder.build();
     }
 }

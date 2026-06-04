@@ -159,7 +159,8 @@ public class ConversationOrchestrator {
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
                 CrisisFlowService.CrisisHandleResult crisisResult =
-                        crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId);
+                        crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId,
+                                userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
 
             } else if (decision.action() == DecisionAction.GENERATE) {
@@ -184,7 +185,8 @@ public class ConversationOrchestrator {
                         judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
-                                    judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId);
+                                    judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId,
+                                    userSignal.emotionScore());
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                             }
@@ -267,7 +269,8 @@ public class ConversationOrchestrator {
             User user,
             Session session,
             SseEmitter emitter,
-            String outboundMsgId) throws IOException {
+            String outboundMsgId,
+            Integer emotionScore) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -275,7 +278,7 @@ public class ConversationOrchestrator {
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 CrisisFlowService.CrisisHandleResult cr =
-                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId);
+                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId, emotionScore);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };

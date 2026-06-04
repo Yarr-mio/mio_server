@@ -45,7 +45,8 @@ public class CrisisFlowService {
             User user,
             Session session,
             SseEmitter emitter,
-            String outboundMsgId) {
+            String outboundMsgId,
+            Integer emotionScore) {
 
         int severity = determineSeverity(l1Result, originalMessage);
         String triggerType = l1Result.hardCrisis() ? "keyword" : "moderation";
@@ -59,7 +60,7 @@ public class CrisisFlowService {
                     .data(crisisEvent));
 
             SseEventDto.DoneEvent doneEvent = new SseEventDto.DoneEvent(
-                    outboundMsgId, null, true, "crisis_flow");
+                    outboundMsgId, emotionScore, true, "crisis_flow");
             emitter.send(SseEmitter.event()
                     .name(doneEvent.eventName())
                     .data(doneEvent));

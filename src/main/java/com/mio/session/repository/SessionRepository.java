@@ -33,9 +33,16 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Query("""
             UPDATE Session s
             SET s.status = com.mio.session.domain.SessionStatus.ENDED, s.endedAt = :endedAt
-            WHERE s.id = :sessionId AND s.status = com.mio.session.domain.SessionStatus.ACTIVE
+            WHERE s.id = :sessionId
+              AND s.status = com.mio.session.domain.SessionStatus.ACTIVE
+              AND (
+                (s.lastMessageAt IS NOT NULL AND s.lastMessageAt < :cutoff)
+                OR (s.lastMessageAt IS NULL AND s.startedAt < :cutoff)
+              )
             """)
-    int endSessionIfActive(@Param("sessionId") UUID sessionId, @Param("endedAt") OffsetDateTime endedAt);
+    int endSessionIfActive(@Param("sessionId") UUID sessionId,
+                           @Param("cutoff") OffsetDateTime cutoff,
+                           @Param("endedAt") OffsetDateTime endedAt);
 
     Optional<Session> findByIdAndUser_Id(UUID id, UUID userId);
 

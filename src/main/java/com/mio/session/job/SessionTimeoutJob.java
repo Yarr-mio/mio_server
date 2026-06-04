@@ -42,18 +42,18 @@ public class SessionTimeoutJob {
         log.info("SessionTimeoutJob: {} timed-out sessions found", timedOut.size());
 
         for (Session session : timedOut) {
-            terminateSession(session);
+            terminateSession(session, cutoff);
         }
     }
 
-    private void terminateSession(Session session) {
+    private void terminateSession(Session session, OffsetDateTime cutoff) {
         try {
             transactionTemplate.execute(status -> {
                 OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-                // 원자적 UPDATE: 이미 ended 상태인 경우 0 반환 → skip
-                int updated = sessionRepository.endSessionIfActive(session.getId(), now);
+                // 원자적 UPDATE: 상태와 timeout cutoff를 다시 확인해 새 메시지와의 레이스를 방지한다.
+                int updated = sessionRepository.endSessionIfActive(session.getId(), cutoff, now);
                 if (updated == 0) {
-                    log.debug("SessionTimeoutJob: sessionId={} already ended, skipping", session.getId());
+                    log.debug("SessionTimeoutJob: sessionId={} no longer timed out, skipping", session.getId());
                     return null;
                 }
                 eventPublisher.publishEvent(

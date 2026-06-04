@@ -112,7 +112,7 @@ public class SessionConsolidator {
             return;
         }
 
-        // 1. 메시지 조회 (최근 40개 — 20턴 커버, working memory TTL 만료 대비)
+        // 1. 메시지 조회 (세션 전체 — 종료 요약은 Memory 도메인에 저장되는 장기 맥락 원본)
         List<String> conversationLines = loadConversationLines(sessionId);
         if (conversationLines.isEmpty()) {
             log.info("SessionConsolidator: no messages found for sessionId={}", sessionId);
@@ -177,13 +177,10 @@ public class SessionConsolidator {
 
     private List<String> loadConversationLines(UUID sessionId) {
         try {
-            // DESC LIMIT 40으로 최신 40개 조회 후 ASC 역정렬 — 시간 순서로 LLM에 전달
             var rows = jdbcTemplate.queryForList(
                     """
-                    SELECT role, content_ciphertext FROM (
-                        SELECT role, content_ciphertext, created_at FROM messages
-                        WHERE session_id = ? ORDER BY created_at DESC LIMIT 40
-                    ) sub ORDER BY created_at ASC
+                    SELECT role, content_ciphertext FROM messages
+                    WHERE session_id = ? ORDER BY created_at ASC
                     """,
                     sessionId
             );

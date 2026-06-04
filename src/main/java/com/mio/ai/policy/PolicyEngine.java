@@ -82,7 +82,7 @@ public class PolicyEngine {
 
             // 7. MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE
             if (riskLevel == RiskLevel.MEDIUM) {
-                GenerationMode genMode = resolveSupportiveMode(sessionDelta);
+                GenerationMode genMode = resolveSupportiveMode();
                 // MIO-CBT-011: 소크라테스 2회 제한 도달 시 CBT 개입 힌트 제거
                 InterventionHints hints = (sessionDelta != null && sessionDelta.socraticLimitReached())
                         ? InterventionHints.empty()
@@ -122,7 +122,7 @@ public class PolicyEngine {
         return decide(combined, null, null, null);
     }
 
-    private GenerationMode resolveSupportiveMode(SessionDelta delta) {
+    private GenerationMode resolveSupportiveMode() {
         return GenerationMode.SUPPORTIVE;
     }
 
