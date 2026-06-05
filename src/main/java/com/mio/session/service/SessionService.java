@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -26,12 +27,16 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
 public class SessionService {
 
     private static final Set<String> ALLOWED_CHARACTER_IDS = Set.of("mio", "bau", "rumi", "momo", "chichi");
+    private static final int MSG_RATE_LIMIT_MAX = 60;
+    private static final long MSG_RATE_LIMIT_TTL_SECONDS = 60L;
+    private static final long MSG_IDEMPOTENCY_TTL_SECONDS = 3600L;
 
     private final SessionRepository sessionRepository;
     private final UserRepository userRepository;
@@ -40,6 +45,7 @@ public class SessionService {
     private final WorkingMemory workingMemory;
     private final ApplicationEventPublisher eventPublisher;
     private final ContextPreWarmer contextPreWarmer;
+    private final StringRedisTemplate redisTemplate;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -111,23 +117,57 @@ public class SessionService {
         session.end();
         EndSessionResponse response = EndSessionResponse.from(sessionRepository.save(session));
 
-        // Redis 정리 + SessionConsolidator 이벤트: 커밋 후 실행 — 커넥션 점유 최소화
+        // @TransactionalEventListener(AFTER_COMMIT) 캡처용: 트랜잭션 내 발행해야 커밋 후 리스너 실행됨
         String characterId = session.getCharacterId();
+        eventPublisher.publishEvent(new SessionEndedEvent(sessionId, userId, characterId));
+
+        // Redis 정리는 커밋 후 실행 (트랜잭션 불필요)
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
                 workingMemory.clear(sessionId);
-                eventPublisher.publishEvent(new SessionEndedEvent(sessionId, userId, characterId));
             }
         });
 
         return response;
     }
 
-    public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request, SseEmitter emitter) {
+    /**
+     * SSE 스트림 시작 전 동기 검증 — 여기서 예외 발생 시 HTTP 4xx로 응답됨
+     */
+    public void validateMessageRequest(UUID userId, String idempotencyKey) {
+        checkMessageRateLimit(userId);
+        if (idempotencyKey != null
+                && Boolean.TRUE.equals(redisTemplate.hasKey(messageIdempotencyKey(idempotencyKey)))) {
+            throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
+        }
+    }
+
+    public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
+                              SseEmitter emitter, String idempotencyKey) {
         Session session = findSession(sessionId);
         validateSessionOwner(session, userId);
         conversationOrchestrator.handle(userId, sessionId, request.content(), emitter);
+        if (idempotencyKey != null) {
+            redisTemplate.opsForValue().set(
+                    messageIdempotencyKey(idempotencyKey), "1", MSG_IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+        }
+    }
+
+    private void checkMessageRateLimit(UUID userId) {
+        String key = "session:ratelimit:msg:" + userId;
+        Long count = redisTemplate.opsForValue().increment(key);
+        if (count == null) return;
+        if (count == 1) {
+            redisTemplate.expire(key, MSG_RATE_LIMIT_TTL_SECONDS, TimeUnit.SECONDS);
+        }
+        if (count > MSG_RATE_LIMIT_MAX) {
+            throw new BusinessException(ErrorCode.RATE_LIMIT_EXCEEDED);
+        }
+    }
+
+    private static String messageIdempotencyKey(String key) {
+        return "msg:idempotency:" + key;
     }
 
     private User findUser(UUID userId) {
