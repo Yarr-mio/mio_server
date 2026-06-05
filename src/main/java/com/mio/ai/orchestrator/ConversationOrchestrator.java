@@ -221,6 +221,8 @@ public class ConversationOrchestrator {
                                     sessionId, preFilterResult.failReasons(),
                                     judgeActionResult != null ? judgeActionResult.action() : "none");
                             if (judgeActionResult != null) {
+                                boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
+                                if (isCrisis) crisisFlowTriggered = true;
                                 String replacedContent = switch (judgeActionResult.action()) {
                                     case REWRITE -> judgeActionResult.rewrittenContent() != null
                                             ? judgeActionResult.rewrittenContent() : null;
@@ -231,7 +233,7 @@ public class ConversationOrchestrator {
                                 if (replacedContent != null) {
                                     assistantContent = replacedContent;
                                     sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "replaced_by_guard"));
+                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), isCrisis, "replaced_by_guard"));
                                 } else {
                                     sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                                 }

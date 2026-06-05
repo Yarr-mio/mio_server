@@ -133,25 +133,25 @@ public class SessionService {
     }
 
     /**
-     * SSE 스트림 시작 전 동기 검증 — 여기서 예외 발생 시 HTTP 4xx로 응답됨
+     * SSE 스트림 시작 전 동기 검증 — 여기서 예외 발생 시 HTTP 4xx로 응답됨.
+     * 세션 검증도 여기서 수행하여 가상 스레드 내 SseEmitter 누수를 방지한다.
      */
-    public void validateMessageRequest(UUID userId, String idempotencyKey) {
+    public void validateMessageRequest(UUID userId, UUID sessionId, String idempotencyKey) {
         checkMessageRateLimit(userId);
-        if (idempotencyKey != null
-                && Boolean.TRUE.equals(redisTemplate.hasKey(messageIdempotencyKey(idempotencyKey)))) {
-            throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
+        Session session = findSession(sessionId);
+        validateSessionOwner(session, userId);
+        if (idempotencyKey != null) {
+            Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
+                    messageIdempotencyKey(userId, idempotencyKey), "1", MSG_IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
+            if (!Boolean.TRUE.equals(acquired)) {
+                throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
+            }
         }
     }
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
                               SseEmitter emitter, String idempotencyKey) {
-        Session session = findSession(sessionId);
-        validateSessionOwner(session, userId);
         conversationOrchestrator.handle(userId, sessionId, request.content(), emitter);
-        if (idempotencyKey != null) {
-            redisTemplate.opsForValue().set(
-                    messageIdempotencyKey(idempotencyKey), "1", MSG_IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
-        }
     }
 
     private void checkMessageRateLimit(UUID userId) {
@@ -166,8 +166,8 @@ public class SessionService {
         }
     }
 
-    private static String messageIdempotencyKey(String key) {
-        return "msg:idempotency:" + key;
+    private static String messageIdempotencyKey(UUID userId, String key) {
+        return "msg:idempotency:" + userId + ":" + key;
     }
 
     private User findUser(UUID userId) {

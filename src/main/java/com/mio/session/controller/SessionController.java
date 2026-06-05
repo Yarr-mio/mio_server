@@ -46,7 +46,7 @@ public class SessionController {
             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody SendMessageRequest request) {
         UUID userId = resolveUserId(principal);
-        sessionService.validateMessageRequest(userId, idempotencyKey);
+        sessionService.validateMessageRequest(userId, sessionId, idempotencyKey);
         SseEmitter emitter = new SseEmitter(60_000L);
         emitter.onTimeout(emitter::complete);
         emitter.onError(error -> emitter.complete());
