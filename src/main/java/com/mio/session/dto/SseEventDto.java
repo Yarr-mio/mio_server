@@ -8,6 +8,7 @@ import java.util.List;
 public sealed interface SseEventDto
         permits SseEventDto.SessionMetaEvent,
                 SseEventDto.DeltaEvent,
+                SseEventDto.DeltaReplaceEvent,
                 SseEventDto.CrisisEvent,
                 SseEventDto.DoneEvent {
 
@@ -25,6 +26,13 @@ public sealed interface SseEventDto
             @JsonProperty("msg_id") String msgId
     ) implements SseEventDto {
         @Override public String eventName() { return "delta"; }
+    }
+
+    record DeltaReplaceEvent(
+            @JsonProperty("safe_response") String safeResponse,
+            @JsonProperty("msg_id") String msgId
+    ) implements SseEventDto {
+        @Override public String eventName() { return "delta.replace"; }
     }
 
     record CrisisEvent(

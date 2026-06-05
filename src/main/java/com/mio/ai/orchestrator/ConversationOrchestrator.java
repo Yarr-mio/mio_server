@@ -210,12 +210,10 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
 
-                    // CAUTIOUS_SPECULATIVE: post-stream OutputGuard
-                    // 이미 스트리밍된 응답은 취소 불가하지만, DB에는 안전 버전을 저장해
-                    // 대화 기록 조회 시 유해 원문이 노출되지 않도록 한다.
                     if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
+                        // post-stream OutputGuard: 스트리밍 완료 후 안전성 검사
+                        // REWRITE/REPLACE 시 delta.replace 이벤트로 FE 말풍선 교체 후 done 전송
                         preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
                         if (!preFilterResult.passed()) {
                             judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
@@ -223,15 +221,30 @@ public class ConversationOrchestrator {
                                     sessionId, preFilterResult.failReasons(),
                                     judgeActionResult != null ? judgeActionResult.action() : "none");
                             if (judgeActionResult != null) {
-                                assistantContent = switch (judgeActionResult.action()) {
+                                boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
+                                if (isCrisis) crisisFlowTriggered = true;
+                                String replacedContent = switch (judgeActionResult.action()) {
                                     case REWRITE -> judgeActionResult.rewrittenContent() != null
-                                            ? judgeActionResult.rewrittenContent() : assistantContent;
+                                            ? judgeActionResult.rewrittenContent() : null;
                                     case REPLACE, CRISIS_FLOW ->
                                             "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
-                                    case SEND -> assistantContent;
+                                    case SEND -> null;
                                 };
+                                if (replacedContent != null) {
+                                    assistantContent = replacedContent;
+                                    sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), isCrisis, "replaced_by_guard"));
+                                } else {
+                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
+                                }
+                            } else {
+                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                             }
+                        } else {
+                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                         }
+                    } else {
+                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                     }
                 }
             } else {

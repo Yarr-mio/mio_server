@@ -22,6 +22,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -31,7 +33,10 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -46,6 +51,8 @@ class SessionServiceTest {
     @Mock private WorkingMemory workingMemory;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private ContextPreWarmer contextPreWarmer;
+    @Mock private StringRedisTemplate redisTemplate;
+    @Mock private ValueOperations<String, String> valueOps;
 
     private SessionService sessionService;
     private UUID userId;
@@ -53,9 +60,10 @@ class SessionServiceTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         sessionService = new SessionService(
                 sessionRepository, userRepository, sessionMessagePersistenceService,
-                conversationOrchestrator, workingMemory, eventPublisher, contextPreWarmer
+                conversationOrchestrator, workingMemory, eventPublisher, contextPreWarmer, redisTemplate
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()
@@ -231,16 +239,55 @@ class SessionServiceTest {
     @DisplayName("streamMessage는 ConversationOrchestrator에 위임한다")
     void streamMessage_delegates_to_orchestrator() {
         UUID sessionId = UUID.randomUUID();
-        Session session = Session.builder()
-                .user(mockUser)
-                .characterId("mio")
-                .build();
-        ReflectionTestUtils.setField(session, "id", sessionId);
-        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
         SseEmitter emitter = mock(SseEmitter.class);
 
-        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter);
+        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, null);
 
         verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter);
+    }
+
+    @Test
+    @DisplayName("validateMessageRequest: Rate Limit 초과 시 RATE_LIMIT_EXCEEDED 예외가 발생한다")
+    void validateMessageRequest_rateLimitExceeded_throws() {
+        when(valueOps.increment(anyString())).thenReturn(61L);
+        UUID sessionId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", sessionId);
+        lenient().when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> sessionService.validateMessageRequest(userId, sessionId, null))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.RATE_LIMIT_EXCEEDED));
+    }
+
+    @Test
+    @DisplayName("validateMessageRequest: 중복 Idempotency-Key 시 DUPLICATE_REQUEST 예외가 발생한다")
+    void validateMessageRequest_duplicateIdempotencyKey_throws() {
+        UUID sessionId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", sessionId);
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(valueOps.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> sessionService.validateMessageRequest(userId, sessionId, "dup-key-123"))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.DUPLICATE_REQUEST));
+    }
+
+    @Test
+    @DisplayName("validateMessageRequest: Idempotency-Key가 null이면 setIfAbsent를 호출하지 않는다")
+    void validateMessageRequest_nullIdempotencyKey_skipsAtomicSet() {
+        UUID sessionId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", sessionId);
+        when(valueOps.increment(anyString())).thenReturn(1L);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        sessionService.validateMessageRequest(userId, sessionId, null);
+
+        verify(redisTemplate).expire(anyString(), anyLong(), any());
     }
 }

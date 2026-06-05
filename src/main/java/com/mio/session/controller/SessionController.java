@@ -43,12 +43,14 @@ public class SessionController {
     public SseEmitter sendMessage(
             Principal principal,
             @PathVariable UUID sessionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
             @Valid @RequestBody SendMessageRequest request) {
         UUID userId = resolveUserId(principal);
+        sessionService.validateMessageRequest(userId, sessionId, idempotencyKey);
         SseEmitter emitter = new SseEmitter(60_000L);
         emitter.onTimeout(emitter::complete);
         emitter.onError(error -> emitter.complete());
-        Thread.ofVirtual().start(() -> sessionService.streamMessage(userId, sessionId, request, emitter));
+        Thread.ofVirtual().start(() -> sessionService.streamMessage(userId, sessionId, request, emitter, idempotencyKey));
         return emitter;
     }
 
