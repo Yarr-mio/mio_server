@@ -29,20 +29,20 @@ class OntologyValidatorTest {
         given(distortionRepo.existsById("all_or_nothing")).willReturn(true);
         given(distortionRepo.existsById("catastrophizing")).willReturn(true);
         given(distortionRepo.existsById("mind_reading")).willReturn(true);
-        given(distortionRepo.existsById("fortune_telling")).willReturn(true);
+        given(distortionRepo.existsById("self_blame")).willReturn(true);
         given(distortionRepo.existsById("emotional_reasoning")).willReturn(true);
         given(distortionRepo.existsById("overgeneralization")).willReturn(true);
 
-        // 9종 감정 시드
-        given(emotionRepo.existsById("sadness")).willReturn(true);
-        given(emotionRepo.existsById("anxiety")).willReturn(true);
-        given(emotionRepo.existsById("anger")).willReturn(true);
-        given(emotionRepo.existsById("guilt")).willReturn(true);
-        given(emotionRepo.existsById("shame")).willReturn(true);
-        given(emotionRepo.existsById("loneliness")).willReturn(true);
-        given(emotionRepo.existsById("hopelessness")).willReturn(true);
-        given(emotionRepo.existsById("numbness")).willReturn(true);
-        given(emotionRepo.existsById("frustration")).willReturn(true);
+        // State 기준 9종 감정 시드
+        given(emotionRepo.existsById("happy")).willReturn(true);
+        given(emotionRepo.existsById("calm")).willReturn(true);
+        given(emotionRepo.existsById("anxious")).willReturn(true);
+        given(emotionRepo.existsById("sad")).willReturn(true);
+        given(emotionRepo.existsById("angry")).willReturn(true);
+        given(emotionRepo.existsById("ashamed")).willReturn(true);
+        given(emotionRepo.existsById("numb")).willReturn(true);
+        given(emotionRepo.existsById("tired")).willReturn(true);
+        given(emotionRepo.existsById("confused")).willReturn(true);
 
         // 개입 코드 일부
         given(interventionRepo.existsById("breathing_exercise")).willReturn(true);
@@ -55,7 +55,7 @@ class OntologyValidatorTest {
     void valid_distortion_codes_pass() {
         List<String> validCodes = List.of(
                 "all_or_nothing", "catastrophizing", "mind_reading",
-                "fortune_telling", "emotional_reasoning", "overgeneralization"
+                "self_blame", "emotional_reasoning", "overgeneralization"
         );
         for (String code : validCodes) {
             assertThat(validator.isValidDistortionCode(code))
@@ -68,17 +68,19 @@ class OntologyValidatorTest {
     @DisplayName("시드에 없는 왜곡 코드는 폐기된다")
     void unknown_distortion_code_is_rejected() {
         assertThat(validator.isValidDistortionCode("personalization")).isFalse();
+        assertThat(validator.isValidDistortionCode("fortune_telling")).isFalse();
+        assertThat(validator.isValidDistortionCode("mental_filter")).isFalse();
         assertThat(validator.isValidDistortionCode("unknown_bias")).isFalse();
         assertThat(validator.isValidDistortionCode("")).isFalse();
         assertThat(validator.isValidDistortionCode(null)).isFalse();
     }
 
     @Test
-    @DisplayName("시드에 존재하는 감정 코드 9종은 모두 유효하다")
+    @DisplayName("State 기준 감정 코드 9종은 모두 유효하다")
     void valid_emotion_codes_pass() {
         List<String> validCodes = List.of(
-                "sadness", "anxiety", "anger", "guilt", "shame",
-                "loneliness", "hopelessness", "numbness", "frustration"
+                "happy", "calm", "anxious", "sad", "angry",
+                "ashamed", "numb", "tired", "confused"
         );
         for (String code : validCodes) {
             assertThat(validator.isValidEmotionCode(code))
@@ -97,7 +99,7 @@ class OntologyValidatorTest {
     @Test
     @DisplayName("모두 유효한 코드이면 allValid가 true다")
     void all_valid_codes_returns_all_valid_result() {
-        var result = validator.validate("catastrophizing", "anxiety", "breathing_exercise");
+        var result = validator.validate("catastrophizing", "anxious", "breathing_exercise");
         assertThat(result.allValid()).isTrue();
         assertThat(result.distortionValid()).isTrue();
         assertThat(result.emotionValid()).isTrue();
@@ -107,7 +109,7 @@ class OntologyValidatorTest {
     @Test
     @DisplayName("왜곡 코드가 미등록이면 distortionValid가 false다")
     void invalid_distortion_code_makes_distortion_invalid() {
-        var result = validator.validate("personalization", "anxiety", "breathing_exercise");
+        var result = validator.validate("personalization", "anxious", "breathing_exercise");
         assertThat(result.distortionValid()).isFalse();
         assertThat(result.allValid()).isFalse();
     }

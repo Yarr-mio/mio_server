@@ -28,20 +28,20 @@ class UserMessageSignalAnalyzerTest {
     }
 
     @Test
-    @DisplayName("미래 부정 예측 표현은 fortune_telling biasType으로 저장한다")
-    void future_negative_prediction_sets_fortune_telling() {
+    @DisplayName("미래 부정 예측 표현은 State 기준 catastrophizing biasType으로 저장한다")
+    void future_negative_prediction_sets_catastrophizing() {
         UserMessageSignal signal = analyzer.analyze("안 좋게 흘러갈 것 같다는 생각이 자꾸 듭니다.");
-        assertThat(signal.biasType()).isEqualTo("fortune_telling");
+        assertThat(signal.biasType()).isEqualTo("catastrophizing");
     }
 
     @Test
-    @DisplayName("부정 필터링 표현은 mental_filter biasType으로 저장한다")
-    void negative_filtering_sets_mental_filter() {
+    @DisplayName("전부/하나도 표현은 State 기준 all_or_nothing biasType으로 저장한다")
+    void all_or_nothing_phrases_set_all_or_nothing() {
         UserMessageSignal signal1 = analyzer.analyze("전부 엉망인 것만 보여요. 좋은 건 하나도 없어요.");
-        assertThat(signal1.biasType()).isEqualTo("mental_filter");
+        assertThat(signal1.biasType()).isEqualTo("all_or_nothing");
 
         UserMessageSignal signal2 = analyzer.analyze("제가 하는 일은 다 의미가 없는 것 같아요.");
-        assertThat(signal2.biasType()).isEqualTo("mental_filter");
+        assertThat(signal2.biasType()).isEqualTo("all_or_nothing");
     }
 
     @Test

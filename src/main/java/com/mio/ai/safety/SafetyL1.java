@@ -98,11 +98,11 @@ public class SafetyL1 {
             }
         }
 
-        // catastrophizing / fortune_telling 인지 왜곡은 단일 발화에서도 riskCandidate로 처리.
+        // catastrophizing 인지 왜곡은 단일 발화에서도 riskCandidate로 처리.
         // 반복(repetitiveNegative)을 기다리지 않고 즉시 InputJudge 판단으로 위임한다.
         String currentBiasType = input.currentBiasType();
         if (!hardCrisis && !riskCandidate
-                && ("catastrophizing".equals(currentBiasType) || "fortune_telling".equals(currentBiasType))) {
+                && "catastrophizing".equals(currentBiasType)) {
             riskCandidate = true;
             signals.add("cognitive_distortion:" + currentBiasType);
         }
