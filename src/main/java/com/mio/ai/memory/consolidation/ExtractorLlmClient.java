@@ -29,13 +29,13 @@ public class ExtractorLlmClient {
               "thoughts": [
                 {
                   "thoughtText": "사용자의 자동적 사고 원문",
-                  "distortionCode": "all_or_nothing|catastrophizing|mind_reading|fortune_telling|emotional_reasoning|overgeneralization|null",
+                  "distortionCode": "overgeneralization|catastrophizing|mind_reading|all_or_nothing|self_blame|emotional_reasoning|null",
                   "beliefKind": "core_self|core_other|core_world|intermediate_rule|compensatory_strategy|null",
                   "polarity": "positive|negative|neutral",
                   "confidence": 0.0~1.0
                 }
               ],
-              "dominantEmotion": "sadness|anxiety|anger|guilt|shame|loneliness|hopelessness|numbness|frustration|null",
+              "dominantEmotion": "happy|calm|anxious|sad|angry|ashamed|numb|tired|confused|null",
               "triggerTags": ["trigger1", "trigger2"],
               "episodeType": "regular|crisis|cbt_success|cbt_partial|support_only"
             }

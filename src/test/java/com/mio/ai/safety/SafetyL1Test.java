@@ -114,8 +114,8 @@ class SafetyL1Test {
     }
 
     @Test
-    @DisplayName("fortune_telling biasType 단독 발화는 riskCandidate = true를 반환한다")
-    void fortune_telling_bias_single_turn_triggers_risk_candidate() {
+    @DisplayName("State 기준이 아닌 biasType 단독 발화는 riskCandidate로 처리하지 않는다")
+    void non_state_bias_single_turn_does_not_trigger_risk_candidate() {
         var result = safetyL1.check(new SafetyL1Input(
                 "안 좋게 흘러갈 것 같다는 생각이 자꾸 들어요",
                 List.of(),
@@ -124,8 +124,8 @@ class SafetyL1Test {
                 45,
                 "fortune_telling"
         ));
-        assertThat(result.riskCandidate()).isTrue();
-        assertThat(result.signals()).anyMatch(s -> s.startsWith("cognitive_distortion:fortune_telling"));
+        assertThat(result.riskCandidate()).isFalse();
+        assertThat(result.signals()).noneMatch(s -> s.startsWith("cognitive_distortion:fortune_telling"));
     }
 
     @Test

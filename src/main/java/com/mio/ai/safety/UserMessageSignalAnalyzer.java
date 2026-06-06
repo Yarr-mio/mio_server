@@ -19,7 +19,8 @@ public class UserMessageSignalAnalyzer {
 
     private static final Set<String> CATASTROPHIZING = Set.of(
             "끝장", "다망가질", "망가질것같", "모든게끝",
-            "최악", "돌이킬수없"
+            "최악", "돌이킬수없", "안좋게흘러갈것같", "잘못될것같은",
+            "나빠질것같은", "최악으로흘러갈", "안될것같다", "틀림없이나쁘게"
     );
 
     private static final Set<String> OVERGENERALIZATION = Set.of(
@@ -27,13 +28,8 @@ public class UserMessageSignalAnalyzer {
             "뭘해도결국", "같은결과", "앞으로도계속"
     );
 
-    private static final Set<String> MENTAL_FILTER = Set.of(
+    private static final Set<String> ALL_OR_NOTHING = Set.of(
             "전부엉망", "좋은건하나도", "나쁜것만보여", "하나도기억이안나", "의미가없는것"
-    );
-
-    private static final Set<String> FORTUNE_TELLING = Set.of(
-            "안좋게흘러갈것같", "잘못될것같은", "나빠질것같은", "최악으로흘러갈",
-            "안될것같다", "틀림없이나쁘게"
     );
 
     public UserMessageSignal analyze(String normalizedMessage) {
@@ -58,11 +54,8 @@ public class UserMessageSignalAnalyzer {
         if (containsAny(compactMessage, CATASTROPHIZING)) {
             return "catastrophizing";
         }
-        if (containsAny(compactMessage, MENTAL_FILTER)) {
-            return "mental_filter";
-        }
-        if (containsAny(compactMessage, FORTUNE_TELLING)) {
-            return "fortune_telling";
+        if (containsAny(compactMessage, ALL_OR_NOTHING)) {
+            return "all_or_nothing";
         }
         return null;
     }
