@@ -215,4 +215,16 @@ class SessionControllerTest {
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.error.code").value("GONE"));
     }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/summary - 활성 세션 요약 조회 시 404 반환")
+    void getSessionSummary_activeSession_returns404() throws Exception {
+        when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID)))
+                .thenThrow(new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+
+        mockMvc.perform(get("/v1/sessions/{id}/summary", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SESSION_NOT_FOUND"));
+    }
 }

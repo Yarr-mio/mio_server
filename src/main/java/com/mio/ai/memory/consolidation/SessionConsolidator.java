@@ -91,6 +91,7 @@ public class SessionConsolidator {
     private final ObjectMapper objectMapper;
     private final OntologyValidator ontologyValidator;
     private final TodoRecommendationService todoRecommendationService;
+    private final SummaryStatusWriter summaryStatusWriter;
 
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
@@ -106,13 +107,9 @@ public class SessionConsolidator {
             sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
-            try {
-                jdbcTemplate.update(
-                        "UPDATE sessions SET summary_status = 'failed' WHERE id = ?",
-                        event.sessionId());
-            } catch (Exception ex) {
-                log.error("Failed to mark summary as failed for sessionId={}", event.sessionId(), ex);
-            }
+            // REQUIRES_NEW: 현재 트랜잭션이 rollback-only 또는 DB-aborted 상태일 수 있으므로
+            // 별도 트랜잭션에서 failed 상태를 저장한다.
+            summaryStatusWriter.markFailed(event.sessionId());
         }
     }
 
@@ -257,15 +254,10 @@ public class SessionConsolidator {
 
     private String generateSummary(String conversationText) {
         StringBuilder sb = new StringBuilder();
-        try {
-            llmClient.stream(
-                    LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText),
-                    sb::append
-            );
-        } catch (Exception e) {
-            log.warn("Summary generation failed, using fallback", e);
-            return "세션 요약을 생성할 수 없습니다.";
-        }
+        llmClient.stream(
+                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText),
+                sb::append
+        );
         return sb.toString().trim();
     }
 

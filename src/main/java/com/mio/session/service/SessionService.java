@@ -146,6 +146,9 @@ public class SessionService {
         if (!session.belongsTo(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
+        if (!session.isEnded()) {
+            throw new BusinessException(ErrorCode.SESSION_NOT_FOUND);
+        }
         SummaryStatus status = session.getSummaryStatus();
         if (status == SummaryStatus.FAILED) {
             throw new BusinessException(ErrorCode.SESSION_SUMMARY_FAILED);
