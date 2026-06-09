@@ -14,6 +14,7 @@ import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.session.domain.SessionCheckpoint;
 import com.mio.session.domain.SessionSummary;
+import com.mio.session.domain.SummaryStatus;
 import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
@@ -102,8 +103,16 @@ public class SessionConsolidator {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         try {
             consolidate(event.sessionId(), event.userId(), event.characterId());
+            sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
+            try {
+                jdbcTemplate.update(
+                        "UPDATE sessions SET summary_status = 'failed' WHERE id = ?",
+                        event.sessionId());
+            } catch (Exception ex) {
+                log.error("Failed to mark summary as failed for sessionId={}", event.sessionId(), ex);
+            }
         }
     }
 

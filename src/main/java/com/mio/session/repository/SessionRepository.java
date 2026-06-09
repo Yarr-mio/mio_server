@@ -2,6 +2,7 @@ package com.mio.session.repository;
 
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
+import com.mio.session.domain.SummaryStatus;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -48,7 +49,13 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
 
     Optional<Session> findByUser_IdAndStatus(UUID userId, SessionStatus status);
 
+    Optional<Session> findTopByUser_IdAndStatusOrderByEndedAtDesc(UUID userId, SessionStatus status);
+
     boolean existsByUser_IdAndStatus(UUID userId, SessionStatus status);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
+    void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);
 
     @Query("SELECT s FROM Session s WHERE s.user.id = :userId AND s.startedAt >= :start AND s.startedAt < :end AND s.status = com.mio.session.domain.SessionStatus.ENDED AND s.endedAt IS NOT NULL")
     List<Session> findEndedSessionsByUserAndPeriod(@Param("userId") UUID userId,

@@ -13,6 +13,7 @@ import com.mio.session.dto.CreateSessionRequest;
 import com.mio.session.dto.SendMessageRequest;
 import com.mio.session.dto.SessionResponse;
 import com.mio.session.repository.SessionRepository;
+import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +46,7 @@ import static org.mockito.Mockito.when;
 class SessionServiceTest {
 
     @Mock private SessionRepository sessionRepository;
+    @Mock private SessionSummaryRepository sessionSummaryRepository;
     @Mock private UserRepository userRepository;
     @Mock private SessionMessagePersistenceService sessionMessagePersistenceService;
     @Mock private ConversationOrchestrator conversationOrchestrator;
@@ -62,8 +64,9 @@ class SessionServiceTest {
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         sessionService = new SessionService(
-                sessionRepository, userRepository, sessionMessagePersistenceService,
-                conversationOrchestrator, workingMemory, eventPublisher, contextPreWarmer, redisTemplate
+                sessionRepository, sessionSummaryRepository, userRepository,
+                sessionMessagePersistenceService, conversationOrchestrator, workingMemory,
+                eventPublisher, contextPreWarmer, redisTemplate
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()
@@ -163,14 +166,17 @@ class SessionServiceTest {
     }
 
     @Test
-    @DisplayName("활성 세션이 없으면 getActiveSession은 Optional.empty를 반환한다")
-    void getActiveSession_noSession_returnsNull() {
+    @DisplayName("활성 세션이 없으면 getActiveSession은 session_id가 null인 응답을 반환한다")
+    void getActiveSession_noSession_returnsNullSessionId() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(Optional.empty());
+        when(sessionRepository.findTopByUser_IdAndStatusOrderByEndedAtDesc(userId, SessionStatus.ENDED))
+                .thenReturn(Optional.empty());
 
-        Optional<ActiveSessionResponse> response = sessionService.getActiveSession(userId);
+        ActiveSessionResponse response = sessionService.getActiveSession(userId);
 
-        assertThat(response).isEmpty();
+        assertThat(response.sessionId()).isNull();
+        assertThat(response.lastSummaryStatus()).isNull();
     }
 
     @Test
@@ -183,11 +189,10 @@ class SessionServiceTest {
                 .build();
         when(sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(Optional.of(session));
 
-        Optional<ActiveSessionResponse> response = sessionService.getActiveSession(userId);
+        ActiveSessionResponse response = sessionService.getActiveSession(userId);
 
-        assertThat(response).isPresent();
-        assertThat(response.orElseThrow().characterId()).isEqualTo("mio");
-        assertThat(response.orElseThrow().status()).isEqualTo("active");
+        assertThat(response.characterId()).isEqualTo("mio");
+        assertThat(response.status()).isEqualTo("active");
     }
 
     @Test

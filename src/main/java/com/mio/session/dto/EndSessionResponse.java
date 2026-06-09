@@ -24,7 +24,7 @@ public record EndSessionResponse(
                 session.getEndedAt(),
                 session.getMessageCount(),
                 session.durationSeconds(),
-                "pending"
+                session.getSummaryStatus().value()
         );
     }
 }

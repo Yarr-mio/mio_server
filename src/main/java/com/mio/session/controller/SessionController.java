@@ -27,7 +27,7 @@ public class SessionController {
     public ResponseEntity<ApiResponse<ActiveSessionResponse>> getActiveSession(
             Principal principal) {
         UUID userId = resolveUserId(principal);
-        return ResponseEntity.ok(ApiResponse.ok(sessionService.getActiveSession(userId).orElse(null)));
+        return ResponseEntity.ok(ApiResponse.ok(sessionService.getActiveSession(userId)));
     }
 
     @PostMapping
@@ -61,6 +61,16 @@ public class SessionController {
         UUID userId = resolveUserId(principal);
         EndSessionResponse response = sessionService.endSession(userId, sessionId);
         return ResponseEntity.ok(ApiResponse.ok(response));
+    }
+
+    @GetMapping("/{sessionId}/summary")
+    public ResponseEntity<ApiResponse<SessionSummaryResponse>> getSessionSummary(
+            Principal principal,
+            @PathVariable UUID sessionId) {
+        UUID userId = resolveUserId(principal);
+        SessionSummaryResponse response = sessionService.getSessionSummary(userId, sessionId);
+        HttpStatus status = "pending".equals(response.summaryStatus()) ? HttpStatus.ACCEPTED : HttpStatus.OK;
+        return ResponseEntity.status(status).body(ApiResponse.ok(response));
     }
 
     private UUID resolveUserId(Principal principal) {

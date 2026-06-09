@@ -8,8 +8,10 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
+import com.mio.session.domain.SummaryStatus;
 import com.mio.session.dto.*;
 import com.mio.session.repository.SessionRepository;
+import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +26,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,7 @@ public class SessionService {
     private static final long MSG_IDEMPOTENCY_TTL_SECONDS = 3600L;
 
     private final SessionRepository sessionRepository;
+    private final SessionSummaryRepository sessionSummaryRepository;
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
@@ -96,13 +98,19 @@ public class SessionService {
     }
 
     @Transactional(readOnly = true)
-    public Optional<ActiveSessionResponse> getActiveSession(UUID userId) {
+    public ActiveSessionResponse getActiveSession(UUID userId) {
         User user = findUser(userId);
         if (!user.getSignupStep().isOnboardingComplete()) {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
         return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)
-                .map(ActiveSessionResponse::from);
+                .map(ActiveSessionResponse::fromActive)
+                .orElseGet(() -> {
+                    Session lastEnded = sessionRepository
+                            .findTopByUser_IdAndStatusOrderByEndedAtDesc(userId, SessionStatus.ENDED)
+                            .orElse(null);
+                    return ActiveSessionResponse.noActiveSession(lastEnded);
+                });
     }
 
     @Transactional
@@ -130,6 +138,28 @@ public class SessionService {
         });
 
         return response;
+    }
+
+    @Transactional
+    public SessionSummaryResponse getSessionSummary(UUID userId, UUID sessionId) {
+        Session session = findSession(sessionId);
+        if (!session.belongsTo(userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+        SummaryStatus status = session.getSummaryStatus();
+        if (status == SummaryStatus.FAILED) {
+            throw new BusinessException(ErrorCode.SESSION_SUMMARY_FAILED);
+        }
+        if (status == SummaryStatus.PENDING) {
+            return SessionSummaryResponse.pending(session);
+        }
+        if (status == SummaryStatus.DONE) {
+            session.markSummaryViewed();
+            sessionRepository.save(session);
+        }
+        var summary = sessionSummaryRepository.findBySession_Id(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+        return SessionSummaryResponse.from(session, summary);
     }
 
     /**
