@@ -53,6 +53,10 @@ public class Session {
     @Builder.Default
     private String embeddingStatus = "pending";
 
+    @Column(name = "summary_status", nullable = false)
+    @Builder.Default
+    private SummaryStatus summaryStatus = SummaryStatus.PENDING;
+
     @Column(name = "last_message_at")
     private OffsetDateTime lastMessageAt;
 
@@ -89,6 +93,18 @@ public class Session {
         } else {
             this.avgEmotionScore = (this.avgEmotionScore * (this.messageCount - 1) + newScore) / this.messageCount;
         }
+    }
+
+    public void markSummaryDone() {
+        this.summaryStatus = SummaryStatus.DONE;
+    }
+
+    public void markSummaryViewed() {
+        this.summaryStatus = SummaryStatus.VIEWED;
+    }
+
+    public void markSummaryFailed() {
+        this.summaryStatus = SummaryStatus.FAILED;
     }
 
     public long durationSeconds() {

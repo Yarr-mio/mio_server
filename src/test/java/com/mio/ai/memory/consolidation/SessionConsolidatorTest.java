@@ -48,7 +48,8 @@ class SessionConsolidatorTest {
                 jdbcTemplate,
                 new ObjectMapper(),
                 mock(OntologyValidator.class),
-                mock(TodoRecommendationService.class)
+                mock(TodoRecommendationService.class),
+                mock(SummaryStatusWriter.class)
         );
 
         ReflectionTestUtils.invokeMethod(consolidator, "loadConversationLines", sessionId);

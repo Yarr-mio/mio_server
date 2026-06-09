@@ -22,7 +22,6 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.OffsetDateTime;
-import java.util.Optional;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -50,23 +49,25 @@ class SessionControllerTest {
     private static final UUID TEST_SESSION_ID = UUID.randomUUID();
 
     @Test
-    @DisplayName("GET /v1/sessions/active - 활성 세션 없으면 data: null 반환")
-    void getActiveSession_noSession_returnsNullData() throws Exception {
-        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.empty());
+    @DisplayName("GET /v1/sessions/active - 활성 세션 없고 이전 종료 세션도 없으면 session_id: null 반환")
+    void getActiveSession_noSession_returnsNullSessionId() throws Exception {
+        when(sessionService.getActiveSession(TEST_USER_ID))
+                .thenReturn(ActiveSessionResponse.noActiveSession(null));
 
         mockMvc.perform(get("/v1/sessions/active")
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data").doesNotExist());
+                .andExpect(jsonPath("$.data.session_id").doesNotExist())
+                .andExpect(jsonPath("$.data.last_summary_status").doesNotExist());
     }
 
     @Test
     @DisplayName("GET /v1/sessions/active - 활성 세션 있으면 세션 정보 반환")
     void getActiveSession_hasSession_returnsSession() throws Exception {
         ActiveSessionResponse response = new ActiveSessionResponse(
-                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 0
+                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 0, null, null
         );
-        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(Optional.of(response));
+        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
 
         mockMvc.perform(get("/v1/sessions/active")
                         .principal(() -> TEST_USER_ID.toString()))
@@ -74,6 +75,22 @@ class SessionControllerTest {
                 .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
                 .andExpect(jsonPath("$.data.character_id").value("mio"))
                 .andExpect(jsonPath("$.data.status").value("active"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/active - 활성 세션 없고 마지막 종료 세션 요약이 done 이면 last_summary_status 반환")
+    void getActiveSession_noActiveSession_returnsLastSummaryStatus() throws Exception {
+        ActiveSessionResponse response = new ActiveSessionResponse(
+                null, null, null, null, null, null, "done", TEST_SESSION_ID
+        );
+        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
+
+        mockMvc.perform(get("/v1/sessions/active")
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.session_id").doesNotExist())
+                .andExpect(jsonPath("$.data.last_summary_status").value("done"))
+                .andExpect(jsonPath("$.data.last_ended_session_id").value(TEST_SESSION_ID.toString()));
     }
 
     @Test
@@ -153,5 +170,61 @@ class SessionControllerTest {
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isGone())
                 .andExpect(jsonPath("$.error.code").value("GONE"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/summary - 요약 pending 상태면 202 반환")
+    void getSessionSummary_pending_returns202() throws Exception {
+        SessionSummaryResponse response = new SessionSummaryResponse(
+                TEST_SESSION_ID, "pending", OffsetDateTime.now(), 300L, 5,
+                null, null, null, null
+        );
+        when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
+
+        mockMvc.perform(get("/v1/sessions/{id}/summary", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.data.summary_status").value("pending"))
+                .andExpect(jsonPath("$.data.summary").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/summary - 요약 done→viewed 전환 시 200 반환")
+    void getSessionSummary_done_returns200AndTransitionsToViewed() throws Exception {
+        SessionSummaryResponse response = new SessionSummaryResponse(
+                TEST_SESSION_ID, "viewed", OffsetDateTime.now(), 300L, 5,
+                "세션 요약 내용", 70, "[]", false
+        );
+        when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
+
+        mockMvc.perform(get("/v1/sessions/{id}/summary", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.summary_status").value("viewed"))
+                .andExpect(jsonPath("$.data.summary").value("세션 요약 내용"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/summary - 요약 생성 실패 시 410 반환")
+    void getSessionSummary_failed_returns410() throws Exception {
+        when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID)))
+                .thenThrow(new BusinessException(ErrorCode.SESSION_SUMMARY_FAILED));
+
+        mockMvc.perform(get("/v1/sessions/{id}/summary", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isGone())
+                .andExpect(jsonPath("$.error.code").value("GONE"));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/summary - 활성 세션 요약 조회 시 404 반환")
+    void getSessionSummary_activeSession_returns404() throws Exception {
+        when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID)))
+                .thenThrow(new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+
+        mockMvc.perform(get("/v1/sessions/{id}/summary", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("SESSION_NOT_FOUND"));
     }
 }
