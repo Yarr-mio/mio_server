@@ -106,7 +106,7 @@ public class PushSender {
             return;
         }
         try {
-            byte[] credBytes = fcmCredentialsJson.getBytes();
+            byte[] credBytes = Base64.getDecoder().decode(fcmCredentialsJson);
             FirebaseOptions options = FirebaseOptions.builder()
                     .setCredentials(GoogleCredentials.fromStream(new ByteArrayInputStream(credBytes)))
                     .build();
