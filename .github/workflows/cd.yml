@@ -116,6 +116,10 @@ jobs:
 
             docker image prune -f
 
+            sleep 15
+            echo "=== app logs ==="
+            docker compose -f docker-compose.prod.yml logs app --tail=60
+
       - name: Close SSH on security group (always runs)
         if: always()
         run: |
