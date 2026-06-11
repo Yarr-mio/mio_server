@@ -1,0 +1,1 @@
+ALTER TABLE checkins RENAME COLUMN emoji_score TO condition_score;

@@ -1,0 +1,11 @@
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+auth:
+  dev-token-enabled: false
+
+notification:
+  test-endpoint-enabled: false

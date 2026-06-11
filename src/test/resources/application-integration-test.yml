@@ -1,0 +1,29 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/mio
+    username: mio
+    password: mio
+
+  flyway:
+    validate-on-migrate: false
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      password: ""
+
+jwt:
+  secret: test-secret-key-for-integration-testing-must-be-at-least-256-bits-long!!
+  expiry-seconds: 900
+
+kakao:
+  api-url: https://kapi.kakao.com
+  app-id: 12345
+
+apple:
+  jwks-url: https://appleid.apple.com/auth/keys
+  app-id: com.test.app
+
+APP_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+APP_ENCRYPTION_DEK_ID: test-key-v1

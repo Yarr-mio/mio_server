@@ -1,0 +1,8 @@
+package com.mio.onboarding.dto;
+
+import com.mio.user.domain.SignupStep;
+
+public record CharacterSelectResponse(
+        String preferredCharacterId,
+        SignupStep signupStep
+) {}

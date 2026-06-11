@@ -1,18 +1,18 @@
-### IntelliJ IDEA ###
+### Build ###
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+target/
+
+### IDE ###
 .idea/
 *.iws
 *.iml
 *.ipr
 out/
 
-### Gradle ###
-.gradle/
-build/
-!gradle/wrapper/gradle-wrapper.jar
-
 ### Spring Boot ###
 HELP.md
-target/
 
 ### Environment ###
 .env
@@ -21,6 +21,11 @@ target/
 application-local.yml
 application-local.yaml
 
+### Credentials ###
+*.p8
+*.p12
+firebase-*.json
+
 ### Local Infrastructure ###
 docker-compose.yml
 docker-compose.yaml
@@ -28,18 +33,21 @@ docker-compose.yaml
 
 ### macOS ###
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
 *.swp
 
 ### Logs ###
 logs/
 *.log
 
-### APNs / Firebase ###
-*.p8
-*.p12
-firebase-*.json
+### Git ###
+*.bundle
 
-### Docs ###
+### Docs / Tool Config ###
 docs/
 .claude
 .codex
+CLAUDE.md
+AGENTS.md

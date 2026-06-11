@@ -31,11 +31,22 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+
+
   data:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
       timeout: 2000ms
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    time-zone: Asia/Seoul
+    serialization:
+      write-dates-as-timestamps: false
+    deserialization:
+      fail-on-unknown-properties: false
 
   threads:
     virtual:
@@ -65,6 +76,39 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+
+jwt:
+  secret: ${JWT_SECRET}
+  expiry-seconds: 900
+
+kakao:
+  api-url: ${KAKAO_API_URL:https://kapi.kakao.com}
+  app-id: ${KAKAO_APP_ID}
+
+apple:
+  jwks-url: ${APPLE_JWKS_URL:https://appleid.apple.com/auth/keys}
+  app-id: ${APPLE_APP_ID}
+
+apns:
+  key-path: ${APNS_KEY_PATH:}
+  key-id: ${APNS_KEY_ID:}
+  team-id: ${APNS_TEAM_ID:}
+  bundle-id: ${APNS_BUNDLE_ID:}
+  is-production: ${APNS_IS_PRODUCTION:false}
+
+fcm:
+  credentials-json: ${FCM_CREDENTIALS_JSON:}
+
+notification:
+  test-endpoint-enabled: false
+  cron:
+    morning: ${NOTIFICATION_CRON_MORNING:0 0 9 * * *}
+    afternoon: ${NOTIFICATION_CRON_AFTERNOON:0 0 12 * * *}
+    evening: ${NOTIFICATION_CRON_EVENING:0 0 22 * * *}
+
+openai:
+  api-key: ${OPENAI_API_KEY}
+  base-url: https://api.openai.com
 
 logging:
   level:
