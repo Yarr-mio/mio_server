@@ -57,6 +57,10 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
@@ -64,6 +68,7 @@ import java.util.UUID;
 public class ConversationOrchestrator {
 
     private static final String LLM_MODEL = "gpt-4o";
+    private static final int EARLY_PREFILTER_THRESHOLD = 200;
 
     private final InputNormalizer inputNormalizer;
     private final SecurityRuleFilter securityRuleFilter;
@@ -199,8 +204,108 @@ public class ConversationOrchestrator {
                         sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
                     }
 
+                } else if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
+                    // CAUTIOUS_SPECULATIVE: stream immediately + parallel OutputJudge
+                    // Pre-filter runs every EARLY_PREFILTER_THRESHOLD chars during stream.
+                    // If a violation is detected early, delta SSEs stop immediately and
+                    // OutputJudge starts async on the partial snapshot.
+                    AtomicBoolean stopSendingDeltas = new AtomicBoolean(false);
+                    AtomicInteger lastCheckedLength = new AtomicInteger(0);
+                    AtomicReference<OutputPreFilterResult> earlyFilterRef = new AtomicReference<>();
+                    AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
+
+                    llmTtftMs = llmClient.stream(llmRequest, chunk -> {
+                        contentBuilder.append(chunk);
+                        if (!stopSendingDeltas.get()) {
+                            int currentLen = contentBuilder.length();
+                            if (currentLen - lastCheckedLength.get() >= EARLY_PREFILTER_THRESHOLD) {
+                                lastCheckedLength.set(currentLen);
+                                String snapshot = contentBuilder.toString();
+                                OutputPreFilterResult earlyCheck =
+                                        outputPreFilter.checkWithCrisisContext(snapshot, inputHadRiskSignal);
+                                if (!earlyCheck.passed()) {
+                                    stopSendingDeltas.set(true);
+                                    earlyFilterRef.set(earlyCheck);
+                                    log.warn("OutputGuard early-stop during stream: session={} reasons={}",
+                                            sessionId, earlyCheck.failReasons());
+                                    final String capturedSnapshot = snapshot;
+                                    final OutputPreFilterResult capturedCheck = earlyCheck;
+                                    earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
+                                            () -> outputJudge.judge(capturedSnapshot, capturedCheck)));
+                                    return;
+                                }
+                            }
+                            try {
+                                sendEvent(emitter, new SseEventDto.DeltaEvent(chunk, outboundMsgId));
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        }
+                    });
+
+                    assistantContent = contentBuilder.toString();
+
+                    CompletableFuture<OutputJudgeResult> judgeFuture = earlyJudgeFutureRef.get();
+                    OutputPreFilterResult earlyFilter = earlyFilterRef.get();
+
+                    if (earlyFilter != null) {
+                        preFilterResult = earlyFilter;
+                    }
+
+                    if (judgeFuture == null) {
+                        // No early stop — run post-stream pre-filter check
+                        preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
+                        if (!preFilterResult.passed()) {
+                            log.warn("OutputGuard post-stream: session={} reasons={}",
+                                    sessionId, preFilterResult.failReasons());
+                            final String fullContent = assistantContent;
+                            final OutputPreFilterResult fullFilter = preFilterResult;
+                            judgeFuture = CompletableFuture.supplyAsync(
+                                    () -> outputJudge.judge(fullContent, fullFilter));
+                        }
+                    }
+
+                    if (judgeFuture != null) {
+                        try {
+                            judgeActionResult = judgeFuture.join();
+                        } catch (Exception e) {
+                            log.warn("OutputJudge async failed, defaulting to REPLACE: {}", e.getMessage());
+                            judgeActionResult = OutputJudgeResult.replace();
+                        }
+                        log.warn("OutputGuard action: session={} action={}", sessionId,
+                                judgeActionResult.action());
+
+                        boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
+                        if (isCrisis) crisisFlowTriggered = true;
+
+                        String replacedContent = switch (judgeActionResult.action()) {
+                            case REWRITE -> judgeActionResult.rewrittenContent() != null
+                                    ? judgeActionResult.rewrittenContent() : null;
+                            case REPLACE, CRISIS_FLOW -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                            case SEND -> null;
+                        };
+
+                        if (replacedContent != null) {
+                            assistantContent = replacedContent;
+                            sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                    userSignal.emotionScore(), isCrisis, "replaced_by_guard"));
+                        } else if (stopSendingDeltas.get()) {
+                            // Stopped mid-stream but content is safe — restore via delta.replace
+                            sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                    userSignal.emotionScore(), false, "stop"));
+                        } else {
+                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                    userSignal.emotionScore(), false, "stop"));
+                        }
+                    } else {
+                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                userSignal.emotionScore(), false, "stop"));
+                    }
+
                 } else {
-                    // SPECULATIVE / CAUTIOUS_SPECULATIVE: stream immediately
+                    // SPECULATIVE: stream immediately, no post-guard
                     llmTtftMs = llmClient.stream(llmRequest, chunk -> {
                         contentBuilder.append(chunk);
                         try {
@@ -210,42 +315,8 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-
-                    if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
-                        // post-stream OutputGuard: 스트리밍 완료 후 안전성 검사
-                        // REWRITE/REPLACE 시 delta.replace 이벤트로 FE 말풍선 교체 후 done 전송
-                        preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
-                        if (!preFilterResult.passed()) {
-                            judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
-                            log.warn("OutputGuard FAIL post-stream: session={} reasons={} action={}",
-                                    sessionId, preFilterResult.failReasons(),
-                                    judgeActionResult != null ? judgeActionResult.action() : "none");
-                            if (judgeActionResult != null) {
-                                boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
-                                if (isCrisis) crisisFlowTriggered = true;
-                                String replacedContent = switch (judgeActionResult.action()) {
-                                    case REWRITE -> judgeActionResult.rewrittenContent() != null
-                                            ? judgeActionResult.rewrittenContent() : null;
-                                    case REPLACE, CRISIS_FLOW ->
-                                            "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
-                                    case SEND -> null;
-                                };
-                                if (replacedContent != null) {
-                                    assistantContent = replacedContent;
-                                    sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), isCrisis, "replaced_by_guard"));
-                                } else {
-                                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
-                                }
-                            } else {
-                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
-                            }
-                        } else {
-                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
-                        }
-                    } else {
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
-                    }
+                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                            userSignal.emotionScore(), false, "stop"));
                 }
             } else {
                 // FALLBACK 또는 미지원 action — 안전 응답 반환
