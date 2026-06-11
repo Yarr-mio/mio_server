@@ -7,6 +7,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  SG_ID: sg-0e4d9418916aa64e9
+  AWS_REGION: ap-northeast-2
 
 jobs:
   build-and-push:
@@ -66,6 +68,22 @@ jobs:
       - name: Checkout (docker-compose.prod.yml만 필요)
         uses: actions/checkout@v4
 
+      - name: Get runner public IP
+        id: ip
+        run: echo "ip=$(curl -sf https://api.ipify.org)" >> $GITHUB_OUTPUT
+
+      - name: Open SSH on security group (runner IP only)
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "${{ steps.ip.outputs.ip }}/32"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+
       - name: Copy docker-compose.prod.yml to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -89,15 +107,24 @@ jobs:
           script: |
             cd ~/mio
 
-            # .env 파일 갱신 (환경변수 → 파일, history에 값 미노출)
             printf '%s' "$ENV_FILE" > .env
 
-            # GHCR 로그인 (stdin으로 전달해 process table 노출 방지)
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
 
-            # 최신 이미지 pull + 재시작
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
-            # 사용하지 않는 이미지 정리
             docker image prune -f
+
+      - name: Close SSH on security group (always runs)
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "${{ steps.ip.outputs.ip }}/32"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
