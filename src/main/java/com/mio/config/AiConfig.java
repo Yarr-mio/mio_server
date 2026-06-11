@@ -8,6 +8,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 @Configuration
 @EnableAsync
@@ -18,6 +19,11 @@ public class AiConfig {
         return HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
+    }
+
+    @Bean(name = "outputJudgeExecutor")
+    public Executor outputJudgeExecutor() {
+        return Executors.newVirtualThreadPerTaskExecutor();
     }
 
     @Bean(name = "aiDecisionLoggerExecutor")
