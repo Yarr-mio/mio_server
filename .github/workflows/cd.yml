@@ -7,7 +7,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  SG_ID: sg-0e4d9418916aa64e9
+  SG_ID: sg-0927ddc743bbbcf82
   AWS_REGION: ap-northeast-2
 
 jobs:
