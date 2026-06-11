@@ -41,6 +41,7 @@ spring:
       timeout: 2000ms
 
   jackson:
+    property-naming-strategy: SNAKE_CASE
     time-zone: Asia/Seoul
     serialization:
       write-dates-as-timestamps: false

@@ -1,18 +1,17 @@
 package com.mio.session.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.session.domain.Session;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record EndSessionResponse(
-        @JsonProperty("session_id") UUID sessionId,
+        UUID sessionId,
         String status,
-        @JsonProperty("ended_at") OffsetDateTime endedAt,
-        @JsonProperty("message_count") int messageCount,
-        @JsonProperty("duration_seconds") long durationSeconds,
-        @JsonProperty("summary_status") String summaryStatus
+        OffsetDateTime endedAt,
+        int messageCount,
+        long durationSeconds,
+        String summaryStatus
 ) {
     public static EndSessionResponse from(Session session) {
         if (session.getEndedAt() == null) {

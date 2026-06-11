@@ -1,19 +1,15 @@
 package com.mio.todo.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.domain.TaskStatus;
 
 public record TodoCheckinResponse(
         String status,
 
-        @JsonProperty("before_emotion")
         Integer beforeEmotion,
 
-        @JsonProperty("after_emotion")
         Integer afterEmotion,
 
-        @JsonProperty("character_reaction")
         String characterReaction
 ) {
     private static final String REACTION_COMPLETED = "잘했어! 작은 것부터 하나씩 해나가는 게 진짜 대단한 거야 🎉";
