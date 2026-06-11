@@ -116,9 +116,9 @@ jobs:
 
             docker image prune -f
 
-            sleep 15
+            sleep 45
             echo "=== app logs ==="
-            docker compose -f docker-compose.prod.yml logs app --tail=60
+            docker compose -f docker-compose.prod.yml logs app --tail=100
 
       - name: Close SSH on security group (always runs)
         if: always()
