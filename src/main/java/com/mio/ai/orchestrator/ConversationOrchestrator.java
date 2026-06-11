@@ -58,6 +58,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -93,6 +95,7 @@ public class ConversationOrchestrator {
     private final UserRepository userRepository;
     private final UserMessageSignalAnalyzer userMessageSignalAnalyzer;
     private final ObjectMapper objectMapper;
+    private final Executor outputJudgeExecutor;
 
     public void handle(UUID userId, UUID sessionId, String userMessage, SseEmitter emitter) {
         long startMs = System.currentTimeMillis();
@@ -231,7 +234,7 @@ public class ConversationOrchestrator {
                                     final String capturedSnapshot = snapshot;
                                     final OutputPreFilterResult capturedCheck = earlyCheck;
                                     earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
-                                            () -> outputJudge.judge(capturedSnapshot, capturedCheck)));
+                                            () -> outputJudge.judge(capturedSnapshot, capturedCheck), outputJudgeExecutor));
                                     return;
                                 }
                             }
@@ -261,13 +264,13 @@ public class ConversationOrchestrator {
                             final String fullContent = assistantContent;
                             final OutputPreFilterResult fullFilter = preFilterResult;
                             judgeFuture = CompletableFuture.supplyAsync(
-                                    () -> outputJudge.judge(fullContent, fullFilter));
+                                    () -> outputJudge.judge(fullContent, fullFilter), outputJudgeExecutor);
                         }
                     }
 
                     if (judgeFuture != null) {
                         try {
-                            judgeActionResult = judgeFuture.join();
+                            judgeActionResult = judgeFuture.orTimeout(5, TimeUnit.SECONDS).join();
                         } catch (Exception e) {
                             log.warn("OutputJudge async failed, defaulting to REPLACE: {}", e.getMessage());
                             judgeActionResult = OutputJudgeResult.replace();
@@ -280,7 +283,8 @@ public class ConversationOrchestrator {
 
                         String replacedContent = switch (judgeActionResult.action()) {
                             case REWRITE -> judgeActionResult.rewrittenContent() != null
-                                    ? judgeActionResult.rewrittenContent() : null;
+                                    ? judgeActionResult.rewrittenContent()
+                                    : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
                             case REPLACE, CRISIS_FLOW -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
                             case SEND -> null;
                         };
