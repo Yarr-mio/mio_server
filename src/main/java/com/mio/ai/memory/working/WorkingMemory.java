@@ -199,7 +199,7 @@ public class WorkingMemory {
         try {
             return objectMapper.readValue(json, WorkingMessage.class);
         } catch (Exception e) {
-            log.warn("WorkingMemory: failed to deserialize message: {}", json, e);
+            log.warn("WorkingMemory: failed to deserialize message len={}", json == null ? 0 : json.length(), e);
             return null;
         }
     }
