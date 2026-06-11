@@ -1,16 +1,15 @@
 package com.mio.session.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.session.domain.Session;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record SessionResponse(
-        @JsonProperty("session_id") UUID sessionId,
-        @JsonProperty("character_id") String characterId,
+        UUID sessionId,
+        String characterId,
         String status,
-        @JsonProperty("started_at") OffsetDateTime startedAt
+        OffsetDateTime startedAt
 ) {
     public static SessionResponse from(Session session) {
         return new SessionResponse(

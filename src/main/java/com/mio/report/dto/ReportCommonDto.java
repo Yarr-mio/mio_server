@@ -1,7 +1,5 @@
 package com.mio.report.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.util.Map;
 
 public class ReportCommonDto {
@@ -13,13 +11,13 @@ public class ReportCommonDto {
             int completed,
             int skipped,
             int expired,
-            @JsonProperty("completion_rate") double completionRate,
-            @JsonProperty("category_distribution") Map<String, Integer> categoryDistribution
+            double completionRate,
+            Map<String, Integer> categoryDistribution
     ) {}
 
     public record SessionSummaryDto(
             int total,
-            @JsonProperty("total_minutes") long totalMinutes
+            long totalMinutes
     ) {}
 
     private ReportCommonDto() {}

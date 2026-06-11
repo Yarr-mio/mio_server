@@ -1,6 +1,5 @@
 package com.mio.notification.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.notification.domain.ProactiveCareLog;
 import com.mio.notification.service.NotificationMessageMapper;
 
@@ -8,13 +7,13 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record NotificationHistoryItemResponse(
-        @JsonProperty("notification_id") UUID notificationId,
-        @JsonProperty("trigger_code") String triggerCode,
+        UUID notificationId,
+        String triggerCode,
         String title,
         String body,
-        @JsonProperty("notification_status") String notificationStatus,
-        @JsonProperty("sent_at") OffsetDateTime sentAt,
-        @JsonProperty("responded_at") OffsetDateTime respondedAt
+        String notificationStatus,
+        OffsetDateTime sentAt,
+        OffsetDateTime respondedAt
 ) {
 
     public static NotificationHistoryItemResponse from(

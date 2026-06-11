@@ -1,7 +1,5 @@
 package com.mio.session.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
-
 import java.time.OffsetDateTime;
 import java.util.List;
 
@@ -15,29 +13,29 @@ public sealed interface SseEventDto
     String eventName();
 
     record SessionMetaEvent(
-            @JsonProperty("message_id") String messageId,
-            @JsonProperty("received_at") OffsetDateTime receivedAt
+            String messageId,
+            OffsetDateTime receivedAt
     ) implements SseEventDto {
         @Override public String eventName() { return "session_meta"; }
     }
 
     record DeltaEvent(
             String chunk,
-            @JsonProperty("msg_id") String msgId
+            String msgId
     ) implements SseEventDto {
         @Override public String eventName() { return "delta"; }
     }
 
     record DeltaReplaceEvent(
-            @JsonProperty("safe_response") String safeResponse,
-            @JsonProperty("msg_id") String msgId
+            String safeResponse,
+            String msgId
     ) implements SseEventDto {
         @Override public String eventName() { return "delta.replace"; }
     }
 
     record CrisisEvent(
             int severity,
-            @JsonProperty("fixed_response") String fixedResponse,
+            String fixedResponse,
             Resources resources
     ) implements SseEventDto {
         @Override public String eventName() { return "crisis"; }
@@ -47,10 +45,10 @@ public sealed interface SseEventDto
     }
 
     record DoneEvent(
-            @JsonProperty("msg_id") String msgId,
-            @JsonProperty("emotion_score") Integer emotionScore,
-            @JsonProperty("is_crisis_flagged") boolean isCrisisFlagged,
-            @JsonProperty("finished_reason") String finishedReason
+            String msgId,
+            Integer emotionScore,
+            boolean isCrisisFlagged,
+            String finishedReason
     ) implements SseEventDto {
         @Override public String eventName() { return "done"; }
     }

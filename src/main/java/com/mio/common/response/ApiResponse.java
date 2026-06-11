@@ -1,6 +1,5 @@
 package com.mio.common.response;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Builder;
 
@@ -28,9 +27,9 @@ public record ApiResponse<T>(
     }
 
 public record Meta(
-            @JsonProperty("trace_id") String traceId,
-            @JsonProperty("next_cursor") String nextCursor,
-            @JsonProperty("has_more") Boolean hasMore
+            String traceId,
+            String nextCursor,
+            Boolean hasMore
     ) {
         public static Meta trace(String traceId) {
             return new Meta(traceId, null, null);
