@@ -1,8 +1,10 @@
 package com.mio.character.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public record CharacterChangeResponse(
-        String characterId,
+        @JsonProperty("character_id") String characterId,
         String name,
         boolean changed,
-        String greetingMessage
+        @JsonProperty("greeting_message") String greetingMessage
 ) {}

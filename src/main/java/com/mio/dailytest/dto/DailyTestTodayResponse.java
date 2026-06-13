@@ -1,30 +1,31 @@
 package com.mio.dailytest.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.List;
 import java.util.UUID;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record DailyTestTodayResponse(
-        boolean completedToday,
-        UUID testId,
+        @JsonProperty("completed_today") boolean completedToday,
+        @JsonProperty("test_id") UUID testId,
         String title,
-        Integer estimatedMinutes,
+        @JsonProperty("estimated_minutes") Integer estimatedMinutes,
         List<QuestionDto> questions,
         ResultDto result
 ) {
     public record ResultDto(String summary, List<String> tags) {}
 
     public record QuestionDto(
-            String questionId,
+            @JsonProperty("question_id") String questionId,
             int order,
             String text,
             List<OptionDto> options
     ) {}
 
     public record OptionDto(
-            String optionId,
+            @JsonProperty("option_id") String optionId,
             String text
     ) {}
 

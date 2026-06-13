@@ -1,7 +1,8 @@
 package com.mio.auth.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.user.domain.SignupStep;
 
 public record ConsentResponse(
-        SignupStep signupStep
+        @JsonProperty("signup_step") SignupStep signupStep
 ) {}
