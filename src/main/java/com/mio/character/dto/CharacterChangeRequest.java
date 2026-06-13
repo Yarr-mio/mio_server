@@ -1,7 +1,8 @@
 package com.mio.character.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 
 public record CharacterChangeRequest(
-        @NotBlank String characterId
+        @JsonProperty("character_id") @NotBlank String characterId
 ) {}

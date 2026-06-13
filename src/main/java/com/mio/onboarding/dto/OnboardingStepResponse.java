@@ -1,5 +1,7 @@
 package com.mio.onboarding.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public record OnboardingStepResponse(
-        int onboardingStep
+        @JsonProperty("onboarding_step") int onboardingStep
 ) {}

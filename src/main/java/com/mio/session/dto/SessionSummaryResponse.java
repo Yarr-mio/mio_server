@@ -1,5 +1,6 @@
 package com.mio.session.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
 
@@ -7,15 +8,15 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record SessionSummaryResponse(
-        UUID sessionId,
-        String summaryStatus,
-        OffsetDateTime endedAt,
-        long durationSeconds,
-        int messageCount,
+        @JsonProperty("session_id") UUID sessionId,
+        @JsonProperty("summary_status") String summaryStatus,
+        @JsonProperty("ended_at") OffsetDateTime endedAt,
+        @JsonProperty("duration_seconds") long durationSeconds,
+        @JsonProperty("message_count") int messageCount,
         String summary,
-        Integer avgEmotionScore,
-        String biasTypesDetected,
-        Boolean cbtIntervened
+        @JsonProperty("avg_emotion_score") Integer avgEmotionScore,
+        @JsonProperty("bias_types_detected") String biasTypesDetected,
+        @JsonProperty("cbt_intervened") Boolean cbtIntervened
 ) {
     public static SessionSummaryResponse pending(Session session) {
         return new SessionSummaryResponse(

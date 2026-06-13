@@ -1,8 +1,10 @@
 package com.mio.onboarding.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 public record CharacterRecommendationDto(
-        String characterId,
+        @JsonProperty("character_id") String characterId,
         String name,
-        double matchScore,
+        @JsonProperty("match_score") double matchScore,
         String reason
 ) {}

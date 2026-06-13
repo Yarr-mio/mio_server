@@ -1,17 +1,18 @@
 package com.mio.checkin.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record CheckinCreateResponse(
-        UUID checkinId,
-        String timeOfDay,
-        String emotionType,
-        int conditionScore,
+        @JsonProperty("checkin_id") UUID checkinId,
+        @JsonProperty("time_of_day") String timeOfDay,
+        @JsonProperty("emotion_type") String emotionType,
+        @JsonProperty("condition_score") int conditionScore,
         String memo,
-        String aiResponse,
-        OffsetDateTime createdAt
+        @JsonProperty("ai_response") String aiResponse,
+        @JsonProperty("created_at") OffsetDateTime createdAt
 ) {}

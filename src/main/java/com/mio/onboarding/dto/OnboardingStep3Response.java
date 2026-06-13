@@ -1,8 +1,10 @@
 package com.mio.onboarding.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 public record OnboardingStep3Response(
-        int onboardingStep,
-        List<CharacterRecommendationDto> characterRecommendations
+        @JsonProperty("onboarding_step") int onboardingStep,
+        @JsonProperty("character_recommendations") List<CharacterRecommendationDto> characterRecommendations
 ) {}

@@ -1,6 +1,7 @@
 package com.mio.report.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.report.dto.ReportCommonDto.DistortionDto;
 import com.mio.report.dto.ReportCommonDto.SessionSummaryDto;
 import com.mio.report.dto.ReportCommonDto.TodoSummaryDto;
@@ -12,20 +13,20 @@ import java.util.UUID;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record MonthlyReportResponse(
-        UUID reportId,
-        LocalDate monthStart,
-        LocalDate monthEnd,
+        @JsonProperty("report_id") UUID reportId,
+        @JsonProperty("month_start") LocalDate monthStart,
+        @JsonProperty("month_end") LocalDate monthEnd,
         String status,
-        Boolean isPartial,
-        Integer checkinCount,
-        Integer requiredCount,
-        Double avgEmotionScore,
-        List<DistortionDto> distortionTop3,
+        @JsonProperty("is_partial") Boolean isPartial,
+        @JsonProperty("checkin_count") Integer checkinCount,
+        @JsonProperty("required_count") Integer requiredCount,
+        @JsonProperty("avg_emotion_score") Double avgEmotionScore,
+        @JsonProperty("distortion_top3") List<DistortionDto> distortionTop3,
         String narrative,
-        String coachingDirection,
-        TodoSummaryDto todoSummary,
-        SessionSummaryDto sessionSummary,
-        OffsetDateTime generatedAt,
+        @JsonProperty("coaching_direction") String coachingDirection,
+        @JsonProperty("todo_summary") TodoSummaryDto todoSummary,
+        @JsonProperty("session_summary") SessionSummaryDto sessionSummary,
+        @JsonProperty("generated_at") OffsetDateTime generatedAt,
         String message
 ) {
     public static MonthlyReportResponse insufficientData(LocalDate monthStart, LocalDate monthEnd, int checkinCount) {
