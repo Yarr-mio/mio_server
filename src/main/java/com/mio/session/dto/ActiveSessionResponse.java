@@ -1,19 +1,20 @@
 package com.mio.session.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.session.domain.Session;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record ActiveSessionResponse(
-        UUID sessionId,
-        String characterId,
+        @JsonProperty("session_id") UUID sessionId,
+        @JsonProperty("character_id") String characterId,
         String status,
-        OffsetDateTime startedAt,
-        OffsetDateTime lastMessageAt,
-        Integer messageCount,
-        String lastSummaryStatus,
-        UUID lastEndedSessionId
+        @JsonProperty("started_at") OffsetDateTime startedAt,
+        @JsonProperty("last_message_at") OffsetDateTime lastMessageAt,
+        @JsonProperty("message_count") Integer messageCount,
+        @JsonProperty("last_summary_status") String lastSummaryStatus,
+        @JsonProperty("last_ended_session_id") UUID lastEndedSessionId
 ) {
     public static ActiveSessionResponse fromActive(Session session) {
         return new ActiveSessionResponse(

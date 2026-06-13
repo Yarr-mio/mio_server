@@ -1,10 +1,11 @@
 package com.mio.onboarding.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotEmpty;
 
 import java.util.List;
 
 public record OnboardingStep2Request(
-        @NotEmpty List<String> concernTypes,
+        @JsonProperty("concern_types") @NotEmpty List<String> concernTypes,
         List<QuestionResponse> responses
 ) {}

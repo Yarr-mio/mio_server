@@ -34,7 +34,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "POST /v1/auth/login",
             "POST /v1/auth/refresh",
             "POST /v1/auth/dev/token",
-            "GET /v1/health"
+            "GET /actuator/health"
     );
 
     private final JwtTokenService jwtTokenService;
