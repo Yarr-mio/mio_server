@@ -263,7 +263,7 @@ class CheckinServiceTest {
             when(checkinRepository.findByUser_IdOrderByCreatedAtDesc(eq(userId), any(Pageable.class)))
                     .thenReturn(new SliceImpl<>(List.of(checkinToday("evening", "calm", 3))));
 
-            List<CheckinResponse> result = checkinService.getHistory(userId, null);
+            List<CheckinResponse> result = checkinService.getHistory(userId, null, null);
 
             assertThat(result).hasSize(1);
             assertThat(result.get(0).timeOfDay()).isEqualTo("evening");
