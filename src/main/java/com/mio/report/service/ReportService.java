@@ -50,6 +50,7 @@ public class ReportService {
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
+    private final ReportNarrativeService reportNarrativeService;
 
     // ── 주간 리포트 ───────────────────────────────────────────────
 
@@ -70,12 +71,17 @@ public class ReportService {
         OffsetDateTime start = toStartOfDay(weekStart);
         OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
 
+        Double avgEmotionScore = roundScore(messageRepository.findAvgEmotionScore(userId, start, end));
+        List<DistortionDto> distortionTop3 = buildDistortionTop3(userId, start, end);
+        ReportNarrativeService.NarrativeResult narrative =
+                reportNarrativeService.generate("주간", (int) checkinCount, avgEmotionScore, distortionTop3);
+
         return new WeeklyReportResponse(
                 null, weekStart, weekEnd, "GENERATED", false,
                 (int) checkinCount, null,
-                roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
-                buildDistortionTop3(userId, start, end),
-                null, null,
+                avgEmotionScore,
+                distortionTop3,
+                narrative.narrative(), narrative.coachingDirection(),
                 buildTodoSummary(userId, start, end),
                 buildSessionSummary(userId, start, end),
                 OffsetDateTime.now(ZoneOffset.UTC), null
@@ -101,12 +107,17 @@ public class ReportService {
         OffsetDateTime start = toStartOfDay(monthStart);
         OffsetDateTime end   = toStartOfDay(monthEnd.plusDays(1));
 
+        Double avgEmotionScore = roundScore(messageRepository.findAvgEmotionScore(userId, start, end));
+        List<DistortionDto> distortionTop3 = buildDistortionTop3(userId, start, end);
+        ReportNarrativeService.NarrativeResult narrative =
+                reportNarrativeService.generate("월간", (int) checkinCount, avgEmotionScore, distortionTop3);
+
         return new MonthlyReportResponse(
                 null, monthStart, monthEnd, "GENERATED", false,
                 (int) checkinCount, null,
-                roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
-                buildDistortionTop3(userId, start, end),
-                null, null,
+                avgEmotionScore,
+                distortionTop3,
+                narrative.narrative(), narrative.coachingDirection(),
                 buildTodoSummary(userId, start, end),
                 buildSessionSummary(userId, start, end),
                 OffsetDateTime.now(ZoneOffset.UTC), null
@@ -212,10 +223,9 @@ public class ReportService {
             return today.minusDays(days - 1);
         }
         return switch (period == null ? "week" : period) {
-            case "week"         -> today.minusDays(6);
-            case "month"        -> today.minusDays(29);
-            case "three_months" -> today.minusDays(89);
-            case "all"          -> today.minusDays(DAYS_MAX - 1);
+            case "week"  -> today.minusDays(6);
+            case "month" -> today.minusDays(29);
+            case "all"   -> today.minusDays(DAYS_MAX - 1);
             default -> throw new BusinessException(ErrorCode.INVALID_INPUT);
         };
     }

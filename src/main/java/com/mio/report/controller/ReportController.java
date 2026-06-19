@@ -29,22 +29,32 @@ public class ReportController {
             Principal principal,
             @RequestParam(value = "week_start", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) String weekStartStr) {
-
-        LocalDate weekStart = parseDate(weekStartStr);
-        WeeklyReportResponse response = reportService.getWeeklyReport(
-                PrincipalUtils.resolveUserId(principal), weekStart);
-        return ResponseEntity.ok(ApiResponse.ok(response));
+        try {
+            LocalDate weekStart = parseDate(weekStartStr);
+            WeeklyReportResponse response = reportService.getWeeklyReport(
+                    PrincipalUtils.resolveUserId(principal), weekStart);
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.REPORT_SERVER_ERROR);
+        }
     }
 
     @GetMapping("/monthly")
     public ResponseEntity<ApiResponse<MonthlyReportResponse>> getMonthly(
             Principal principal,
             @RequestParam(value = "month_start", required = false) String monthStartStr) {
-
-        LocalDate monthStart = parseDate(monthStartStr);
-        MonthlyReportResponse response = reportService.getMonthlyReport(
-                PrincipalUtils.resolveUserId(principal), monthStart);
-        return ResponseEntity.ok(ApiResponse.ok(response));
+        try {
+            LocalDate monthStart = parseDate(monthStartStr);
+            MonthlyReportResponse response = reportService.getMonthlyReport(
+                    PrincipalUtils.resolveUserId(principal), monthStart);
+            return ResponseEntity.ok(ApiResponse.ok(response));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(ErrorCode.REPORT_SERVER_ERROR);
+        }
     }
 
     @GetMapping("/emotion-trend")
