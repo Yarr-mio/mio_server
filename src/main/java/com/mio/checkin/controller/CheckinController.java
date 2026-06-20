@@ -45,11 +45,19 @@ public class CheckinController {
         return ResponseEntity.ok(ApiResponse.ok(checkinService.getToday(resolveUserId(principal))));
     }
 
+    @GetMapping("/{checkinId}")
+    public ResponseEntity<ApiResponse<CheckinResponse>> getById(
+            Principal principal,
+            @PathVariable UUID checkinId) {
+        return ResponseEntity.ok(ApiResponse.ok(checkinService.getById(resolveUserId(principal), checkinId)));
+    }
+
     @GetMapping
     public ResponseEntity<ApiResponse<List<CheckinResponse>>> getHistory(
             Principal principal,
-            @RequestParam(required = false) String cursor) {
-        return ResponseEntity.ok(ApiResponse.ok(checkinService.getHistory(resolveUserId(principal), cursor)));
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) String month) {
+        return ResponseEntity.ok(ApiResponse.ok(checkinService.getHistory(resolveUserId(principal), cursor, month)));
     }
 
     private UUID resolveUserId(Principal principal) {
