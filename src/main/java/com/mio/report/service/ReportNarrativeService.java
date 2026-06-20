@@ -44,7 +44,7 @@ public class ReportNarrativeService {
             String response = llmClient.complete(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
             return parseResponse(response);
         } catch (Exception e) {
-            log.warn("ReportNarrative generation failed for period={}", periodLabel, e);
+            log.warn("ReportNarrative generation failed: period={} error={}", periodLabel, e.getClass().getSimpleName());
             return NarrativeResult.empty();
         }
     }
