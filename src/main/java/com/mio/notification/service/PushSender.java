@@ -41,6 +41,9 @@ public class PushSender {
     private static final long JWT_TTL_SECONDS = 3000;
     private static final String APNS_TOKEN_PATTERN = "[0-9a-fA-F]{64}";
 
+    @Value("${apns.key-content:}")
+    private String apnsKeyContent;
+
     @Value("${apns.key-path:}")
     private String apnsKeyPath;
 
@@ -77,20 +80,21 @@ public class PushSender {
     }
 
     private void initApns() {
-        if (apnsKeyPath == null || apnsKeyPath.isBlank()) {
-            log.warn("APNs not configured — APNS_KEY_PATH is empty");
-            return;
-        }
         if (apnsKeyId.isBlank() || apnsTeamId.isBlank() || apnsBundleId.isBlank()) {
             log.warn("APNs not configured — APNS_KEY_ID, APNS_TEAM_ID, or APNS_BUNDLE_ID is empty");
             return;
         }
         try {
-            String keyContent = new String(Files.readAllBytes(Paths.get(apnsKeyPath)))
+            String pemContent = resolveApnsPem();
+            if (pemContent == null) {
+                log.warn("APNs not configured — neither APNS_KEY_CONTENT nor APNS_KEY_PATH is set");
+                return;
+            }
+            String stripped = pemContent
                     .replaceAll("-----BEGIN PRIVATE KEY-----", "")
                     .replaceAll("-----END PRIVATE KEY-----", "")
                     .replaceAll("\\s", "");
-            byte[] keyBytes = Base64.getDecoder().decode(keyContent);
+            byte[] keyBytes = Base64.getDecoder().decode(stripped);
             KeyFactory kf = KeyFactory.getInstance("EC");
             apnsPrivateKey = kf.generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
             apnsEnabled = true;
@@ -98,6 +102,16 @@ public class PushSender {
         } catch (Exception e) {
             log.warn("APNs initialization failed: {}", e.getMessage());
         }
+    }
+
+    private String resolveApnsPem() throws Exception {
+        if (apnsKeyContent != null && !apnsKeyContent.isBlank()) {
+            return new String(Base64.getDecoder().decode(apnsKeyContent));
+        }
+        if (apnsKeyPath != null && !apnsKeyPath.isBlank()) {
+            return new String(Files.readAllBytes(Paths.get(apnsKeyPath)));
+        }
+        return null;
     }
 
     private void initFcm() {

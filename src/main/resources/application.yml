@@ -89,6 +89,7 @@ apple:
   app-id: ${APPLE_APP_ID}
 
 apns:
+  key-content: ${APNS_KEY_CONTENT:}
   key-path: ${APNS_KEY_PATH:}
   key-id: ${APNS_KEY_ID:}
   team-id: ${APNS_TEAM_ID:}
