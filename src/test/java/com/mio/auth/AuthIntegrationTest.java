@@ -290,7 +290,8 @@ class AuthIntegrationTest {
                                       {"type": "terms",            "agreed": true,  "version": "v1"},
                                       {"type": "privacy",          "agreed": true,  "version": "v1"},
                                       {"type": "age_verification", "agreed": true,  "version": "v1"},
-                                      {"type": "marketing",        "agreed": false, "version": "v1"}
+                                      {"type": "marketing",        "agreed": false, "version": "v1"},
+                                      {"type": "sensitive_info",   "agreed": true,  "version": "v1"}
                                     ]}
                                     """))
                     .andExpect(status().isOk())
@@ -345,7 +346,8 @@ class AuthIntegrationTest {
                       {"type": "terms",            "agreed": true,  "version": "v1"},
                       {"type": "privacy",          "agreed": true,  "version": "v1"},
                       {"type": "age_verification", "agreed": true,  "version": "v1"},
-                      {"type": "marketing",        "agreed": false, "version": "v1"}
+                      {"type": "marketing",        "agreed": false, "version": "v1"},
+                      {"type": "sensitive_info",   "agreed": true,  "version": "v1"}
                     ]}
                     """;
 
