@@ -123,15 +123,16 @@ public class AuthService {
             throw new BusinessException(ErrorCode.SIGNUP_STEP_INVALID);
         }
 
-        boolean hasTerms = false, hasPrivacy = false, hasAgeVerification = false, hasMarketing = false;
+        boolean hasTerms = false, hasPrivacy = false, hasAgeVerification = false, hasMarketing = false, hasSensitiveInfo = false;
         boolean marketingAgreed = false;
         for (ConsentRequest.ConsentItem item : request.consents()) {
             if ("terms".equals(item.type()) && item.agreed()) hasTerms = true;
             if ("privacy".equals(item.type()) && item.agreed()) hasPrivacy = true;
             if ("age_verification".equals(item.type()) && item.agreed()) hasAgeVerification = true;
             if ("marketing".equals(item.type())) { hasMarketing = true; marketingAgreed = item.agreed(); }
+            if ("sensitive_info".equals(item.type()) && item.agreed()) hasSensitiveInfo = true;
         }
-        if (!hasTerms || !hasPrivacy || !hasAgeVerification || !hasMarketing) {
+        if (!hasTerms || !hasPrivacy || !hasAgeVerification || !hasMarketing || !hasSensitiveInfo) {
             throw new BusinessException(ErrorCode.CONSENT_REQUIRED);
         }
 
