@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -106,10 +107,10 @@ public class PushSender {
 
     private String resolveApnsPem() throws Exception {
         if (apnsKeyContent != null && !apnsKeyContent.isBlank()) {
-            return new String(Base64.getDecoder().decode(apnsKeyContent));
+            return new String(Base64.getMimeDecoder().decode(apnsKeyContent.trim()), StandardCharsets.UTF_8);
         }
         if (apnsKeyPath != null && !apnsKeyPath.isBlank()) {
-            return new String(Files.readAllBytes(Paths.get(apnsKeyPath)));
+            return new String(Files.readAllBytes(Paths.get(apnsKeyPath)), StandardCharsets.UTF_8);
         }
         return null;
     }
