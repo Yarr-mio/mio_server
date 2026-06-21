@@ -157,7 +157,8 @@ class AuthServiceTest {
                 new ConsentRequest.ConsentItem("terms", true, "v1"),
                 new ConsentRequest.ConsentItem("privacy", true, "v1"),
                 new ConsentRequest.ConsentItem("age_verification", true, "v1"),
-                new ConsentRequest.ConsentItem("marketing", false, "v1")
+                new ConsentRequest.ConsentItem("marketing", false, "v1"),
+                new ConsentRequest.ConsentItem("sensitive_info", true, "v1")
         ));
 
         ConsentResponse response = authService.agreeConsent(USER_ID, request);
@@ -178,7 +179,8 @@ class AuthServiceTest {
                 new ConsentRequest.ConsentItem("terms", true, "v1"),
                 new ConsentRequest.ConsentItem("privacy", true, "v1"),
                 new ConsentRequest.ConsentItem("age_verification", true, "v1"),
-                new ConsentRequest.ConsentItem("marketing", true, "v1")
+                new ConsentRequest.ConsentItem("marketing", true, "v1"),
+                new ConsentRequest.ConsentItem("sensitive_info", true, "v1")
         ));
 
         authService.agreeConsent(USER_ID, request);
