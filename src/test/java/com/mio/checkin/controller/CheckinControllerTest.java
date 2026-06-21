@@ -190,7 +190,7 @@ class CheckinControllerTest {
     @Test
     @DisplayName("GET /v1/checkins - 이력 목록 반환")
     void getHistory_returns200() throws Exception {
-        when(checkinService.getHistory(any(), isNull())).thenReturn(List.of(sampleResponse()));
+        when(checkinService.getHistory(any(), isNull(), isNull())).thenReturn(List.of(sampleResponse()));
 
         mockMvc.perform(get("/v1/checkins")
                         .principal(() -> TEST_USER_ID.toString()))

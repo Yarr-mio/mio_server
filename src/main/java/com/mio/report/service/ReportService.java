@@ -17,9 +17,12 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.repository.UserRepository;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -50,65 +53,115 @@ public class ReportService {
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
+    private final ReportNarrativeService reportNarrativeService;
+    private final PlatformTransactionManager txManager;
+
+    private TransactionTemplate readOnlyTx;
+
+    @PostConstruct
+    void init() {
+        readOnlyTx = new TransactionTemplate(txManager);
+        readOnlyTx.setReadOnly(true);
+    }
+
+    private record ReportDbData(
+            LocalDate periodStart, LocalDate periodEnd, int checkinCount, boolean insufficient,
+            Double avgEmotionScore, List<DistortionDto> distortionTop3,
+            TodoSummaryDto todoSummary, SessionSummaryDto sessionSummary
+    ) {
+        static ReportDbData insufficient(LocalDate start, LocalDate end, int count) {
+            return new ReportDbData(start, end, count, true, null, null, null, null);
+        }
+    }
 
     // ── 주간 리포트 ───────────────────────────────────────────────
 
-    @Transactional(readOnly = true)
     public WeeklyReportResponse getWeeklyReport(UUID userId, LocalDate weekStart) {
-        verifyUserExists(userId);
+        final LocalDate resolvedStart = weekStart != null ? weekStart : resolveLastWeekStart();
+        final LocalDate weekEnd = resolvedStart.plusDays(6);
 
-        if (weekStart == null) {
-            weekStart = resolveLastWeekStart();
+        ReportDbData data = readOnlyTx.execute(status -> {
+            verifyUserExists(userId);
+
+            long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, resolvedStart, weekEnd);
+            if (checkinCount < WEEKLY_MIN_CHECKINS) {
+                return ReportDbData.insufficient(resolvedStart, weekEnd, (int) checkinCount);
+            }
+
+            OffsetDateTime start = toStartOfDay(resolvedStart);
+            OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
+
+            return new ReportDbData(
+                    resolvedStart, weekEnd, (int) checkinCount, false,
+                    roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
+                    buildDistortionTop3(userId, start, end),
+                    buildTodoSummary(userId, start, end),
+                    buildSessionSummary(userId, start, end)
+            );
+        });
+
+        if (data.insufficient()) {
+            return WeeklyReportResponse.insufficientData(data.periodStart(), data.periodEnd(), data.checkinCount());
         }
-        LocalDate weekEnd = weekStart.plusDays(6);
 
-        long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, weekStart, weekEnd);
-        if (checkinCount < WEEKLY_MIN_CHECKINS) {
-            return WeeklyReportResponse.insufficientData(weekStart, weekEnd, (int) checkinCount);
-        }
-
-        OffsetDateTime start = toStartOfDay(weekStart);
-        OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
+        // DB 커넥션 반납 후 LLM 호출
+        ReportNarrativeService.NarrativeResult narrative =
+                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
 
         return new WeeklyReportResponse(
-                null, weekStart, weekEnd, "GENERATED", false,
-                (int) checkinCount, null,
-                roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
-                buildDistortionTop3(userId, start, end),
-                null, null,
-                buildTodoSummary(userId, start, end),
-                buildSessionSummary(userId, start, end),
+                null, data.periodStart(), data.periodEnd(), "GENERATED", false,
+                data.checkinCount(), null,
+                data.avgEmotionScore(),
+                data.distortionTop3(),
+                narrative.narrative(), narrative.coachingDirection(),
+                data.todoSummary(),
+                data.sessionSummary(),
                 OffsetDateTime.now(ZoneOffset.UTC), null
         );
     }
 
     // ── 월간 리포트 ───────────────────────────────────────────────
 
-    @Transactional(readOnly = true)
     public MonthlyReportResponse getMonthlyReport(UUID userId, LocalDate monthStart) {
-        verifyUserExists(userId);
+        final LocalDate resolvedStart = monthStart != null ? monthStart : resolveLastMonthStart();
+        final LocalDate monthEnd = YearMonth.from(resolvedStart).atEndOfMonth();
 
-        if (monthStart == null) {
-            monthStart = resolveLastMonthStart();
+        ReportDbData data = readOnlyTx.execute(status -> {
+            verifyUserExists(userId);
+
+            long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, resolvedStart, monthEnd);
+            if (checkinCount < MONTHLY_MIN_CHECKINS) {
+                return ReportDbData.insufficient(resolvedStart, monthEnd, (int) checkinCount);
+            }
+
+            OffsetDateTime start = toStartOfDay(resolvedStart);
+            OffsetDateTime end   = toStartOfDay(monthEnd.plusDays(1));
+
+            return new ReportDbData(
+                    resolvedStart, monthEnd, (int) checkinCount, false,
+                    roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
+                    buildDistortionTop3(userId, start, end),
+                    buildTodoSummary(userId, start, end),
+                    buildSessionSummary(userId, start, end)
+            );
+        });
+
+        if (data.insufficient()) {
+            return MonthlyReportResponse.insufficientData(data.periodStart(), data.periodEnd(), data.checkinCount());
         }
-        LocalDate monthEnd = YearMonth.from(monthStart).atEndOfMonth();
 
-        long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, monthStart, monthEnd);
-        if (checkinCount < MONTHLY_MIN_CHECKINS) {
-            return MonthlyReportResponse.insufficientData(monthStart, monthEnd, (int) checkinCount);
-        }
-
-        OffsetDateTime start = toStartOfDay(monthStart);
-        OffsetDateTime end   = toStartOfDay(monthEnd.plusDays(1));
+        // DB 커넥션 반납 후 LLM 호출
+        ReportNarrativeService.NarrativeResult narrative =
+                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
 
         return new MonthlyReportResponse(
-                null, monthStart, monthEnd, "GENERATED", false,
-                (int) checkinCount, null,
-                roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
-                buildDistortionTop3(userId, start, end),
-                null, null,
-                buildTodoSummary(userId, start, end),
-                buildSessionSummary(userId, start, end),
+                null, data.periodStart(), data.periodEnd(), "GENERATED", false,
+                data.checkinCount(), null,
+                data.avgEmotionScore(),
+                data.distortionTop3(),
+                narrative.narrative(), narrative.coachingDirection(),
+                data.todoSummary(),
+                data.sessionSummary(),
                 OffsetDateTime.now(ZoneOffset.UTC), null
         );
     }
@@ -212,10 +265,9 @@ public class ReportService {
             return today.minusDays(days - 1);
         }
         return switch (period == null ? "week" : period) {
-            case "week"         -> today.minusDays(6);
-            case "month"        -> today.minusDays(29);
-            case "three_months" -> today.minusDays(89);
-            case "all"          -> today.minusDays(DAYS_MAX - 1);
+            case "week"  -> today.minusDays(6);
+            case "month" -> today.minusDays(29);
+            case "all"   -> today.minusDays(DAYS_MAX - 1);
             default -> throw new BusinessException(ErrorCode.INVALID_INPUT);
         };
     }

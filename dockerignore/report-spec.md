@@ -1,7 +1,7 @@
 # Mio 리포트 도메인 구현 가이드
 
-> 버전: v1.1.0
-> 기준 문서: Report API 명세 v1.4.1, Backend Design v1.1.1, DB 설계 v2.4
+> 버전: v1.1.1
+> 기준 문서: Report API 명세 v1.4.3, Backend Design v1.1.1, DB 설계 v2.4
 > 대상: Claude Code 구현용 전체 컨텍스트
 
 ---
@@ -31,7 +31,7 @@
 
 **MVP 범위**
 - 주간·월간 리포트 모두 제공.
-- AI 내러티브(`narrative`, `coaching_direction`)는 2차 개발. 현재 항상 `null`.
+- AI 내러티브(`narrative`, `coaching_direction`)는 1차 구현. AI 생성 텍스트 반환. 생성 실패 시만 `null`.
 - 데이터 집계는 실시간 방식(MVP). 캐시 방식은 post-MVP.
 
 ---
@@ -255,7 +255,7 @@ ReportService.getWeekly(userId, weekStart)
   │     AND status = 'ended' AND ended_at IS NOT NULL
   │   → session_summary.total, session_summary.total_minutes 산출
   │
-  └─ AI 리포트 요약 (2차 개발 — narrative, coaching_direction, 현재 null 고정)
+  └─ AI 리포트 요약 (1차 구현 — narrative, coaching_direction AI 생성 텍스트 반환, 생성 실패 시 null)
 ```
 
 ### 6-2. emotion-trend 집계 (그래프용)
@@ -297,8 +297,8 @@ GET /v1/reports/emotion-trend?period=week
       { "type": "all_or_nothing", "label": "이분법적 사고", "count": 3 },
       { "type": "overgeneralization", "label": "과일반화", "count": 2 }
     ],
-    "narrative": null,
-    "coaching_direction": null,
+    "narrative": "이번 주 많이 지쳐 보였어요. ...",
+    "coaching_direction": "'해야 해'라는 표현이 9번 나왔어요. ...",
     "todo_summary": {
       "total": 9,
       "completed": 5,
@@ -358,6 +358,7 @@ GET /v1/reports/emotion-trend?period=week
 | 401 | `AUTH_TOKEN_EXPIRED` | Access Token 만료 |
 | 403 | `ONBOARDING_REQUIRED` | 온보딩 미완료 |
 | 404 | `NOT_FOUND` | 해당 기간 데이터 없음 |
+| 500 | `SERVER_ERROR` | 서버 오류로 리포트 조회 실패 |
 
 ---
 
@@ -386,8 +387,8 @@ GET /v1/reports/emotion-trend?period=week
       { "type": "all_or_nothing", "label": "이분법적 사고", "count": 8 },
       { "type": "overgeneralization", "label": "과일반화", "count": 5 }
     ],
-    "narrative": null,
-    "coaching_direction": null,
+    "narrative": "이번 달 감정 기복이 컸지만 꾸준히 기록해줬어요. ...",
+    "coaching_direction": "부정적 자기 대화 패턴이 반복되고 있어요. ...",
     "todo_summary": {
       "total": 36,
       "completed": 22,
@@ -447,6 +448,7 @@ GET /v1/reports/emotion-trend?period=week
 | 401 | `AUTH_TOKEN_EXPIRED` | Access Token 만료 |
 | 403 | `ONBOARDING_REQUIRED` | 온보딩 미완료 |
 | 404 | `NOT_FOUND` | 아직 생성된 월간 리포트 없음 |
+| 500 | `SERVER_ERROR` | 서버 오류로 리포트 조회 실패 |
 
 ---
 
@@ -458,7 +460,7 @@ GET /v1/reports/emotion-trend?period=week
 
 | Parameter | Type | 필수 | 설명 |
 | --- | --- | --- | --- |
-| `period` | String | 선택 | `week` / `month` / `three_months` / `all` (기본값: `week`) |
+| `period` | String | 선택 | `week` / `month` / `all` (기본값: `week`) |
 | `days` | Integer | 선택 | 직접 기간 지정 (최대 90). `period`와 중복 시 `days` 우선 |
 
 **Response**
@@ -498,8 +500,8 @@ GET /v1/reports/emotion-trend?period=week
 
 | Field | Type | 상태 | 설명 |
 | --- | --- | --- | --- |
-| `report_id` | UUID | GENERATED | 리포트 고유 ID |
-| `week_start` / `month_start` | String | 전체 | 시작 날짜 (YYYY-MM-DD) |
+| `report_id` | UUID | GENERATED | 리포트 고유 ID. GENERATED 상태일 때만 포함 |
+| `week_start` / `month_start` | String | 전체 | 시작 날짜 (YYYY-MM-DD). `month_start` 응답에는 `week_start` / `week_end` 없음 |
 | `week_end` / `month_end` | String | 전체 | 종료 날짜 (YYYY-MM-DD) |
 | `status` | String | 전체 | `GENERATED` / `INSUFFICIENT_DATA` / `PENDING` |
 | `is_partial` | Boolean | GENERATED | 데이터 부족으로 부분 생성 여부 |
@@ -510,8 +512,8 @@ GET /v1/reports/emotion-trend?period=week
 | `distortion_top3[].type` | String | GENERATED | 인지 왜곡 유형 코드 |
 | `distortion_top3[].label` | String | GENERATED | 인지 왜곡 한국어 명칭 |
 | `distortion_top3[].count` | Integer | GENERATED | 감지 횟수 |
-| `narrative` | String / null | GENERATED | AI 코칭 내러티브. **현재 항상 null** (2차 개발) |
-| `coaching_direction` | String / null | GENERATED | AI 코칭 방향. **현재 항상 null** (2차 개발) |
+| `narrative` | String / null | GENERATED | AI 코칭 내러티브. AI 생성 텍스트 반환. 생성 실패 시만 `null` |
+| `coaching_direction` | String / null | GENERATED | AI 코칭 방향. AI 생성 텍스트 반환. 생성 실패 시만 `null` |
 | `todo_summary.total` | Integer | GENERATED | 생성된 To-do 총 개수 |
 | `todo_summary.completed` | Integer | GENERATED | 완료 처리된 To-do 수 |
 | `todo_summary.skipped` | Integer | GENERATED | 건너뜀 처리된 To-do 수 |
@@ -558,6 +560,7 @@ GET /v1/reports/emotion-trend?period=week
 | `AUTH_TOKEN_EXPIRED` | 401 | Access Token 만료 |
 | `ONBOARDING_REQUIRED` | 403 | 온보딩 미완료 |
 | `NOT_FOUND` | 404 | 해당 기간 데이터 없음 |
+| `SERVER_ERROR` | 500 | 서버 오류로 리포트 조회 실패 |
 
 ---
 
@@ -572,5 +575,5 @@ GET /v1/reports/emotion-trend?period=week
   FROM jsonb_each_text(distortion_distribution)
   ORDER BY count DESC LIMIT 3
   ```
-- `narrative` / `coaching_direction`은 2차 개발. 현재 null 고정으로 구현.
+- `narrative` / `coaching_direction`은 AI 생성 텍스트 반환. 생성 실패 시 예외를 삼키고 `null` 반환 (전체 응답 중단 방지).
 - 월간 리포트 MVP 구현 완료. `GET /v1/reports/monthly?month_start=YYYY-MM-01` 정상 동작.

@@ -23,6 +23,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
+import java.time.format.DateTimeParseException;
 import java.util.Base64;
 import java.util.List;
 import java.util.Set;
@@ -174,7 +176,30 @@ public class CheckinService {
     }
 
     @Transactional(readOnly = true)
-    public List<CheckinResponse> getHistory(UUID userId, String cursor) {
+    public CheckinResponse getById(UUID userId, UUID checkinId) {
+        Checkin checkin = checkinRepository.findByIdAndUser_Id(checkinId, userId)
+                .orElseThrow(() -> checkinRepository.existsById(checkinId)
+                        ? new BusinessException(ErrorCode.CHECKIN_FORBIDDEN)
+                        : new BusinessException(ErrorCode.CHECKIN_NOT_FOUND));
+        return toResponse(checkin, decryptMemo(checkin));
+    }
+
+    @Transactional(readOnly = true)
+    public List<CheckinResponse> getHistory(UUID userId, String cursor, String month) {
+        if (month != null) {
+            YearMonth yearMonth;
+            try {
+                yearMonth = YearMonth.parse(month);
+            } catch (DateTimeParseException e) {
+                throw new BusinessException(ErrorCode.INVALID_INPUT);
+            }
+            List<Checkin> checkins = checkinRepository.findByUser_IdAndCheckinDateBetween(
+                    userId, yearMonth.atDay(1), yearMonth.atEndOfMonth());
+            return checkins.stream()
+                    .map(c -> toResponse(c, decryptMemo(c)))
+                    .toList();
+        }
+
         PageRequest pageable = PageRequest.of(0, PAGE_SIZE);
         Slice<Checkin> slice;
 
