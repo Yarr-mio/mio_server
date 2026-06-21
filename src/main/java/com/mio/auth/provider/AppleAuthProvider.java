@@ -19,6 +19,7 @@ import java.security.KeyFactory;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.RSAPublicKeySpec;
 import java.util.Base64;
+import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -28,7 +29,7 @@ public class AppleAuthProvider implements SocialAuthProvider {
     private String appleJwksUrl;
 
     @Value("${apple.app-id}")
-    private String appleAppId;
+    private List<String> appleAppIds;
 
     private final AppleJwksRedisRepository jwksRepository;
     private final ObjectMapper objectMapper;
@@ -130,7 +131,7 @@ public class AppleAuthProvider implements SocialAuthProvider {
         if (!"https://appleid.apple.com".equals(claims.getIssuer())) {
             throw new BusinessException(ErrorCode.OAUTH_FAILED);
         }
-        if (!claims.getAudience().contains(appleAppId)) {
+        if (appleAppIds.stream().noneMatch(id -> claims.getAudience().contains(id))) {
             throw new BusinessException(ErrorCode.OAUTH_FAILED);
         }
     }
