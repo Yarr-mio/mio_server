@@ -61,7 +61,7 @@ public class UserMemoryPreference {
     private OffsetDateTime updatedAt;
 
     public void seedPreferredTone(String preferredTone) {
-        if (this.preferredTone == null) {
+        if (this.preferredTone == null && preferredTone != null && !preferredTone.isBlank()) {
             this.preferredTone = preferredTone;
         }
     }

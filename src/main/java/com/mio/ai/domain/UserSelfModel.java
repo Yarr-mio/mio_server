@@ -62,10 +62,12 @@ public class UserSelfModel {
 
     public void seedFromOnboarding(List<String> dominantEmotions, List<String> recurringTriggerTags) {
         if (version > 1) return;
-        if (this.dominantEmotions.isEmpty()) {
+        if ((this.dominantEmotions == null || this.dominantEmotions.isEmpty())
+                && dominantEmotions != null && !dominantEmotions.isEmpty()) {
             this.dominantEmotions = dominantEmotions;
         }
-        if (this.recurringTriggerTags.isEmpty()) {
+        if ((this.recurringTriggerTags == null || this.recurringTriggerTags.isEmpty())
+                && recurringTriggerTags != null && !recurringTriggerTags.isEmpty()) {
             this.recurringTriggerTags = recurringTriggerTags;
         }
     }

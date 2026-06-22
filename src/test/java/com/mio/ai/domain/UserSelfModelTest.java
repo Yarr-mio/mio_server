@@ -35,6 +35,17 @@ class UserSelfModelTest {
     }
 
     @Test
+    @DisplayName("빈 리스트가 입력되면 스킵으로 간주하여 시딩하지 않는다")
+    void seedFromOnboarding_emptyInput_doesNotSeed() {
+        UserSelfModel model = UserSelfModel.builder().build();
+
+        model.seedFromOnboarding(List.of(), List.of());
+
+        assertThat(model.getDominantEmotions()).isEmpty();
+        assertThat(model.getRecurringTriggerTags()).isEmpty();
+    }
+
+    @Test
     @DisplayName("version>1이면 seedFromOnboarding이 아무것도 변경하지 않는다")
     void seedFromOnboarding_higherVersion_skips() {
         UserSelfModel model = UserSelfModel.builder()
