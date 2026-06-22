@@ -41,6 +41,13 @@ public class OnboardingController {
         return ResponseEntity.ok(ApiResponse.ok(onboardingService.submitStep3(resolveUserId(principal), request)));
     }
 
+    @PostMapping("/step/{stepNumber}/skip")
+    public ResponseEntity<ApiResponse<OnboardingStepResponse>> skipStep(
+            Principal principal,
+            @PathVariable int stepNumber) {
+        return ResponseEntity.ok(ApiResponse.ok(onboardingService.skipStep(resolveUserId(principal), stepNumber)));
+    }
+
     @PostMapping("/character")
     public ResponseEntity<ApiResponse<CharacterSelectResponse>> selectCharacter(
             Principal principal,
