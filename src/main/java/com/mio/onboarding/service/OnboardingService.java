@@ -136,15 +136,14 @@ public class OnboardingService {
 
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
         switch (stepNumber) {
-            case 1 -> answer.updateStep1(null, toJson(List.of()));
-            case 2 -> answer.updateStep2(toJson(List.of()), toJson(List.of()));
+            case 1 -> answer.updateStep1(null, List.of());
+            case 2 -> answer.updateStep2(List.of(), List.of());
             case 3 -> {
-                List<String> concernTypes = fromJson(answer.getConcernTypes(), new TypeReference<>() {});
-                if (concernTypes == null) concernTypes = List.of();
+                List<String> concernTypes = answer.getConcernTypes() != null ? answer.getConcernTypes() : List.of();
                 List<CharacterRecommendationDto> recommendations = characterRecommender.recommend(
                         answer.getEmotionState(), concernTypes, null
                 );
-                answer.updateStep3(null, toJson(recommendations), toJson(List.of()));
+                answer.updateStep3(null, recommendations, List.of());
             }
         }
         user.updateOnboardingStep(stepNumber);

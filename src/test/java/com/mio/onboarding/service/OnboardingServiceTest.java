@@ -321,10 +321,10 @@ class OnboardingServiceTest {
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         onboardingService.skipStep(userId, 2);
-        assertThat(answer.getConcernTypes()).isEqualTo("[]");
+        assertThat(answer.getConcernTypes()).isEmpty();
 
         onboardingService.submitStep2(userId, new OnboardingStep2Request(List.of("career"), List.of()));
-        assertThat(answer.getConcernTypes()).isEqualTo("[\"career\"]");
+        assertThat(answer.getConcernTypes()).containsExactly("career");
         assertThat(mockUser.getOnboardingStep()).isEqualTo(2);
     }
 
@@ -335,7 +335,7 @@ class OnboardingServiceTest {
         UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
                 .user(mockUser)
                 .emotionState("anxious")
-                .concernTypes("[\"relationship\"]")
+                .concernTypes(List.of("relationship"))
                 .build();
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
