@@ -5,8 +5,8 @@ import jakarta.validation.constraints.NotBlank;
 
 public record LoginRequest(
         @NotBlank String provider,
-        @JsonProperty("idToken") String idToken,
-        @JsonProperty("accessToken") String accessToken,
-        @JsonProperty("deviceId") @NotBlank String deviceId
+        @JsonProperty("id_token") String idToken,
+        @JsonProperty("access_token") String accessToken,
+        @JsonProperty("device_id") @NotBlank String deviceId
 ) {
 }
