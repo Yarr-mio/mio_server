@@ -60,6 +60,16 @@ public class UserSelfModel {
     @Builder.Default
     private int version = 1;
 
+    public void seedFromOnboarding(List<String> dominantEmotions, List<String> recurringTriggerTags) {
+        if (version > 1) return;
+        if (this.dominantEmotions.isEmpty()) {
+            this.dominantEmotions = dominantEmotions;
+        }
+        if (this.recurringTriggerTags.isEmpty()) {
+            this.recurringTriggerTags = recurringTriggerTags;
+        }
+    }
+
     public void updateFromReflection(List<String> dominantEmotions,
                                      List<String> recurringTriggerTags,
                                      String copingStyle,
