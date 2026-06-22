@@ -366,4 +366,17 @@ class OnboardingServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.INVALID_INPUT));
     }
+
+    @Test
+    @DisplayName("이미 완료한 단계를 다시 skip해도 데이터를 덮어쓰지 않고 현재 상태를 반환한다")
+    void skipStep_alreadyCompleted_returnsCurrentStateWithoutOverwrite() {
+        mockUser.updateOnboardingStep(1);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        OnboardingStepResponse response = onboardingService.skipStep(userId, 1);
+
+        assertThat(response.onboardingStep()).isEqualTo(1);
+        verify(onboardingAnswerRepository, never()).save(any());
+        verify(onboardingAnswerRepository, never()).findByUser_Id(any());
+    }
 }

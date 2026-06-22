@@ -127,6 +127,9 @@ public class OnboardingService {
         }
 
         User user = findUser(userId);
+        if (user.getOnboardingStep() >= stepNumber) {
+            return new OnboardingStepResponse(user.getOnboardingStep());
+        }
         if (stepNumber > 1 && user.getOnboardingStep() < stepNumber - 1) {
             throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
         }
