@@ -1,8 +1,5 @@
 package com.mio.onboarding.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.onboarding.dto.*;
@@ -40,7 +37,6 @@ public class OnboardingService {
     private final UserRepository userRepository;
     private final UserOnboardingAnswerRepository onboardingAnswerRepository;
     private final CharacterRecommender characterRecommender;
-    private final ObjectMapper objectMapper;
 
     @Transactional
     public OnboardingStepResponse submitStep1(UUID userId, OnboardingStep1Request request) {
@@ -53,7 +49,7 @@ public class OnboardingService {
             throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
         }
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
-        answer.updateStep1(request.emotionState(), toJson(request.responses()));
+        answer.updateStep1(request.emotionState(), request.responses());
         user.updateOnboardingStep(1);
 
         onboardingAnswerRepository.save(answer);
@@ -74,7 +70,7 @@ public class OnboardingService {
         }
 
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
-        answer.updateStep2(toJson(request.concernTypes()), toJson(request.responses()));
+        answer.updateStep2(request.concernTypes(), request.responses());
         user.updateOnboardingStep(2);
 
         onboardingAnswerRepository.save(answer);
@@ -93,13 +89,12 @@ public class OnboardingService {
         }
 
         UserOnboardingAnswer answer = findOrCreateAnswer(user);
-        List<String> rawConcernTypes = fromJson(answer.getConcernTypes(), new TypeReference<>() {});
-        List<String> concernTypes = rawConcernTypes != null ? rawConcernTypes : List.of();
+        List<String> concernTypes = answer.getConcernTypes() != null ? answer.getConcernTypes() : List.of();
         List<CharacterRecommendationDto> recommendations = characterRecommender.recommend(
                 answer.getEmotionState(), concernTypes, request.preferredStyle()
         );
 
-        answer.updateStep3(request.preferredStyle(), toJson(recommendations), toJson(request.responses()));
+        answer.updateStep3(request.preferredStyle(), recommendations, request.responses());
         user.updateOnboardingStep(3);
 
         onboardingAnswerRepository.save(answer);
@@ -132,7 +127,7 @@ public class OnboardingService {
 
         if (user.getOnboardingStep() >= 3) {
             recommendations = onboardingAnswerRepository.findByUser_Id(userId)
-                    .map(a -> fromJson(a.getCharacterRecommendations(), new TypeReference<List<CharacterRecommendationDto>>() {}))
+                    .map(UserOnboardingAnswer::getCharacterRecommendations)
                     .orElse(null);
         }
 
@@ -147,23 +142,5 @@ public class OnboardingService {
     private UserOnboardingAnswer findOrCreateAnswer(User user) {
         return onboardingAnswerRepository.findByUser_Id(user.getId())
                 .orElseGet(() -> UserOnboardingAnswer.builder().user(user).build());
-    }
-
-    private String toJson(Object value) {
-        if (value == null) return "[]";
-        try {
-            return objectMapper.writeValueAsString(value);
-        } catch (JsonProcessingException e) {
-            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    private <T> T fromJson(String json, TypeReference<T> type) {
-        if (json == null || json.isBlank()) return null;
-        try {
-            return objectMapper.readValue(json, type);
-        } catch (JsonProcessingException e) {
-            throw new BusinessException(ErrorCode.INTERNAL_SERVER_ERROR);
-        }
     }
 }
