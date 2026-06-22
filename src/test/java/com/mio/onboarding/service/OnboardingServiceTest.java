@@ -266,4 +266,117 @@ class OnboardingServiceTest {
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.USER_NOT_FOUND));
     }
+
+    @Test
+    @DisplayName("이미 완료한 단계를 다시 제출해도 onboarding_step은 낮아지지 않는다")
+    void submitStep1_resubmit_doesNotRegressStep() {
+        mockUser.completeProfile("테스트", null, null);
+        mockUser.updateOnboardingStep(2);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        onboardingService.submitStep1(userId, new OnboardingStep1Request("happy", List.of()));
+
+        assertThat(mockUser.getOnboardingStep()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("step 1 skip 성공 시 onboarding_step이 1을 반환한다")
+    void skipStep1_success_returnsStep1() {
+        mockUser.completeProfile("테스트", null, null);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        OnboardingStepResponse response = onboardingService.skipStep(userId, 1);
+
+        assertThat(response.onboardingStep()).isEqualTo(1);
+        assertThat(mockUser.getOnboardingStep()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("step 2 skip 성공 시 onboarding_step이 2를 반환한다")
+    void skipStep2_success_returnsStep2() {
+        mockUser.updateOnboardingStep(1);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        OnboardingStepResponse response = onboardingService.skipStep(userId, 2);
+
+        assertThat(response.onboardingStep()).isEqualTo(2);
+        assertThat(mockUser.getOnboardingStep()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("step 2 skip 후 step 2 정식 제출 시 concern_types가 업데이트된다")
+    void skipStep2_thenSubmitStep2_updatesData() {
+        mockUser.updateOnboardingStep(1);
+        UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
+                .user(mockUser)
+                .build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        onboardingService.skipStep(userId, 2);
+        assertThat(answer.getConcernTypes()).isEmpty();
+
+        onboardingService.submitStep2(userId, new OnboardingStep2Request(List.of("career"), List.of()));
+        assertThat(answer.getConcernTypes()).containsExactly("career");
+        assertThat(mockUser.getOnboardingStep()).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("step 3 skip 성공 시 character_recommendations 3개를 반환한다")
+    void skipStep3_success_returnsRecommendations() {
+        mockUser.updateOnboardingStep(2);
+        UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
+                .user(mockUser)
+                .emotionState("anxious")
+                .concernTypes(List.of("relationship"))
+                .build();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
+        when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        OnboardingStepResponse response = onboardingService.skipStep(userId, 3);
+
+        assertThat(response.onboardingStep()).isEqualTo(3);
+        assertThat(mockUser.getOnboardingStep()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("1단계 미완료 상태에서 step 2 skip 시 ONBOARDING_STEP_NOT_COMPLETED 예외를 발생시킨다")
+    void skipStep2_step1NotCompleted_throws() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.skipStep(userId, 2))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
+    }
+
+    @Test
+    @DisplayName("유효하지 않은 stepNumber는 INVALID_INPUT 예외를 발생시킨다")
+    void skipStep_invalidStepNumber_throws() {
+        assertThatThrownBy(() -> onboardingService.skipStep(userId, 4))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT));
+    }
+
+    @Test
+    @DisplayName("이미 완료한 단계를 다시 skip해도 데이터를 덮어쓰지 않고 현재 상태를 반환한다")
+    void skipStep_alreadyCompleted_returnsCurrentStateWithoutOverwrite() {
+        mockUser.updateOnboardingStep(1);
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        OnboardingStepResponse response = onboardingService.skipStep(userId, 1);
+
+        assertThat(response.onboardingStep()).isEqualTo(1);
+        verify(onboardingAnswerRepository, never()).save(any());
+        verify(onboardingAnswerRepository, never()).findByUser_Id(any());
+    }
 }

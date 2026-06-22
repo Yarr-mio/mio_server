@@ -94,8 +94,8 @@ public class CharacterRecommender {
     }
 
     private Scored score(CharacterProfile p, String emotion, List<String> concerns, String style) {
-        double styleScore = p.styleScores().getOrDefault(style, 0.3);
-        double emotionScore = p.emotionScores().getOrDefault(emotion, 0.5);
+        double styleScore = style != null ? p.styleScores().getOrDefault(style, 0.3) : 0.3;
+        double emotionScore = emotion != null ? p.emotionScores().getOrDefault(emotion, 0.5) : 0.5;
         double concernScore = concerns.stream()
                 .mapToDouble(c -> p.concernScores().getOrDefault(c, 0.5))
                 .max()

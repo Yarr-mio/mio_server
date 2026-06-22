@@ -120,6 +120,41 @@ public class OnboardingService {
         return new CharacterSelectResponse(user.getPreferredCharacterId(), user.getSignupStep());
     }
 
+    @Transactional
+    public OnboardingStepResponse skipStep(UUID userId, int stepNumber) {
+        if (stepNumber < 1 || stepNumber > 3) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        User user = findUser(userId);
+        if (user.getOnboardingStep() >= stepNumber) {
+            return new OnboardingStepResponse(user.getOnboardingStep());
+        }
+        if (stepNumber > 1 && user.getOnboardingStep() < stepNumber - 1) {
+            throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
+        }
+        if (stepNumber == 1 && user.getSignupStep().ordinal() < SignupStep.PROFILE_COMPLETED.ordinal()) {
+            throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
+        }
+
+        UserOnboardingAnswer answer = findOrCreateAnswer(user);
+        switch (stepNumber) {
+            case 1 -> answer.updateStep1(null, List.of());
+            case 2 -> answer.updateStep2(List.of(), List.of());
+            case 3 -> {
+                List<String> concernTypes = answer.getConcernTypes() != null ? answer.getConcernTypes() : List.of();
+                List<CharacterRecommendationDto> recommendations = characterRecommender.recommend(
+                        answer.getEmotionState(), concernTypes, null
+                );
+                answer.updateStep3(null, recommendations, List.of());
+            }
+        }
+        user.updateOnboardingStep(stepNumber);
+
+        onboardingAnswerRepository.save(answer);
+        return new OnboardingStepResponse(stepNumber);
+    }
+
     @Transactional(readOnly = true)
     public OnboardingStatusResponse getStatus(UUID userId) {
         User user = findUser(userId);
