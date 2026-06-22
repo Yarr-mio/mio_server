@@ -97,7 +97,9 @@ public class User {
     private OffsetDateTime deletedAt;
 
     public void updateOnboardingStep(int step) {
-        this.onboardingStep = step;
+        if (step > this.onboardingStep) {
+            this.onboardingStep = step;
+        }
     }
 
     public void completeOnboarding(String characterId) {
