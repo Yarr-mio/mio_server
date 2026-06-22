@@ -1,6 +1,5 @@
 package com.mio.onboarding.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.onboarding.dto.*;
@@ -38,8 +37,7 @@ class OnboardingServiceTest {
     @BeforeEach
     void setUp() {
         CharacterRecommender recommender = new CharacterRecommender();
-        ObjectMapper objectMapper = new ObjectMapper();
-        onboardingService = new OnboardingService(userRepository, onboardingAnswerRepository, recommender, objectMapper);
+        onboardingService = new OnboardingService(userRepository, onboardingAnswerRepository, recommender);
         userId = UUID.randomUUID();
         mockUser = User.builder()
                 .socialProvider("kakao")
@@ -135,7 +133,7 @@ class OnboardingServiceTest {
         UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
                 .user(mockUser)
                 .emotionState("anxious")
-                .concernTypes("[\"relationship\"]")
+                .concernTypes(List.of("relationship"))
                 .build();
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
@@ -171,13 +169,13 @@ class OnboardingServiceTest {
     }
 
     @Test
-    @DisplayName("3단계 concernTypes가 빈 문자열이어도 NPE 없이 추천 결과를 반환한다")
+    @DisplayName("3단계 concernTypes가 빈 리스트여도 NPE 없이 추천 결과를 반환한다")
     void submitStep3_concernTypesBlank_doesNotThrow() {
         mockUser.updateOnboardingStep(2);
         UserOnboardingAnswer answer = UserOnboardingAnswer.builder()
                 .user(mockUser)
                 .emotionState("anxious")
-                .concernTypes("")
+                .concernTypes(List.of())
                 .build();
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.of(answer));
