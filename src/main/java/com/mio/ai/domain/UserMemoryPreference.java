@@ -60,6 +60,12 @@ public class UserMemoryPreference {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    public void seedPreferredTone(String preferredTone) {
+        if (this.preferredTone == null && preferredTone != null && !preferredTone.isBlank()) {
+            this.preferredTone = preferredTone;
+        }
+    }
+
     @PrePersist
     @PreUpdate
     protected void onUpdate() {
