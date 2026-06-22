@@ -25,7 +25,7 @@ public class TraceIdFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
         String traceId = request.getHeader(TRACE_ID_HEADER);
-        if (traceId == null || traceId.isBlank()) {
+        if (traceId == null || !traceId.matches("^[a-zA-Z0-9\\-]{1,50}$")) {
             traceId = UUID.randomUUID().toString();
         }
 
