@@ -48,6 +48,14 @@ public class Session {
     @Column(name = "avg_emotion_score")
     private Integer avgEmotionScore;
 
+    /** AI가 추정한 세션 종료 시점 감정 점수 (0~100) */
+    @Column(name = "emotion_score_ai")
+    private Integer emotionScoreAi;
+
+    /** 사용자가 직접 제출한 세션 종료 시점 감정 점수 (0~100) */
+    @Column(name = "emotion_score_user")
+    private Integer emotionScoreUser;
+
     /** pending / done / failed */
     @Column(name = "embedding_status", nullable = false)
     @Builder.Default
@@ -85,6 +93,10 @@ public class Session {
     public void incrementMessageCount() {
         this.messageCount += 1;
         this.lastMessageAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    public void updateEmotionScoreUser(int score) {
+        this.emotionScoreUser = score;
     }
 
     public void updateAvgEmotionScore(int newScore) {

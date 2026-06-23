@@ -120,9 +120,6 @@ public class SafetyL1 {
         boolean moderationFlagged = moderation.flagged() && moderation.isSelfHarmFlagged();
         if (moderationFlagged) {
             signals.add("l0_self_harm");
-            if (!hardCrisis) {
-                riskCandidate = true;
-            }
         }
 
         double confidence = hardCrisis ? 0.9

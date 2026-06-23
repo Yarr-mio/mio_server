@@ -63,6 +63,15 @@ public class SessionController {
         return ResponseEntity.ok(ApiResponse.ok(response));
     }
 
+    @PostMapping("/{sessionId}/emotion-score")
+    public ResponseEntity<ApiResponse<EmotionScoreResponse>> submitEmotionScore(
+            Principal principal,
+            @PathVariable UUID sessionId,
+            @Valid @RequestBody EmotionScoreRequest request) {
+        UUID userId = resolveUserId(principal);
+        return ResponseEntity.ok(ApiResponse.ok(sessionService.submitEmotionScore(userId, sessionId, request)));
+    }
+
     @GetMapping("/{sessionId}/summary")
     public ResponseEntity<ApiResponse<SessionSummaryResponse>> getSessionSummary(
             Principal principal,
