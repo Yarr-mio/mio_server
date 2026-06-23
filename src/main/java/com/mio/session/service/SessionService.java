@@ -182,6 +182,19 @@ public class SessionService {
         }
     }
 
+    @Transactional
+    public EmotionScoreResponse submitEmotionScore(UUID userId, UUID sessionId, EmotionScoreRequest request) {
+        Session session = findSession(sessionId);
+        if (!session.belongsTo(userId)) {
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+        if (!session.isEnded()) {
+            throw new BusinessException(ErrorCode.SESSION_NOT_ENDED);
+        }
+        session.updateEmotionScoreUser(request.score());
+        return EmotionScoreResponse.from(sessionRepository.save(session));
+    }
+
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
                               SseEmitter emitter, String idempotencyKey) {
         conversationOrchestrator.handle(userId, sessionId, request.content(), emitter);

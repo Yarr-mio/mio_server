@@ -36,6 +36,7 @@ public class ExtractorLlmClient {
                 }
               ],
               "dominantEmotion": "happy|calm|anxious|sad|angry|ashamed|numb|tired|confused|null",
+              "emotionScore": 0~100,
               "triggerTags": ["trigger1", "trigger2"],
               "episodeType": "regular|crisis|cbt_success|cbt_partial|support_only"
             }
@@ -43,6 +44,7 @@ public class ExtractorLlmClient {
             - thoughts는 최대 3개만 추출합니다.
             - distortionCode와 beliefKind는 시드에 없는 값이면 null로 설정하세요.
             - triggerTags는 구체적인 상황 키워드로 2~4개를 추출합니다.
+            - emotionScore: 세션 종료 시점의 사용자 감정 상태를 0(매우 부정)~100(매우 긍정)으로 수치화합니다.
             """;
 
     private final LlmClient llmClient;
@@ -101,7 +103,13 @@ public class ExtractorLlmClient {
                             ? node.get("episodeType").asText() : null
             );
 
-            return new ExtractorResult(thoughts, dominantEmotion, triggerTags, episodeType);
+            Integer emotionScore = null;
+            if (node.has("emotionScore") && !node.get("emotionScore").isNull()) {
+                int raw = node.get("emotionScore").asInt();
+                emotionScore = Math.max(0, Math.min(100, raw));
+            }
+
+            return new ExtractorResult(thoughts, dominantEmotion, triggerTags, episodeType, emotionScore);
 
         } catch (Exception e) {
             log.warn("ExtractorLLM response parsing failed: {}", json, e);

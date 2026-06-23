@@ -177,7 +177,7 @@ class SessionControllerTest {
     void getSessionSummary_pending_returns202() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
                 TEST_SESSION_ID, "pending", OffsetDateTime.now(), 300L, 5,
-                null, null, null, null
+                null, null, null, null, null, null
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
 
@@ -193,7 +193,7 @@ class SessionControllerTest {
     void getSessionSummary_done_returns200AndTransitionsToViewed() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
                 TEST_SESSION_ID, "viewed", OffsetDateTime.now(), 300L, 5,
-                "세션 요약 내용", 70, "[]", false
+                "세션 요약 내용", 70, "[]", false, null, null
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
 

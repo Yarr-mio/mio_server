@@ -50,6 +50,7 @@ public sealed interface SseEventDto
             @JsonProperty("msg_id") String msgId,
             @JsonProperty("emotion_score") Integer emotionScore,
             @JsonProperty("is_crisis_flagged") boolean isCrisisFlagged,
+            @JsonProperty("is_socratic") boolean isSocratic,
             @JsonProperty("finished_reason") String finishedReason
     ) implements SseEventDto {
         @Override public String eventName() { return "done"; }

@@ -57,6 +57,15 @@ public class SessionSummary {
     @Column(name = "cbt_intervened", nullable = false)
     private boolean cbtIntervened;
 
+    /** 세션 핵심 생각 목록 (JSONB) */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "key_thoughts", columnDefinition = "jsonb")
+    private String keyThoughts;
+
+    /** 세션 내 소크라테스 질문 횟수 */
+    @Column(name = "socratic_count")
+    private Integer socraticCount;
+
     /** pending / done / failed */
     @Column(name = "embedding_status", nullable = false)
     @Builder.Default
