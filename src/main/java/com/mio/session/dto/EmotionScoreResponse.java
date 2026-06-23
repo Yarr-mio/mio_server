@@ -17,7 +17,7 @@ public record EmotionScoreResponse(
                 session.getId(),
                 session.getEmotionScoreAi(),
                 session.getEmotionScoreUser(),
-                session.getEndedAt()
+                session.getUpdatedAt()
         );
     }
 }

@@ -217,6 +217,7 @@ public class ConversationOrchestrator {
                     AtomicInteger lastCheckedLength = new AtomicInteger(0);
                     AtomicReference<OutputPreFilterResult> earlyFilterRef = new AtomicReference<>();
                     AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
+                    AtomicReference<String> capturedSnapshotRef = new AtomicReference<>();
 
                     llmTtftMs = llmClient.stream(llmRequest, chunk -> {
                         contentBuilder.append(chunk);
@@ -232,6 +233,7 @@ public class ConversationOrchestrator {
                                     earlyFilterRef.set(earlyCheck);
                                     log.warn("OutputGuard early-stop during stream: session={} reasons={}",
                                             sessionId, earlyCheck.failReasons());
+                                    capturedSnapshotRef.set(snapshot);
                                     final String capturedSnapshot = snapshot;
                                     final OutputPreFilterResult capturedCheck = earlyCheck;
                                     earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
@@ -304,10 +306,14 @@ public class ConversationOrchestrator {
                                 sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
                                         userSignal.emotionScore(), false, detectSocratic(assistantContent), "replaced_by_guard"));
                             } else if (stopSendingDeltas.get()) {
-                                // Stopped mid-stream but content is safe — restore via delta.replace
-                                sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                                // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
+                                // not trailing tokens that arrived after the early stop
+                                String reviewedContent = capturedSnapshotRef.get() != null
+                                        ? capturedSnapshotRef.get() : assistantContent;
+                                assistantContent = reviewedContent;
+                                sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
                                 sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                        userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
+                                        userSignal.emotionScore(), false, detectSocratic(reviewedContent), "stop"));
                             } else {
                                 sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
                                         userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));

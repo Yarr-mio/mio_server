@@ -10,6 +10,8 @@ import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
 import com.mio.session.dto.ActiveSessionResponse;
 import com.mio.session.dto.CreateSessionRequest;
+import com.mio.session.dto.EmotionScoreRequest;
+import com.mio.session.dto.EmotionScoreResponse;
 import com.mio.session.dto.SendMessageRequest;
 import com.mio.session.dto.SessionResponse;
 import com.mio.session.repository.SessionRepository;
@@ -294,5 +296,50 @@ class SessionServiceTest {
         sessionService.validateMessageRequest(userId, sessionId, null);
 
         verify(redisTemplate).expire(anyString(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("감정 점수 제출 성공 시 EmotionScoreResponse를 반환한다")
+    void submitEmotionScore_success_returnsResponse() {
+        UUID sessionId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        session.end();
+        ReflectionTestUtils.setField(session, "id", sessionId);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(sessionRepository.save(session)).thenReturn(session);
+
+        EmotionScoreResponse response = sessionService.submitEmotionScore(userId, sessionId, new EmotionScoreRequest(75));
+
+        assertThat(response.sessionId()).isEqualTo(sessionId);
+        assertThat(response.emotionScoreUser()).isEqualTo(75);
+        assertThat(response.updatedAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("세션 소유자가 아니면 FORBIDDEN 예외가 발생한다")
+    void submitEmotionScore_notOwner_throwsForbidden() {
+        UUID sessionId = UUID.randomUUID();
+        UUID otherUserId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        session.end();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> sessionService.submitEmotionScore(otherUserId, sessionId, new EmotionScoreRequest(75)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.FORBIDDEN));
+    }
+
+    @Test
+    @DisplayName("세션이 종료되지 않은 경우 SESSION_NOT_ENDED 예외가 발생한다")
+    void submitEmotionScore_sessionNotEnded_throwsSessionNotEnded() {
+        UUID sessionId = UUID.randomUUID();
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        assertThatThrownBy(() -> sessionService.submitEmotionScore(userId, sessionId, new EmotionScoreRequest(75)))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.SESSION_NOT_ENDED));
     }
 }

@@ -68,6 +68,9 @@ public class Session {
     @Column(name = "last_message_at")
     private OffsetDateTime lastMessageAt;
 
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
+
     @PrePersist
     protected void onCreate() {
         startedAt = OffsetDateTime.now(ZoneOffset.UTC);
@@ -97,6 +100,7 @@ public class Session {
 
     public void updateEmotionScoreUser(int score) {
         this.emotionScoreUser = score;
+        this.updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public void updateAvgEmotionScore(int newScore) {
