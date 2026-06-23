@@ -119,6 +119,7 @@ public class SafetyL1 {
 
         boolean moderationFlagged = moderation.flagged() && moderation.isSelfHarmFlagged();
         if (moderationFlagged) {
+            riskCandidate = true;
             signals.add("l0_self_harm");
         }
 
