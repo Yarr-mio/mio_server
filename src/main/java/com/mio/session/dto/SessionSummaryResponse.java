@@ -1,6 +1,7 @@
 package com.mio.session.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonRawValue;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
 
@@ -16,7 +17,9 @@ public record SessionSummaryResponse(
         String summary,
         @JsonProperty("avg_emotion_score") Integer avgEmotionScore,
         @JsonProperty("bias_types_detected") String biasTypesDetected,
-        @JsonProperty("cbt_intervened") Boolean cbtIntervened
+        @JsonProperty("cbt_intervened") Boolean cbtIntervened,
+        @JsonRawValue @JsonProperty("key_thoughts") String keyThoughts,
+        @JsonProperty("socratic_count") Integer socraticCount
 ) {
     public static SessionSummaryResponse pending(Session session) {
         return new SessionSummaryResponse(
@@ -25,7 +28,7 @@ public record SessionSummaryResponse(
                 session.getEndedAt(),
                 session.durationSeconds(),
                 session.getMessageCount(),
-                null, null, null, null
+                null, null, null, null, null, null
         );
     }
 
@@ -39,7 +42,9 @@ public record SessionSummaryResponse(
                 summary.getSummaryText(),
                 session.getAvgEmotionScore(),
                 summary.getBiasTypesDetected(),
-                summary.isCbtIntervened()
+                summary.isCbtIntervened(),
+                summary.getKeyThoughts(),
+                summary.getSocraticCount()
         );
     }
 }

@@ -39,6 +39,7 @@ public enum ErrorCode {
     SESSION_NOT_FOUND(HttpStatus.NOT_FOUND, "SESSION_NOT_FOUND", "세션을 찾을 수 없습니다."),
     SESSION_ALREADY_ACTIVE(HttpStatus.CONFLICT, "SESSION_ALREADY_ACTIVE", "이미 진행 중인 활성 세션이 있습니다."),
     SESSION_ALREADY_ENDED(HttpStatus.GONE, "GONE", "이미 종료된 세션입니다."),
+    SESSION_NOT_ENDED(HttpStatus.CONFLICT, "SESSION_NOT_ENDED", "세션이 아직 종료되지 않았습니다."),
     SESSION_SUMMARY_FAILED(HttpStatus.GONE, "GONE", "세션 요약 생성에 실패했습니다."),
     LOCKED_BY_SAFETY(HttpStatus.LOCKED, "LOCKED_BY_SAFETY", "보안 정책에 의해 차단된 요청입니다."),
 

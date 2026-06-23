@@ -164,7 +164,7 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "security_refusal"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, false, "security_refusal"));
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
@@ -195,8 +195,8 @@ public class ConversationOrchestrator {
                         judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
-                                    judgeActionResult, assistantContent, l1Result, user, session, emitter, outboundMsgId,
-                                    userSignal.emotionScore());
+                                    judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
+                                    outboundMsgId, userSignal.emotionScore());
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                             }
@@ -204,7 +204,8 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "stop"));
+                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false,
+                                detectSocratic(assistantContent), "stop"));
                     }
 
                 } else if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
@@ -216,6 +217,7 @@ public class ConversationOrchestrator {
                     AtomicInteger lastCheckedLength = new AtomicInteger(0);
                     AtomicReference<OutputPreFilterResult> earlyFilterRef = new AtomicReference<>();
                     AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
+                    AtomicReference<String> capturedSnapshotRef = new AtomicReference<>();
 
                     llmTtftMs = llmClient.stream(llmRequest, chunk -> {
                         contentBuilder.append(chunk);
@@ -231,6 +233,7 @@ public class ConversationOrchestrator {
                                     earlyFilterRef.set(earlyCheck);
                                     log.warn("OutputGuard early-stop during stream: session={} reasons={}",
                                             sessionId, earlyCheck.failReasons());
+                                    capturedSnapshotRef.set(snapshot);
                                     final String capturedSnapshot = snapshot;
                                     final OutputPreFilterResult capturedCheck = earlyCheck;
                                     earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
@@ -281,31 +284,44 @@ public class ConversationOrchestrator {
                         boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
                         if (isCrisis) crisisFlowTriggered = true;
 
-                        String replacedContent = switch (judgeActionResult.action()) {
-                            case REWRITE -> judgeActionResult.rewrittenContent() != null
-                                    ? judgeActionResult.rewrittenContent()
+                        if (isCrisis) {
+                            // Bug 5 fix: invoke crisis flow — crisis + done SSE issued inside handle()
+                            CrisisFlowService.CrisisHandleResult crisisResult =
+                                    crisisFlowService.handle(l1Result, userMessage, user, session, emitter,
+                                            outboundMsgId, userSignal.emotionScore());
+                            assistantContent = crisisResult != null ? crisisResult.fixedResponse()
                                     : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
-                            case REPLACE, CRISIS_FLOW -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
-                            case SEND -> null;
-                        };
-
-                        if (replacedContent != null) {
-                            assistantContent = replacedContent;
-                            sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                    userSignal.emotionScore(), isCrisis, "replaced_by_guard"));
-                        } else if (stopSendingDeltas.get()) {
-                            // Stopped mid-stream but content is safe — restore via delta.replace
-                            sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                    userSignal.emotionScore(), false, "stop"));
                         } else {
-                            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                    userSignal.emotionScore(), false, "stop"));
+                            String replacedContent = switch (judgeActionResult.action()) {
+                                case REWRITE -> judgeActionResult.rewrittenContent() != null
+                                        ? judgeActionResult.rewrittenContent()
+                                        : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                                case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                                case SEND, CRISIS_FLOW -> null;
+                            };
+
+                            if (replacedContent != null) {
+                                assistantContent = replacedContent;
+                                sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                        userSignal.emotionScore(), false, detectSocratic(assistantContent), "replaced_by_guard"));
+                            } else if (stopSendingDeltas.get()) {
+                                // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
+                                // not trailing tokens that arrived after the early stop
+                                String reviewedContent = capturedSnapshotRef.get() != null
+                                        ? capturedSnapshotRef.get() : assistantContent;
+                                assistantContent = reviewedContent;
+                                sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
+                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                        userSignal.emotionScore(), false, detectSocratic(reviewedContent), "stop"));
+                            } else {
+                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
+                                        userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
+                            }
                         }
                     } else {
                         sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                userSignal.emotionScore(), false, "stop"));
+                                userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
                     }
 
                 } else {
@@ -320,18 +336,19 @@ public class ConversationOrchestrator {
                     });
                     assistantContent = contentBuilder.toString();
                     sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                            userSignal.emotionScore(), false, "stop"));
+                            userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
                 }
             } else {
                 // FALLBACK 또는 미지원 action — 안전 응답 반환
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, "error"));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, false, "error"));
             }
 
             // 8. Persist messages
-            messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal);
+            messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal,
+                    crisisFlowTriggered);
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
             checkpointService.maybeCheckpoint(sessionId, userId);
@@ -358,6 +375,7 @@ public class ConversationOrchestrator {
     private String resolveOutputJudgeAction(
             OutputJudgeResult result,
             String originalContent,
+            String originalUserMessage,
             SafetyL1Result l1Result,
             User user,
             Session session,
@@ -371,10 +389,16 @@ public class ConversationOrchestrator {
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 CrisisFlowService.CrisisHandleResult cr =
-                        crisisFlowService.handle(l1Result, null, user, session, emitter, outboundMsgId, emotionScore);
+                        crisisFlowService.handle(l1Result, originalUserMessage, user, session, emitter, outboundMsgId,
+                                emotionScore);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };
+    }
+
+    private boolean detectSocratic(String content) {
+        if (content == null || content.isBlank()) return false;
+        return content.contains("?") || content.contains("？");
     }
 
     private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {

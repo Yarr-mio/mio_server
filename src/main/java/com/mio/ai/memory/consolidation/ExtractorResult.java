@@ -9,7 +9,8 @@ public record ExtractorResult(
         List<ExtractedThought> thoughts,
         String dominantEmotion,
         List<String> triggerTags,
-        String episodeType
+        String episodeType,
+        Integer emotionScore
 ) {
     public record ExtractedThought(
             String thoughtText,
@@ -20,6 +21,6 @@ public record ExtractorResult(
     ) {}
 
     public static ExtractorResult empty() {
-        return new ExtractorResult(List.of(), null, List.of(), "regular");
+        return new ExtractorResult(List.of(), null, List.of(), "regular", null);
     }
 }

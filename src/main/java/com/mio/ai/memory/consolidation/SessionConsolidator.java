@@ -146,6 +146,14 @@ public class SessionConsolidator {
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType());
 
+        // emotion_score_ai: AI 추정 세션 감정 점수 (0~100) 저장
+        if (extracted.emotionScore() != null) {
+            jdbcTemplate.update(
+                    "UPDATE sessions SET emotion_score_ai = ? WHERE id = ?",
+                    extracted.emotionScore(), sessionId
+            );
+        }
+
         // 7. cbt_patterns 갱신 (세션 내 동일 왜곡 중복 방지 — distinct codes만 처리)
         validThoughts.stream()
                 .map(ExtractorResult.ExtractedThought::distortionCode)

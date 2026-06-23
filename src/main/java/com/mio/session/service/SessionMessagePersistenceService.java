@@ -42,7 +42,8 @@ public class SessionMessagePersistenceService {
             UUID userId,
             String userContent,
             String assistantContent,
-            UserMessageSignal userSignal) {
+            UserMessageSignal userSignal,
+            boolean crisisFlowTriggered) {
 
         Session session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
@@ -56,8 +57,8 @@ public class SessionMessagePersistenceService {
             throw new BusinessException(ErrorCode.SESSION_ALREADY_ENDED);
         }
 
-        saveMessage(session, user, MessageRole.USER, userContent, userSignal.emotionScore(), userSignal.biasType());
-        saveMessage(session, user, MessageRole.ASSISTANT, assistantContent, null, null);
+        saveMessage(session, user, MessageRole.USER, userContent, userSignal.emotionScore(), userSignal.biasType(), false);
+        saveMessage(session, user, MessageRole.ASSISTANT, assistantContent, null, null, crisisFlowTriggered);
         sessionRepository.incrementMessageCountAndSetLastMessageAt(session.getId(), 2, OffsetDateTime.now(ZoneOffset.UTC));
     }
 
@@ -95,7 +96,8 @@ public class SessionMessagePersistenceService {
             MessageRole role,
             String content,
             Integer emotionScore,
-            String biasType) {
+            String biasType,
+            boolean isCrisisFlagged) {
 
         byte[] ciphertext = messageEncryptor.encrypt(content.getBytes(StandardCharsets.UTF_8));
         Message message = Message.builder()
@@ -106,7 +108,7 @@ public class SessionMessagePersistenceService {
                 .contentDekId(messageEncryptor.dekId())
                 .emotionScore(emotionScore)
                 .biasType(biasType)
-                .isCrisisFlagged(false)
+                .isCrisisFlagged(isCrisisFlagged)
                 .build();
         messageRepository.save(message);
     }

@@ -60,7 +60,7 @@ public class CrisisFlowService {
                     .data(crisisEvent));
 
             SseEventDto.DoneEvent doneEvent = new SseEventDto.DoneEvent(
-                    outboundMsgId, emotionScore, true, "crisis_flow");
+                    outboundMsgId, emotionScore, true, false, "crisis_flow");
             emitter.send(SseEmitter.event()
                     .name(doneEvent.eventName())
                     .data(doneEvent));
