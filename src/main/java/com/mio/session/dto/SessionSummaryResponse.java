@@ -1,6 +1,7 @@
 package com.mio.session.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonRawValue;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
 
@@ -17,7 +18,7 @@ public record SessionSummaryResponse(
         @JsonProperty("avg_emotion_score") Integer avgEmotionScore,
         @JsonProperty("bias_types_detected") String biasTypesDetected,
         @JsonProperty("cbt_intervened") Boolean cbtIntervened,
-        @JsonProperty("key_thoughts") String keyThoughts,
+        @JsonRawValue @JsonProperty("key_thoughts") String keyThoughts,
         @JsonProperty("socratic_count") Integer socraticCount
 ) {
     public static SessionSummaryResponse pending(Session session) {

@@ -67,8 +67,9 @@ public class SafetySignalCombiner {
             return true;
         }
 
-        // 4. L0 self-harm flagged이지만 L1 신호 없음
-        if (moderation.flagged() && moderation.isSelfHarmFlagged() && !l1.hasAnySignal()) {
+        // 4. L0 self-harm flagged → L1 신호 유무 관계없이 항상 Judge 호출
+        // (hasAnySignal()이 moderationFlagged를 포함하므로 !hasAnySignal() 조건은 dead code였음)
+        if (moderation.flagged() && moderation.isSelfHarmFlagged()) {
             return true;
         }
 
