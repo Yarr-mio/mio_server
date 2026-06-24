@@ -442,14 +442,19 @@ public class ConversationOrchestrator {
 
         UUID emotionScoreTargetId = null;
         if (metadata.shouldCreateEmotionScoreTarget()) {
-            emotionScoreTargetId = cbtReconstructionService.createEmotionScoreTarget(
-                    userId,
-                    sessionId,
-                    userMessage,
-                    assistantContent,
-                    metadata,
-                    emotionScore
-            ).getId();
+            try {
+                emotionScoreTargetId = cbtReconstructionService.createEmotionScoreTarget(
+                        userId,
+                        sessionId,
+                        userMessage,
+                        assistantContent,
+                        metadata,
+                        emotionScore
+                ).getId();
+            } catch (Exception e) {
+                log.warn("Failed to create CBT emotion-score target for sessionId={} — continuing without target",
+                        sessionId, e);
+            }
         }
 
         if (classifyCbt) {

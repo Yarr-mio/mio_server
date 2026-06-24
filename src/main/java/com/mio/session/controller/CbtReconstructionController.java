@@ -1,7 +1,6 @@
 package com.mio.session.controller;
 
-import com.mio.common.error.BusinessException;
-import com.mio.common.error.ErrorCode;
+import com.mio.common.PrincipalUtils;
 import com.mio.common.response.ApiResponse;
 import com.mio.session.dto.CbtEmotionScoreResponse;
 import com.mio.session.dto.EmotionScoreRequest;
@@ -30,19 +29,8 @@ public class CbtReconstructionController {
             Principal principal,
             @PathVariable UUID reconstructionId,
             @Valid @RequestBody EmotionScoreRequest request) {
-        UUID userId = resolveUserId(principal);
+        var userId = PrincipalUtils.resolveUserId(principal);
         return ResponseEntity.ok(ApiResponse.ok(
                 cbtReconstructionService.submitEmotionScore(userId, reconstructionId, request)));
-    }
-
-    private UUID resolveUserId(Principal principal) {
-        if (principal == null || principal.getName() == null || principal.getName().isBlank()) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        try {
-            return UUID.fromString(principal.getName());
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED, "유효한 사용자 식별자가 필요합니다.");
-        }
     }
 }

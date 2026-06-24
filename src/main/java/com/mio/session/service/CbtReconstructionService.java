@@ -17,6 +17,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Service
@@ -42,8 +44,7 @@ public class CbtReconstructionService {
         if (!session.belongsTo(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+        User user = userRepository.getReferenceById(userId);
 
         String reconstructedThought = metadata.reconstructedThought() != null
                 ? metadata.reconstructedThought()
@@ -71,16 +72,23 @@ public class CbtReconstructionService {
             UUID reconstructionId,
             EmotionScoreRequest request) {
 
+        int updated = cbtReconstructionRepository.submitEmotionScoreAfterIfPending(
+                reconstructionId,
+                userId,
+                request.score(),
+                OffsetDateTime.now(ZoneOffset.UTC));
+        if (updated == 1) {
+            CbtReconstruction updatedReconstruction = cbtReconstructionRepository.findById(reconstructionId)
+                    .orElseThrow(() -> new BusinessException(ErrorCode.CBT_RECONSTRUCTION_NOT_FOUND));
+            return CbtEmotionScoreResponse.from(updatedReconstruction);
+        }
+
         CbtReconstruction reconstruction = cbtReconstructionRepository.findById(reconstructionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CBT_RECONSTRUCTION_NOT_FOUND));
         if (!reconstruction.getSession().belongsTo(userId)) {
             throw new BusinessException(ErrorCode.FORBIDDEN);
         }
-        if (reconstruction.getEmotionScoreAfter() != null) {
-            throw new BusinessException(ErrorCode.CBT_SCORE_NOT_REQUIRED);
-        }
-        reconstruction.submitEmotionScoreAfter(request.score());
-        return CbtEmotionScoreResponse.from(cbtReconstructionRepository.save(reconstruction));
+        throw new BusinessException(ErrorCode.CBT_SCORE_NOT_REQUIRED);
     }
 
     private byte[] encrypt(String content) {

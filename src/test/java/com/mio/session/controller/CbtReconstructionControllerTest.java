@@ -75,4 +75,14 @@ class CbtReconstructionControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.error.code").value("CBT_SCORE_NOT_REQUIRED"));
     }
+
+    @Test
+    @DisplayName("POST /v1/cbt/reconstructions/{id}/emotion-score - principal 없으면 401")
+    void submitEmotionScore_missingPrincipal_returns401() throws Exception {
+        mockMvc.perform(post("/v1/cbt/reconstructions/{id}/emotion-score", TEST_RECONSTRUCTION_ID)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"score\":62}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
+    }
 }

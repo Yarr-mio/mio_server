@@ -23,6 +23,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -71,7 +73,7 @@ class CbtReconstructionServiceTest {
     @DisplayName("completed 메타데이터로 CBT 감정 점수 target을 생성한다")
     void createEmotionScoreTarget_savesReconstruction() {
         when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
-        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(userRepository.getReferenceById(userId)).thenReturn(user);
         when(messageEncryptor.encrypt(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(messageEncryptor.dekId()).thenReturn("dek-test");
         when(cbtReconstructionRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -107,9 +109,14 @@ class CbtReconstructionServiceTest {
     @DisplayName("CBT 개입 후 감정 점수를 1회 제출한다")
     void submitEmotionScore_updatesAfterScore() {
         UUID reconstructionId = UUID.randomUUID();
-        CbtReconstruction reconstruction = reconstruction(reconstructionId, null);
+        CbtReconstruction reconstruction = reconstruction(reconstructionId, 62);
+        when(cbtReconstructionRepository.submitEmotionScoreAfterIfPending(
+                org.mockito.ArgumentMatchers.eq(reconstructionId),
+                org.mockito.ArgumentMatchers.eq(userId),
+                org.mockito.ArgumentMatchers.eq(62),
+                any()
+        )).thenReturn(1);
         when(cbtReconstructionRepository.findById(reconstructionId)).thenReturn(Optional.of(reconstruction));
-        when(cbtReconstructionRepository.save(reconstruction)).thenReturn(reconstruction);
 
         CbtEmotionScoreResponse response =
                 service.submitEmotionScore(userId, reconstructionId, new EmotionScoreRequest(62));
@@ -124,6 +131,12 @@ class CbtReconstructionServiceTest {
     void submitEmotionScore_alreadySubmitted_throws() {
         UUID reconstructionId = UUID.randomUUID();
         CbtReconstruction reconstruction = reconstruction(reconstructionId, 62);
+        when(cbtReconstructionRepository.submitEmotionScoreAfterIfPending(
+                org.mockito.ArgumentMatchers.eq(reconstructionId),
+                org.mockito.ArgumentMatchers.eq(userId),
+                org.mockito.ArgumentMatchers.eq(70),
+                any()
+        )).thenReturn(0);
         when(cbtReconstructionRepository.findById(reconstructionId)).thenReturn(Optional.of(reconstruction));
 
         assertThatThrownBy(() -> service.submitEmotionScore(userId, reconstructionId, new EmotionScoreRequest(70)))
@@ -145,6 +158,7 @@ class CbtReconstructionServiceTest {
                 .emotionScoreAfter(afterScore)
                 .build();
         ReflectionTestUtils.setField(reconstruction, "id", id);
+        ReflectionTestUtils.setField(reconstruction, "updatedAt", OffsetDateTime.now(ZoneOffset.UTC));
         return reconstruction;
     }
 }

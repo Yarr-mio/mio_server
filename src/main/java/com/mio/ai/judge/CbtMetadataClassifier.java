@@ -115,7 +115,7 @@ public class CbtMetadataClassifier {
     }
 
     private CbtMetadataResult parse(String json, UserMessageSignal userSignal) throws Exception {
-        JsonNode root = objectMapper.readTree(json);
+        JsonNode root = objectMapper.readTree(sanitizeJson(json));
         CbtInterventionState state = CbtInterventionState.fromWireValue(
                 root.path("cbt_intervention_state").asText("none"));
         String completionReason = textOrNull(root, "completion_reason");
@@ -147,5 +147,17 @@ public class CbtMetadataClassifier {
         }
         String value = node.asText();
         return value == null || value.isBlank() ? null : value;
+    }
+
+    private String sanitizeJson(String json) {
+        if (json == null) {
+            return "{}";
+        }
+        String sanitized = json.trim();
+        if (sanitized.startsWith("```")) {
+            sanitized = sanitized.replaceFirst("^```(?:json)?\\s*", "");
+            sanitized = sanitized.replaceFirst("\\s*```$", "");
+        }
+        return sanitized.trim();
     }
 }
