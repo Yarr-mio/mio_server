@@ -69,19 +69,32 @@ public class CbtReconstruction {
     @Column(name = "reconstructed_thought_dek_id")
     private String reconstructedThoughtDekId;
 
-    /** CBT 측정용 0~100 (재구성 전) */
+    /** CBT 개입 직전 내부 기준값 0~100 */
     @Column(name = "emotion_score_before")
     private Integer emotionScoreBefore;
 
-    /** CBT 측정용 0~100 (재구성 후) */
+    /** CBT 개입 완료 후 사용자 입력값 0~100 */
     @Column(name = "emotion_score_after")
     private Integer emotionScoreAfter;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
+
+    public void submitEmotionScoreAfter(int score) {
+        if (score < 0 || score > 100) {
+            throw new IllegalArgumentException("emotion score must be between 0 and 100");
+        }
+        this.emotionScoreAfter = score;
+        this.updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        createdAt = now;
+        updatedAt = now;
     }
 }

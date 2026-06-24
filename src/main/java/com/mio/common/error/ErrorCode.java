@@ -42,6 +42,8 @@ public enum ErrorCode {
     SESSION_NOT_ENDED(HttpStatus.CONFLICT, "SESSION_NOT_ENDED", "세션이 아직 종료되지 않았습니다."),
     SESSION_SUMMARY_FAILED(HttpStatus.GONE, "GONE", "세션 요약 생성에 실패했습니다."),
     LOCKED_BY_SAFETY(HttpStatus.LOCKED, "LOCKED_BY_SAFETY", "보안 정책에 의해 차단된 요청입니다."),
+    CBT_RECONSTRUCTION_NOT_FOUND(HttpStatus.NOT_FOUND, "CBT_RECONSTRUCTION_NOT_FOUND", "CBT 재구성 기록을 찾을 수 없습니다."),
+    CBT_SCORE_NOT_REQUIRED(HttpStatus.CONFLICT, "CBT_SCORE_NOT_REQUIRED", "해당 CBT 재구성은 감정 점수 입력 대상이 아닙니다."),
 
     // Daily Test
     DAILY_TEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DAILY_TEST_NOT_FOUND", "오늘의 데일리 테스트가 없습니다."),

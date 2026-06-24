@@ -7,6 +7,9 @@ import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
+import com.mio.ai.judge.CbtInterventionState;
+import com.mio.ai.judge.CbtMetadataClassifier;
+import com.mio.ai.judge.CbtMetadataResult;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.OutputJudge;
 import com.mio.ai.judge.OutputJudgeAction;
@@ -17,6 +20,7 @@ import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
+import com.mio.ai.memory.working.WorkingMessage;
 import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
@@ -43,6 +47,7 @@ import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.session.repository.SessionRepository;
+import com.mio.session.service.CbtReconstructionService;
 import com.mio.session.service.SessionMessagePersistenceService;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
@@ -79,6 +84,7 @@ public class ConversationOrchestrator {
     private final SafetySignalCombiner signalCombiner;
     private final SafetyProfileBuilder safetyProfileBuilder;
     private final InputJudge inputJudge;
+    private final CbtMetadataClassifier cbtMetadataClassifier;
     private final OutputPreFilter outputPreFilter;
     private final OutputJudge outputJudge;
     private final PolicyEngine policyEngine;
@@ -89,6 +95,7 @@ public class ConversationOrchestrator {
     private final WorkingMemory workingMemory;
     private final ContextPreWarmer contextPreWarmer;
     private final AiDecisionLogger decisionLogger;
+    private final CbtReconstructionService cbtReconstructionService;
     private final SessionMessagePersistenceService messagePersistenceService;
     private final ConversationCheckpointService checkpointService;
     private final SessionRepository sessionRepository;
@@ -145,6 +152,7 @@ public class ConversationOrchestrator {
 
             // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
+            List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
             boolean memoryCacheHit = cachedMemory != null;
             String memoryContext = memoryCacheHit
@@ -164,7 +172,9 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, false, "security_refusal"));
+                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                        "security_refusal", false);
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
@@ -204,8 +214,9 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false,
-                                detectSocratic(assistantContent), "stop"));
+                        sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                                "stop", true);
                     }
 
                 } else if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
@@ -303,8 +314,9 @@ public class ConversationOrchestrator {
                             if (replacedContent != null) {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                        userSignal.emotionScore(), false, detectSocratic(assistantContent), "replaced_by_guard"));
+                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                        userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                                        "replaced_by_guard", false);
                             } else if (stopSendingDeltas.get()) {
                                 // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
                                 // not trailing tokens that arrived after the early stop
@@ -312,16 +324,19 @@ public class ConversationOrchestrator {
                                         ? capturedSnapshotRef.get() : assistantContent;
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
-                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                        userSignal.emotionScore(), false, detectSocratic(reviewedContent), "stop"));
+                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                        userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
+                                        "stop", true);
                             } else {
-                                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                        userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
+                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                        userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                                        "stop", true);
                             }
                         }
                     } else {
-                        sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                                userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
+                        sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                                "stop", true);
                     }
 
                 } else {
@@ -335,15 +350,18 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-                    sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId,
-                            userSignal.emotionScore(), false, detectSocratic(assistantContent), "stop"));
+                    sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                            userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                            "stop", true);
                 }
             } else {
                 // FALLBACK 또는 미지원 action — 안전 응답 반환
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, userSignal.emotionScore(), false, false, "error"));
+                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
+                        "error", false);
             }
 
             // 8. Persist messages
@@ -396,9 +414,65 @@ public class ConversationOrchestrator {
         };
     }
 
-    private boolean detectSocratic(String content) {
-        if (content == null || content.isBlank()) return false;
-        return content.contains("?") || content.contains("？");
+    private void sendDoneEvent(
+            SseEmitter emitter,
+            UUID userId,
+            UUID sessionId,
+            String outboundMsgId,
+            Integer emotionScore,
+            boolean isCrisisFlagged,
+            String userMessage,
+            String assistantContent,
+            UserMessageSignal userSignal,
+            SessionDelta sessionDelta,
+            List<WorkingMessage> recentWorkingMessages,
+            String finishedReason,
+            boolean classifyCbt) throws IOException {
+
+        CbtMetadataResult metadata = classifyCbt
+                ? cbtMetadataClassifier.classify(
+                        sessionDelta.cbtInterventionState(),
+                        recentWorkingMessages,
+                        userMessage,
+                        assistantContent,
+                        userSignal,
+                        sessionDelta.socraticQuestionsUsed(),
+                        isCrisisFlagged)
+                : CbtMetadataResult.none();
+
+        UUID emotionScoreTargetId = null;
+        if (metadata.shouldCreateEmotionScoreTarget()) {
+            emotionScoreTargetId = cbtReconstructionService.createEmotionScoreTarget(
+                    userId,
+                    sessionId,
+                    userMessage,
+                    assistantContent,
+                    metadata,
+                    emotionScore
+            ).getId();
+        }
+
+        if (classifyCbt) {
+            workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
+            if (metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
+                workingMemory.incrementSocraticQuestionCount(sessionId);
+            }
+        }
+
+        boolean isSocratic = metadata.socratic() || metadata.state() == CbtInterventionState.SOCRATIC_ASKED;
+
+        sendEvent(emitter, new SseEventDto.DoneEvent(
+                outboundMsgId,
+                emotionScore,
+                isCrisisFlagged,
+                isSocratic,
+                metadata.state().wireValue(),
+                metadata.completionReason(),
+                emotionScoreTargetId != null,
+                emotionScoreTargetId,
+                emotionScoreTargetId != null ? "after" : null,
+                finishedReason
+        ));
     }
 
     private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {
