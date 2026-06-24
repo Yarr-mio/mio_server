@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 public sealed interface SseEventDto
         permits SseEventDto.SessionMetaEvent,
@@ -51,8 +52,24 @@ public sealed interface SseEventDto
             @JsonProperty("emotion_score") Integer emotionScore,
             @JsonProperty("is_crisis_flagged") boolean isCrisisFlagged,
             @JsonProperty("is_socratic") boolean isSocratic,
+            @JsonProperty("cbt_intervention_state") String cbtInterventionState,
+            @JsonProperty("completion_reason") String completionReason,
+            @JsonProperty("requires_emotion_score") boolean requiresEmotionScore,
+            @JsonProperty("emotion_score_target_id") UUID emotionScoreTargetId,
+            @JsonProperty("emotion_score_phase") String emotionScorePhase,
             @JsonProperty("finished_reason") String finishedReason
     ) implements SseEventDto {
+        public DoneEvent(
+                String msgId,
+                Integer emotionScore,
+                boolean isCrisisFlagged,
+                boolean isSocratic,
+                String finishedReason
+        ) {
+            this(msgId, emotionScore, isCrisisFlagged, isSocratic,
+                    "none", null, false, null, null, finishedReason);
+        }
+
         @Override public String eventName() { return "done"; }
     }
 }

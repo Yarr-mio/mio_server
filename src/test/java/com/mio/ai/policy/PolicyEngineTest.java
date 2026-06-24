@@ -147,7 +147,7 @@ class PolicyEngineTest {
     @Test
     @DisplayName("소크라테스 2회 제한 도달 시 SUPPORTIVE 유지")
     void socratic_limit_reached_keeps_supportive() {
-        SessionDelta limitReached = new SessionDelta(2, new java.util.HashMap<>(), 0, new java.util.HashSet<>(), new java.util.HashSet<>());
+        SessionDelta limitReached = new SessionDelta(2, "none", new java.util.HashMap<>(), 0, new java.util.HashSet<>(), new java.util.HashSet<>());
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
         var decision = policyEngine.decide(combined, judgeResult(RiskLevel.MEDIUM), null, limitReached);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);

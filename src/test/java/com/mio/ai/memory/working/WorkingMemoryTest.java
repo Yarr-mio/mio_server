@@ -127,12 +127,24 @@ class WorkingMemoryTest {
     }
 
     @Test
+    @DisplayName("updateCbtInterventionState는 상태를 hash에 저장하고 TTL을 설정한다")
+    void updateCbtInterventionState_writes_state_and_sets_ttl() {
+        UUID sessionId = UUID.randomUUID();
+
+        workingMemory.updateCbtInterventionState(sessionId, "socratic_asked");
+
+        verify(hashOps).put(contains(sessionId.toString()), eq("cbt_intervention_state"), eq("socratic_asked"));
+        verify(redisTemplate).expire(contains(sessionId.toString()), eq(Duration.ofMinutes(90)));
+    }
+
+    @Test
     @DisplayName("getSessionDelta는 모든 필드를 합산하여 반환한다")
     void getSessionDelta_aggregates_all_fields() {
         UUID sessionId = UUID.randomUUID();
 
         given(hashOps.entries(contains("working"))).willReturn(Map.of(
                 "socratic_count", "1",
+                "cbt_intervention_state", "socratic_asked",
                 "risk_accumulation", "3",
                 "distortion:catastrophizing", "2",
                 "distortion:all_or_nothing", "1"
@@ -143,6 +155,7 @@ class WorkingMemoryTest {
         SessionDelta delta = workingMemory.getSessionDelta(sessionId);
 
         assertThat(delta.socraticQuestionsUsed()).isEqualTo(1);
+        assertThat(delta.cbtInterventionState()).isEqualTo("socratic_asked");
         assertThat(delta.sessionRiskAccumulation()).isEqualTo(3);
         assertThat(delta.distortionCount("catastrophizing")).isEqualTo(2);
         assertThat(delta.distortionCount("all_or_nothing")).isEqualTo(1);
@@ -153,8 +166,8 @@ class WorkingMemoryTest {
     @Test
     @DisplayName("socraticLimitReached는 2회 이상 시 true다")
     void socraticLimitReached_returns_true_at_two() {
-        SessionDelta delta2 = new SessionDelta(2, Map.of(), 0, Set.of(), Set.of());
-        SessionDelta delta1 = new SessionDelta(1, Map.of(), 0, Set.of(), Set.of());
+        SessionDelta delta2 = new SessionDelta(2, "none", Map.of(), 0, Set.of(), Set.of());
+        SessionDelta delta1 = new SessionDelta(1, "none", Map.of(), 0, Set.of(), Set.of());
 
         assertThat(delta2.socraticLimitReached()).isTrue();
         assertThat(delta1.socraticLimitReached()).isFalse();

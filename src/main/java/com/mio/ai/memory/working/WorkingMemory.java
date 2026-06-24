@@ -21,7 +21,7 @@ import java.util.UUID;
  *
  * 키 구조:
  *   session:{id}:messages  → List (최근 10턴 = 20개, LPUSH 최신 우선)
- *   session:{id}:working   → Hash (socratic_count, distortion:*, risk_accumulation)
+ *   session:{id}:working   → Hash (socratic_count, cbt_intervention_state, distortion:*, risk_accumulation)
  *   session:{id}:beliefs   → Set  (activatedBeliefIds)
  *   session:{id}:triggers  → Set  (currentSessionTriggers)
  */
@@ -38,6 +38,7 @@ public class WorkingMemory {
     private static final String TRIGGERS_KEY  = "session:%s:triggers";
 
     private static final String FIELD_SOCRATIC_COUNT    = "socratic_count";
+    private static final String FIELD_CBT_STATE         = "cbt_intervention_state";
     private static final String FIELD_RISK_ACCUMULATION = "risk_accumulation";
     private static final String FIELD_DISTORTION_PREFIX = "distortion:";
 
@@ -94,6 +95,12 @@ public class WorkingMemory {
         redisTemplate.expire(k, SESSION_TTL);
     }
 
+    public void updateCbtInterventionState(UUID sessionId, String state) {
+        String k = workingKey(sessionId);
+        redisTemplate.opsForHash().put(k, FIELD_CBT_STATE, state == null || state.isBlank() ? "none" : state);
+        redisTemplate.expire(k, SESSION_TTL);
+    }
+
     public int getDistortionCount(UUID sessionId, String distortionCode) {
         String value = (String) redisTemplate.opsForHash()
                 .get(workingKey(sessionId), FIELD_DISTORTION_PREFIX + distortionCode);
@@ -137,6 +144,7 @@ public class WorkingMemory {
 
         int socraticCount = 0;
         int riskAccumulation = 0;
+        String cbtInterventionState = "none";
         Map<String, Integer> distortionCounts = new HashMap<>();
 
         for (Map.Entry<Object, Object> entry : workingEntries.entrySet()) {
@@ -145,6 +153,8 @@ public class WorkingMemory {
 
             if (FIELD_SOCRATIC_COUNT.equals(field)) {
                 socraticCount = parseIntSafe(value);
+            } else if (FIELD_CBT_STATE.equals(field)) {
+                cbtInterventionState = value == null || value.isBlank() ? "none" : value;
             } else if (FIELD_RISK_ACCUMULATION.equals(field)) {
                 riskAccumulation = parseIntSafe(value);
             } else if (field.startsWith(FIELD_DISTORTION_PREFIX)) {
@@ -155,6 +165,7 @@ public class WorkingMemory {
 
         return new SessionDelta(
                 socraticCount,
+                cbtInterventionState,
                 distortionCounts,
                 riskAccumulation,
                 beliefIds != null ? beliefIds : Set.of(),
