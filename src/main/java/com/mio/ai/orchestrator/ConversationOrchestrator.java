@@ -60,6 +60,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -190,9 +191,11 @@ public class ConversationOrchestrator {
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
                         user.getPreferredCharacterId(), checkpointSummary);
-                List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
-                        ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
-                        : recentWorkingMessages;
+                List<WorkingMessage> historyCopy = recentWorkingMessages != null
+                        ? new ArrayList<>(recentWorkingMessages) : List.of();
+                List<WorkingMessage> historySlice = historyCopy.size() > 10
+                        ? historyCopy.subList(historyCopy.size() - 10, historyCopy.size())
+                        : historyCopy;
                 LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage);
                 StringBuilder contentBuilder = new StringBuilder();
 
