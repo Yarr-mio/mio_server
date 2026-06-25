@@ -24,9 +24,7 @@ public record CbtMetadataResult(
     }
 
     public boolean shouldCreateEmotionScoreTarget() {
-        return state == CbtInterventionState.COMPLETED
-                && requiresEmotionScore
-                && isAllowedBiasType(biasType);
+        return state == CbtInterventionState.COMPLETED && requiresEmotionScore;
     }
 
     public static boolean isAllowedBiasType(String biasType) {

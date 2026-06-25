@@ -1,5 +1,6 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.ai.AiCacheKeys;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.common.crypto.MessageEncryptor;
@@ -11,13 +12,17 @@ import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,12 +54,15 @@ public class ConversationCheckpointService {
             - 이전 요약의 연속선상에서 맥락을 유지합니다
             """;
 
+    private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
+
     private final SessionRepository sessionRepository;
     private final SessionCheckpointRepository checkpointRepository;
     private final UserRepository userRepository;
     private final LlmClient llmClient;
     private final MessageEncryptor messageEncryptor;
     private final JdbcTemplate jdbcTemplate;
+    private final StringRedisTemplate redisTemplate;
 
     record MessageRecord(String line, OffsetDateTime createdAt) {}
 
@@ -76,6 +84,7 @@ public class ConversationCheckpointService {
             if (records.isEmpty()) return;
 
             String summaryText = generateSummary(records.stream().map(MessageRecord::line).toList());
+            if (summaryText == null) return;
             OffsetDateTime coveredUpTo = records.stream()
                     .map(MessageRecord::createdAt)
                     .max(OffsetDateTime::compareTo)
@@ -94,6 +103,13 @@ public class ConversationCheckpointService {
                     .coveredUpToAt(coveredUpTo)
                     .build();
             checkpointRepository.save(checkpoint);
+            String cacheKey = AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redisTemplate.opsForValue().set(cacheKey, summaryText, CHECKPOINT_TTL);
+                }
+            });
             log.info("ConversationCheckpointService: saved checkpoint seq={} sessionId={}", seq, sessionId);
 
         } catch (Exception e) {
@@ -150,8 +166,9 @@ public class ConversationCheckpointService {
             );
         } catch (Exception e) {
             log.warn("ConversationCheckpointService: summary generation failed", e);
-            return "중간 요약을 생성할 수 없습니다.";
+            return null;
         }
-        return sb.toString().trim();
+        String result = sb.toString().trim();
+        return result.isBlank() ? null : result;
     }
 }
