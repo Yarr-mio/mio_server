@@ -11,6 +11,7 @@ import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -49,12 +51,16 @@ public class ConversationCheckpointService {
             - 이전 요약의 연속선상에서 맥락을 유지합니다
             """;
 
+    private static final String CHECKPOINT_CACHE_KEY = "session:%s:checkpoint_cache";
+    private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
+
     private final SessionRepository sessionRepository;
     private final SessionCheckpointRepository checkpointRepository;
     private final UserRepository userRepository;
     private final LlmClient llmClient;
     private final MessageEncryptor messageEncryptor;
     private final JdbcTemplate jdbcTemplate;
+    private final StringRedisTemplate redisTemplate;
 
     record MessageRecord(String line, OffsetDateTime createdAt) {}
 
@@ -94,6 +100,8 @@ public class ConversationCheckpointService {
                     .coveredUpToAt(coveredUpTo)
                     .build();
             checkpointRepository.save(checkpoint);
+            redisTemplate.opsForValue().set(
+                    CHECKPOINT_CACHE_KEY.formatted(sessionId), summaryText, CHECKPOINT_TTL);
             log.info("ConversationCheckpointService: saved checkpoint seq={} sessionId={}", seq, sessionId);
 
         } catch (Exception e) {
