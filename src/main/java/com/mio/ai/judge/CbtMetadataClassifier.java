@@ -127,7 +127,6 @@ public class CbtMetadataClassifier {
         }
         if (!CbtMetadataResult.isAllowedBiasType(biasType)) {
             biasType = null;
-            requiresEmotionScore = false;
         }
         String reconstructedThought = textOrNull(root, "reconstructed_thought");
         return new CbtMetadataResult(

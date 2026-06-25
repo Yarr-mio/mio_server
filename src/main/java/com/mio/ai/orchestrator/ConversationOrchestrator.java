@@ -158,6 +158,7 @@ public class ConversationOrchestrator {
             String memoryContext = memoryCacheHit
                     ? cachedMemory
                     : contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
+            String checkpointSummary = contextPreWarmer.getCachedCheckpoint(sessionId);
 
             // 6. Policy decision (10-step)
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
@@ -187,8 +188,12 @@ public class ConversationOrchestrator {
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
-                        decision.generationMode(), decision.interventionHints(), memoryContext);
-                LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, userMessage);
+                        decision.generationMode(), decision.interventionHints(), memoryContext,
+                        user.getPreferredCharacterId(), checkpointSummary);
+                List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
+                        ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
+                        : recentWorkingMessages;
+                LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage);
                 StringBuilder contentBuilder = new StringBuilder();
 
                 DeliveryMode deliveryMode = decision.deliveryMode();

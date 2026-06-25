@@ -1,5 +1,6 @@
 package com.mio.ai.profile;
 
+import com.mio.ai.AiCacheKeys;
 import com.mio.ai.memory.composer.ContextComposer;
 import com.mio.ai.memory.retrieval.FusionRanker;
 import com.mio.ai.memory.retrieval.MemoryRetrievalPlanner;
@@ -8,6 +9,7 @@ import com.mio.ai.memory.retrieval.RetrievedItem;
 import com.mio.ai.memory.retrieval.StructuredRetriever;
 import com.mio.ai.memory.retrieval.VectorRetriever;
 import com.mio.ai.safety.CombinedSignal;
+import com.mio.session.repository.SessionCheckpointRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -34,6 +36,7 @@ public class ContextPreWarmer {
 
     private static final String CONTEXT_CACHE_KEY = "session:%s:context_cache";
     private static final Duration CONTEXT_TTL = Duration.ofMinutes(5);
+    private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
 
     private final StructuredRetriever structuredRetriever;
     private final VectorRetriever vectorRetriever;
@@ -41,6 +44,7 @@ public class ContextPreWarmer {
     private final ContextComposer contextComposer;
     private final MemoryRetrievalPlanner memoryRetrievalPlanner;
     private final SafetyProfileBuilder safetyProfileBuilder;
+    private final SessionCheckpointRepository checkpointRepository;
     private final StringRedisTemplate redisTemplate;
     private final JdbcTemplate jdbcTemplate;
 
@@ -67,6 +71,19 @@ public class ContextPreWarmer {
                 log.debug("ContextPreWarmer: cached context for sessionId={} length={}",
                         sessionId, context.length());
             }
+
+            // 4. 최신 체크포인트 요약 Redis 캐싱
+            checkpointRepository.findTopBySession_IdOrderByCheckpointSeqDesc(sessionId)
+                    .ifPresent(cp -> {
+                        String summary = cp.getSummaryText();
+                        if (summary != null && !summary.isBlank()) {
+                            redisTemplate.opsForValue().set(
+                                    AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId), summary, CHECKPOINT_TTL
+                            );
+                            log.debug("ContextPreWarmer: cached checkpoint seq={} sessionId={}",
+                                    cp.getCheckpointSeq(), sessionId);
+                        }
+                    });
         } catch (Exception e) {
             log.warn("ContextPreWarmer failed for sessionId={}", sessionId, e);
         }
@@ -77,6 +94,15 @@ public class ContextPreWarmer {
             return redisTemplate.opsForValue().get(CONTEXT_CACHE_KEY.formatted(sessionId));
         } catch (Exception e) {
             log.warn("ContextPreWarmer.getCachedContext failed", e);
+            return null;
+        }
+    }
+
+    public String getCachedCheckpoint(UUID sessionId) {
+        try {
+            return redisTemplate.opsForValue().get(AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId));
+        } catch (Exception e) {
+            log.warn("ContextPreWarmer.getCachedCheckpoint failed", e);
             return null;
         }
     }

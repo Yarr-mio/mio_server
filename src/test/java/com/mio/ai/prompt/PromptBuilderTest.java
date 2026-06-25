@@ -17,7 +17,7 @@ class PromptBuilderTest {
     @DisplayName("NORMAL 모드는 기본 프롬프트만 반환한다")
     void normal_mode_returns_base_prompt() {
         String prompt = builder.buildSystemPrompt(GenerationMode.NORMAL, InterventionHints.empty());
-        assertThat(prompt).contains("Mio");
+        assertThat(prompt).contains("미오");
         assertThat(prompt).doesNotContain("현재 세션 지시");
     }
 
