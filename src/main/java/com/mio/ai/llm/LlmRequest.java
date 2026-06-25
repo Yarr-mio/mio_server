@@ -22,8 +22,10 @@ public record LlmRequest(
                                 List<WorkingMessage> history, String userMessage) {
         List<Message> messages = new ArrayList<>();
         messages.add(new Message("system", systemPrompt));
-        for (WorkingMessage wm : history) {
-            messages.add(new Message(wm.role(), wm.content()));
+        if (history != null) {
+            for (WorkingMessage wm : history) {
+                messages.add(new Message(wm.role(), wm.content()));
+            }
         }
         messages.add(new Message("user", userMessage));
         return new LlmRequest(model, List.copyOf(messages));

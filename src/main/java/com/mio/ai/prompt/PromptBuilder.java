@@ -81,7 +81,8 @@ public class PromptBuilder {
 
     private String resolveBasePrompt(String characterId) {
         if (characterId == null) return CHARACTER_BASE_PROMPTS.get(DEFAULT_CHARACTER);
-        return CHARACTER_BASE_PROMPTS.getOrDefault(characterId, CHARACTER_BASE_PROMPTS.get(DEFAULT_CHARACTER));
+        String normalized = characterId.trim().toLowerCase();
+        return CHARACTER_BASE_PROMPTS.getOrDefault(normalized, CHARACTER_BASE_PROMPTS.get(DEFAULT_CHARACTER));
     }
 
     private String buildModeInstruction(GenerationMode mode) {

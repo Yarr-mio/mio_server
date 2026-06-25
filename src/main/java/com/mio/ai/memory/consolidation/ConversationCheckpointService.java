@@ -84,6 +84,7 @@ public class ConversationCheckpointService {
             if (records.isEmpty()) return;
 
             String summaryText = generateSummary(records.stream().map(MessageRecord::line).toList());
+            if (summaryText == null) return;
             OffsetDateTime coveredUpTo = records.stream()
                     .map(MessageRecord::createdAt)
                     .max(OffsetDateTime::compareTo)
@@ -165,8 +166,9 @@ public class ConversationCheckpointService {
             );
         } catch (Exception e) {
             log.warn("ConversationCheckpointService: summary generation failed", e);
-            return "중간 요약을 생성할 수 없습니다.";
+            return null;
         }
-        return sb.toString().trim();
+        String result = sb.toString().trim();
+        return result.isBlank() ? null : result;
     }
 }
