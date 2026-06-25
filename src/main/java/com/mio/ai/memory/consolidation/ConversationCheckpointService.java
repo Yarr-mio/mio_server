@@ -1,5 +1,6 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.ai.AiCacheKeys;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.common.crypto.MessageEncryptor;
@@ -17,6 +18,8 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -51,7 +54,6 @@ public class ConversationCheckpointService {
             - 이전 요약의 연속선상에서 맥락을 유지합니다
             """;
 
-    private static final String CHECKPOINT_CACHE_KEY = "session:%s:checkpoint_cache";
     private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
 
     private final SessionRepository sessionRepository;
@@ -100,8 +102,13 @@ public class ConversationCheckpointService {
                     .coveredUpToAt(coveredUpTo)
                     .build();
             checkpointRepository.save(checkpoint);
-            redisTemplate.opsForValue().set(
-                    CHECKPOINT_CACHE_KEY.formatted(sessionId), summaryText, CHECKPOINT_TTL);
+            String cacheKey = AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId);
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    redisTemplate.opsForValue().set(cacheKey, summaryText, CHECKPOINT_TTL);
+                }
+            });
             log.info("ConversationCheckpointService: saved checkpoint seq={} sessionId={}", seq, sessionId);
 
         } catch (Exception e) {

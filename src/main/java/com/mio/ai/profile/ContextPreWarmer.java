@@ -1,5 +1,6 @@
 package com.mio.ai.profile;
 
+import com.mio.ai.AiCacheKeys;
 import com.mio.ai.memory.composer.ContextComposer;
 import com.mio.ai.memory.retrieval.FusionRanker;
 import com.mio.ai.memory.retrieval.MemoryRetrievalPlanner;
@@ -35,7 +36,6 @@ public class ContextPreWarmer {
 
     private static final String CONTEXT_CACHE_KEY = "session:%s:context_cache";
     private static final Duration CONTEXT_TTL = Duration.ofMinutes(5);
-    static final String CHECKPOINT_CACHE_KEY = "session:%s:checkpoint_cache";
     private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
 
     private final StructuredRetriever structuredRetriever;
@@ -78,7 +78,7 @@ public class ContextPreWarmer {
                         String summary = cp.getSummaryText();
                         if (summary != null && !summary.isBlank()) {
                             redisTemplate.opsForValue().set(
-                                    CHECKPOINT_CACHE_KEY.formatted(sessionId), summary, CHECKPOINT_TTL
+                                    AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId), summary, CHECKPOINT_TTL
                             );
                             log.debug("ContextPreWarmer: cached checkpoint seq={} sessionId={}",
                                     cp.getCheckpointSeq(), sessionId);
@@ -100,7 +100,7 @@ public class ContextPreWarmer {
 
     public String getCachedCheckpoint(UUID sessionId) {
         try {
-            return redisTemplate.opsForValue().get(CHECKPOINT_CACHE_KEY.formatted(sessionId));
+            return redisTemplate.opsForValue().get(AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId));
         } catch (Exception e) {
             log.warn("ContextPreWarmer.getCachedCheckpoint failed", e);
             return null;
