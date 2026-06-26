@@ -154,6 +154,7 @@ public class ConversationOrchestrator {
             // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
+            recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
             boolean memoryCacheHit = cachedMemory != null;
             String memoryContext = memoryCacheHit
@@ -191,11 +192,9 @@ public class ConversationOrchestrator {
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
                         user.getPreferredCharacterId(), checkpointSummary);
-                List<WorkingMessage> historyCopy = recentWorkingMessages != null
-                        ? new ArrayList<>(recentWorkingMessages) : List.of();
-                List<WorkingMessage> historySlice = historyCopy.size() > 10
-                        ? historyCopy.subList(historyCopy.size() - 10, historyCopy.size())
-                        : historyCopy;
+                List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
+                        ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
+                        : recentWorkingMessages;
                 LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage);
                 StringBuilder contentBuilder = new StringBuilder();
 
