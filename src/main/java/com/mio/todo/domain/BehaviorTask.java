@@ -1,6 +1,5 @@
 package com.mio.todo.domain;
 
-import com.mio.checkin.domain.Checkin;
 import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -32,11 +31,7 @@ public class BehaviorTask {
     @JoinColumn(name = "source_session_id")
     private Session sourceSession;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "source_checkin_id")
-    private Checkin sourceCheckin;
-
-    /** chat / checkin / pattern / character / template */
+    /** chat / pattern / character / template */
     @Column(name = "generated_from", nullable = false)
     private String generatedFrom;
 
