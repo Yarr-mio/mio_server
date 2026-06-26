@@ -60,6 +60,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -153,6 +154,7 @@ public class ConversationOrchestrator {
             // 5. Working Memory (CBT counters) + Memory Context
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
+            recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
             boolean memoryCacheHit = cachedMemory != null;
             String memoryContext = memoryCacheHit
