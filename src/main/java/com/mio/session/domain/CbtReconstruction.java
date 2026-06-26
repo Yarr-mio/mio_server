@@ -42,7 +42,7 @@ public class CbtReconstruction {
      * overgeneralization / catastrophizing / mind_reading /
      * all_or_nothing / self_blame / emotional_reasoning
      */
-    @Column(name = "bias_type", nullable = false)
+    @Column(name = "bias_type")
     private String biasType;
 
     @Getter(AccessLevel.NONE)

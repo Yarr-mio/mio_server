@@ -1,18 +1,12 @@
 package com.mio.todo.service;
 
-import com.mio.checkin.domain.Checkin;
-import com.mio.checkin.repository.CheckinRepository;
 import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
-import com.mio.session.domain.Session;
-import com.mio.session.domain.SessionStatus;
-import com.mio.session.repository.SessionRepository;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
-import com.mio.todo.dto.TodoGenerateRequest;
 import com.mio.todo.dto.TodoResponse;
 import com.mio.todo.event.TodoCompletedEvent;
 import com.mio.todo.event.TodoSkippedEvent;
@@ -21,8 +15,6 @@ import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.core.NestedExceptionUtils;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,55 +28,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TodoService {
 
-    private static final Set<String> VALID_SOURCES = Set.of("checkin", "chat");
     private static final Set<String> VALID_CHECKIN_STATUSES = Set.of("completed", "skipped");
 
     private final UserRepository userRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
-    private final CheckinRepository checkinRepository;
-    private final SessionRepository sessionRepository;
-    private final TodoTemplateProvider templateProvider;
     private final ApplicationEventPublisher eventPublisher;
-
-    @Transactional
-    public List<TodoResponse> generate(UUID userId, TodoGenerateRequest request) {
-        if (!VALID_SOURCES.contains(request.source())) {
-            throw new BusinessException(ErrorCode.INVALID_INPUT);
-        }
-
-        User user = findUser(userId);
-        requireOnboardingComplete(user);
-
-        Checkin checkin = resolveCheckin(userId, request);
-        String emotionType = checkin != null ? checkin.getEmotionType() : "default";
-        List<TodoTemplateProvider.TaskTemplate> templates = templateProvider.getTemplates(emotionType);
-        Session session = resolveSession(userId, request);
-        ensureNoSuggestedTodosForToday(userId, request.source(), checkin, session);
-
-        List<BehaviorTask> tasks = templates.stream()
-                .map(t -> BehaviorTask.builder()
-                        .user(user)
-                        .generatedFrom(request.source())
-                        .actionText(t.actionText())
-                        .category(t.category())
-                        .difficulty(t.difficulty())
-                        .estimatedMinutes(t.estimatedMinutes())
-                        .sourceCheckin(checkin)
-                        .sourceSession(session)
-                        .build())
-                .toList();
-
-        try {
-            return behaviorTaskRepository.saveAll(tasks).stream()
-                    .map(TodoResponse::from)
-                    .toList();
-        } catch (DataIntegrityViolationException e) {
-            if (isSuggestedTodoDuplicateViolation(e)) {
-                throw new BusinessException(ErrorCode.TODO_ALREADY_GENERATED);
-            }
-            throw e;
-        }
-    }
 
     @Transactional(readOnly = true)
     public List<TodoResponse> getTodos(UUID userId, LocalDate date, String status) {
@@ -153,56 +101,6 @@ public class TodoService {
         }
     }
 
-    private void ensureNoSuggestedTodosForToday(UUID userId, String source, Checkin checkin, Session session) {
-        LocalDate today = LocalDate.now(AppConstants.ZONE);
-        OffsetDateTime from = today.atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
-        OffsetDateTime to = today.plusDays(1).atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
-
-        boolean exists;
-        if (checkin != null) {
-            exists = behaviorTaskRepository.existsByUser_IdAndGeneratedFromAndSourceCheckin_IdAndStatusAndCreatedAtBetween(
-                    userId, source, checkin.getId(), TaskStatus.SUGGESTED, from, to
-            );
-        } else if (session != null) {
-            exists = behaviorTaskRepository.existsByUser_IdAndGeneratedFromAndSourceSession_IdAndStatusAndCreatedAtBetween(
-                    userId, source, session.getId(), TaskStatus.SUGGESTED, from, to
-            );
-        } else {
-            exists = behaviorTaskRepository
-                    .existsByUser_IdAndGeneratedFromAndSourceCheckinIsNullAndSourceSessionIsNullAndStatusAndCreatedAtBetween(
-                            userId, source, TaskStatus.SUGGESTED, from, to
-                    );
-        }
-
-        if (exists) {
-            throw new BusinessException(ErrorCode.TODO_ALREADY_GENERATED);
-        }
-    }
-
-    private Checkin resolveCheckin(UUID userId, TodoGenerateRequest request) {
-        if (!"checkin".equals(request.source())) {
-            return null;
-        }
-        if (request.sourceId() != null) {
-            return checkinRepository.findByIdAndUser_Id(request.sourceId(), userId)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
-        }
-        return checkinRepository
-                .findTopByUser_IdAndCheckinDateOrderByCreatedAtDesc(userId, LocalDate.now(AppConstants.ZONE))
-                .orElse(null);
-    }
-
-    private Session resolveSession(UUID userId, TodoGenerateRequest request) {
-        if (!"chat".equals(request.source())) {
-            return null;
-        }
-        if (request.sourceId() != null) {
-            return sessionRepository.findByIdAndUser_Id(request.sourceId(), userId)
-                    .orElseThrow(() -> new BusinessException(ErrorCode.FORBIDDEN));
-        }
-        return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE).orElse(null);
-    }
-
     private User findUser(UUID userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -214,15 +112,8 @@ public class TodoService {
         }
     }
 
-    private boolean isSuggestedTodoDuplicateViolation(DataIntegrityViolationException e) {
-        Throwable mostSpecificCause = NestedExceptionUtils.getMostSpecificCause(e);
-        return mostSpecificCause != null
-                && mostSpecificCause.getMessage() != null
-                && mostSpecificCause.getMessage().contains("uq_behavior_tasks_suggested_");
-    }
-
     private void publishCompletedEvent(UUID userId, BehaviorTask task, TodoCheckinRequest request) {
-        java.util.UUID sessionId = task.getSourceSession() != null
+        UUID sessionId = task.getSourceSession() != null
                 ? task.getSourceSession().getId() : null;
         eventPublisher.publishEvent(new TodoCompletedEvent(
                 userId,
@@ -236,7 +127,7 @@ public class TodoService {
     }
 
     private void publishSkippedEvent(UUID userId, BehaviorTask task) {
-        java.util.UUID sessionId = task.getSourceSession() != null
+        UUID sessionId = task.getSourceSession() != null
                 ? task.getSourceSession().getId() : null;
         eventPublisher.publishEvent(new TodoSkippedEvent(
                 userId,

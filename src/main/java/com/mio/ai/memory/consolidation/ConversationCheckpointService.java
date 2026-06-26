@@ -104,12 +104,16 @@ public class ConversationCheckpointService {
                     .build();
             checkpointRepository.save(checkpoint);
             String cacheKey = AiCacheKeys.CHECKPOINT_CACHE_KEY.formatted(sessionId);
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    redisTemplate.opsForValue().set(cacheKey, summaryText, CHECKPOINT_TTL);
-                }
-            });
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        redisTemplate.opsForValue().set(cacheKey, summaryText, CHECKPOINT_TTL);
+                    }
+                });
+            } else {
+                redisTemplate.opsForValue().set(cacheKey, summaryText, CHECKPOINT_TTL);
+            }
             log.info("ConversationCheckpointService: saved checkpoint seq={} sessionId={}", seq, sessionId);
 
         } catch (Exception e) {
