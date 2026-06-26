@@ -20,27 +20,10 @@ public interface BehaviorTaskRepository extends JpaRepository<BehaviorTask, UUID
             UUID userId, TaskStatus status, OffsetDateTime from, OffsetDateTime to
     );
 
-    boolean existsByUser_IdAndGeneratedFromAndSourceCheckin_IdAndStatusAndCreatedAtBetween(
-            UUID userId,
-            String generatedFrom,
-            UUID sourceCheckinId,
-            TaskStatus status,
-            OffsetDateTime from,
-            OffsetDateTime to
-    );
-
     boolean existsByUser_IdAndGeneratedFromAndSourceSession_IdAndStatusAndCreatedAtBetween(
             UUID userId,
             String generatedFrom,
             UUID sourceSessionId,
-            TaskStatus status,
-            OffsetDateTime from,
-            OffsetDateTime to
-    );
-
-    boolean existsByUser_IdAndGeneratedFromAndSourceCheckinIsNullAndSourceSessionIsNullAndStatusAndCreatedAtBetween(
-            UUID userId,
-            String generatedFrom,
             TaskStatus status,
             OffsetDateTime from,
             OffsetDateTime to
