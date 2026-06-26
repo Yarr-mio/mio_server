@@ -22,7 +22,7 @@ BEGIN
              JOIN pg_class rel ON rel.oid = con.conrelid
     WHERE rel.relname = 'behavior_tasks'
       AND con.contype = 'c'
-      AND con.conname LIKE '%generated_from%';
+      AND pg_get_constraintdef(con.oid) LIKE '%generated_from%';
 
     IF v_constraint_name IS NOT NULL THEN
         EXECUTE 'ALTER TABLE behavior_tasks DROP CONSTRAINT ' || quote_ident(v_constraint_name);
