@@ -178,7 +178,7 @@ class SessionControllerTest {
     void getSessionSummary_pending_returns202() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
                 TEST_SESSION_ID, "pending", OffsetDateTime.now(), 300L, 5,
-                null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, List.of()
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
 

@@ -50,7 +50,7 @@ public record SessionSummaryResponse(
                 session.getEndedAt(),
                 session.durationSeconds(),
                 session.getMessageCount(),
-                null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null, List.of()
         );
     }
 
