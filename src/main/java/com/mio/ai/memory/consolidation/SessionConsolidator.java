@@ -171,18 +171,16 @@ public class SessionConsolidator {
             persistThought(user, sessionId, extracted_thought);
         }
 
-        // 10. CBT 개입 감지 시 Todo 3건 자동 생성 (MIO-CBT-015)
+        // 10. 세션 종료 시 Todo 3건 자동 생성 (MIO-CBT-015)
         List<String> distortionCodes = validThoughts.stream()
                 .map(ExtractorResult.ExtractedThought::distortionCode)
                 .filter(code -> code != null && !code.isBlank())
                 .distinct()
                 .toList();
-        if (!distortionCodes.isEmpty()) {
-            try {
-                todoRecommendationService.generateForSession(user, session, distortionCodes, dominantEmotion);
-            } catch (Exception e) {
-                log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
-            }
+        try {
+            todoRecommendationService.generateForSession(user, session, distortionCodes, dominantEmotion);
+        } catch (Exception e) {
+            log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
         }
 
         log.info("SessionConsolidator: completed sessionId={} thoughts={} emotion={}",
