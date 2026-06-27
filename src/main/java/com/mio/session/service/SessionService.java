@@ -12,6 +12,7 @@ import com.mio.session.domain.SummaryStatus;
 import com.mio.session.dto.*;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
+import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +42,7 @@ public class SessionService {
 
     private final SessionRepository sessionRepository;
     private final SessionSummaryRepository sessionSummaryRepository;
+    private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
@@ -162,7 +164,8 @@ public class SessionService {
         }
         var summary = sessionSummaryRepository.findBySession_Id(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
-        return SessionSummaryResponse.from(session, summary);
+        var todos = behaviorTaskRepository.findBySourceSession_Id(sessionId);
+        return SessionSummaryResponse.from(session, summary, todos);
     }
 
     /**

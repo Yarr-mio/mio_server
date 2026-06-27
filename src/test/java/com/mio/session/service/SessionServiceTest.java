@@ -16,6 +16,7 @@ import com.mio.session.dto.SendMessageRequest;
 import com.mio.session.dto.SessionResponse;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
+import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,6 +50,7 @@ class SessionServiceTest {
 
     @Mock private SessionRepository sessionRepository;
     @Mock private SessionSummaryRepository sessionSummaryRepository;
+    @Mock private BehaviorTaskRepository behaviorTaskRepository;
     @Mock private UserRepository userRepository;
     @Mock private SessionMessagePersistenceService sessionMessagePersistenceService;
     @Mock private ConversationOrchestrator conversationOrchestrator;
@@ -66,7 +68,7 @@ class SessionServiceTest {
     void setUp() {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         sessionService = new SessionService(
-                sessionRepository, sessionSummaryRepository, userRepository,
+                sessionRepository, sessionSummaryRepository, behaviorTaskRepository, userRepository,
                 sessionMessagePersistenceService, conversationOrchestrator, workingMemory,
                 eventPublisher, contextPreWarmer, redisTemplate
         );
