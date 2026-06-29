@@ -149,12 +149,15 @@ public class SessionConsolidator {
                         .filter(code -> code != null && !code.isBlank())
                         .distinct()
                         .toList());
-        String keyThoughtsJson = toJsonObjects(
+        String keyThoughtsJson = toJson(
                 validThoughts.stream()
                         .filter(t -> t.thoughtText() != null && !t.thoughtText().isBlank())
-                        .map(t -> java.util.Map.of(
-                                "content", t.thoughtText(),
-                                "distortion_type", t.distortionCode() != null ? t.distortionCode() : ""))
+                        .map(t -> {
+                            java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+                            m.put("content", t.thoughtText());
+                            m.put("distortion_type", t.distortionCode());
+                            return m;
+                        })
                         .toList());
         boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
                 || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
@@ -346,16 +349,7 @@ public class SessionConsolidator {
 
     // ── JSON 직렬화 ───────────────────────────────────────────────
 
-    private String toJson(List<String> list) {
-        try {
-            return objectMapper.writeValueAsString(list);
-        } catch (Exception e) {
-            log.warn("SessionConsolidator: JSON serialization failed", e);
-            return "[]";
-        }
-    }
-
-    private String toJsonObjects(List<java.util.Map<String, String>> list) {
+    private String toJson(List<?> list) {
         try {
             return objectMapper.writeValueAsString(list);
         } catch (Exception e) {
