@@ -223,14 +223,14 @@ public class StructuredRetriever {
                            b.belief_kind
                              || ' [' || COALESCE(b.polarity, 'neutral') || ']'
                              || ' conf:' || ROUND(b.confidence::numeric, 2)
-                             || ' support:' || b.support_count
-                             || ' contradict:' || b.contradict_count AS content,
+                             || ' support:' || COALESCE(b.support_count, 0)
+                             || ' contradict:' || COALESCE(b.contradict_count, 0) AS content,
                            b.confidence AS score
                     FROM user_beliefs b
                     WHERE b.user_id = ?
                       AND b.status = 'active'
                       AND b.confidence BETWEEN 0.3 AND 0.85
-                    ORDER BY (b.support_count + b.contradict_count) DESC, b.confidence DESC
+                    ORDER BY (COALESCE(b.support_count, 0) + COALESCE(b.contradict_count, 0)) DESC, b.confidence DESC
                     LIMIT 5
                     """,
                     (rs, rowNum) -> new RetrievedItem(
