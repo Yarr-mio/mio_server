@@ -103,7 +103,7 @@ public class SessionConsolidator {
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         try {
-            consolidate(event.sessionId(), event.userId(), event.characterId());
+            consolidate(event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
             sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
@@ -113,7 +113,7 @@ public class SessionConsolidator {
         }
     }
 
-    public void consolidate(UUID sessionId, UUID userId, String characterId) {
+    public void consolidate(UUID sessionId, UUID userId, String characterId, int socraticCount) {
         var session = sessionRepository.findById(sessionId).orElse(null);
         var user = userRepository.findById(userId).orElse(null);
         if (session == null || user == null) {
@@ -159,7 +159,7 @@ public class SessionConsolidator {
 
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType(),
-                biasTypesJson, keyThoughtsJson, cbtIntervened);
+                biasTypesJson, keyThoughtsJson, cbtIntervened, socraticCount);
 
         // emotion_score_ai: AI 추정 세션 감정 점수 (0~100) 저장
         if (extracted.emotionScore() != null) {
@@ -296,7 +296,8 @@ public class SessionConsolidator {
             String episodeType,
             String biasTypesJson,
             String keyThoughtsJson,
-            boolean cbtIntervened) {
+            boolean cbtIntervened,
+            int socraticCount) {
 
         String[] tagsArray = triggerTags.toArray(new String[0]);
 
@@ -308,13 +309,13 @@ public class SessionConsolidator {
                             SET summary_text = ?, summary_ciphertext = ?, summary_dek_id = ?,
                                 dominant_emotion = ?, trigger_tags = ?, episode_type = ?,
                                 bias_types_detected = ?::jsonb, cbt_intervened = ?, key_thoughts = ?::jsonb,
-                                embedding_status = 'pending'
+                                socratic_count = ?, embedding_status = 'pending'
                             WHERE session_id = ?
                             """,
                             summaryText, ciphertext, dekId,
                             dominantEmotion, tagsArray, episodeType,
                             biasTypesJson, cbtIntervened, keyThoughtsJson,
-                            session.getId()
+                            socraticCount, session.getId()
                     );
                 },
                 () -> {
@@ -329,6 +330,7 @@ public class SessionConsolidator {
                             .biasTypesDetected(biasTypesJson)
                             .cbtIntervened(cbtIntervened)
                             .keyThoughts(keyThoughtsJson)
+                            .socraticCount(socraticCount)
                             .build();
                     // saveAndFlush: JPA flush 후 jdbcTemplate.update가 실제 row를 찾도록 보장
                     sessionSummaryRepository.saveAndFlush(summary);

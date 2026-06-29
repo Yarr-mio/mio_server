@@ -5,5 +5,6 @@ import java.util.UUID;
 public record SessionEndedEvent(
         UUID sessionId,
         UUID userId,
-        String characterId
+        String characterId,
+        int socraticCount
 ) {}

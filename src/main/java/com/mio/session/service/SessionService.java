@@ -129,7 +129,9 @@ public class SessionService {
 
         // @TransactionalEventListener(AFTER_COMMIT) 캡처용: 트랜잭션 내 발행해야 커밋 후 리스너 실행됨
         String characterId = session.getCharacterId();
-        eventPublisher.publishEvent(new SessionEndedEvent(sessionId, userId, characterId));
+        // clear() 이전에 읽어야 race condition 방지 (async consolidator보다 clear()가 먼저 실행될 수 있음)
+        int socraticCount = workingMemory.getSocraticQuestionCount(sessionId);
+        eventPublisher.publishEvent(new SessionEndedEvent(sessionId, userId, characterId, socraticCount));
 
         // Redis 정리는 커밋 후 실행 (트랜잭션 불필요)
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
