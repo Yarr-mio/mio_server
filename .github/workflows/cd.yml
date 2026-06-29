@@ -112,9 +112,17 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
 
             docker compose -f docker-compose.prod.yml pull
+
+            # 볼륨 재초기화: 비밀번호 불일치 해결 (최초 1회)
+            docker compose -f docker-compose.prod.yml down -v
+
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             docker image prune -f
+
+            sleep 45
+            echo "=== app logs ==="
+            docker compose -f docker-compose.prod.yml logs app --tail=80
 
       - name: Close SSH on security group (always runs)
         if: always()
