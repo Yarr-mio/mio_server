@@ -203,8 +203,8 @@ public class SessionConsolidator {
             log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
         }
 
-        log.info("SessionConsolidator: completed sessionId={} thoughts={} emotion={}",
-                sessionId, validThoughts.size(), dominantEmotion);
+        log.info("SessionConsolidator: completed sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
+                sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
     }
 
     // ── 대화 컨텍스트 구성 ────────────────────────────────────────

@@ -38,8 +38,15 @@ public class ExtractorLlmClient {
               "dominantEmotion": "happy|calm|anxious|sad|angry|ashamed|numb|tired|confused|null",
               "emotionScore": 0~100,
               "triggerTags": ["trigger1", "trigger2"],
-              "episodeType": "regular|crisis|cbt_success|cbt_partial|support_only"
+              "episodeType": "crisis|cbt_success|cbt_partial|support_only|regular"
             }
+
+            episodeType 판단 기준 (우선순위 순서로 적용):
+            1. "crisis"       — 자해·자살·극단적 위험 발화가 포함된 세션. 다른 조건보다 최우선.
+            2. "cbt_success"  — 소크라테스 질문 또는 인지 재구성 기법이 사용됐고, 사용자가 새로운 관점을 수용하거나 생각의 전환을 명시적으로 표현한 세션.
+            3. "cbt_partial"  — 소크라테스 질문이 1회라도 시도됐거나 인지 왜곡 탐색이 이루어졌으나, 완전한 인지 재구성 없이 종료된 세션. 사용자가 참여를 회피하거나 화제를 바꿔도 질문 시도 자체가 있었다면 cbt_partial로 분류.
+            4. "support_only" — 감정 지지·공감·경청 위주로 진행됐고, 소크라테스 질문이나 인지 왜곡 탐색이 전혀 없었던 세션.
+            5. "regular"      — 위 4가지 어느 범주에도 해당하지 않는 일반 대화.
 
             - thoughts는 최대 3개만 추출합니다.
             - distortionCode와 beliefKind는 시드에 없는 값이면 null로 설정하세요.
