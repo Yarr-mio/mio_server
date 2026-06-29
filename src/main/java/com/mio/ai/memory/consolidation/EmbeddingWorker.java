@@ -32,7 +32,6 @@ public class EmbeddingWorker {
                 SELECT id, summary_text
                 FROM session_summaries
                 WHERE embedding_status = 'pending'
-                  AND summary_text IS NOT NULL
                 ORDER BY created_at
                 LIMIT ?
                 """,
@@ -79,7 +78,8 @@ public class EmbeddingWorker {
     }
 
     private String toVectorLiteral(float[] embedding) {
-        StringBuilder sb = new StringBuilder(embedding.length * 12);
+        StringBuilder sb = new StringBuilder(embedding.length * 12 + 2);
+        sb.append('[');
         for (int i = 0; i < embedding.length; i++) {
             if (i > 0) sb.append(',');
             sb.append(embedding[i]);
