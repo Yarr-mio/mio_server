@@ -81,6 +81,7 @@ public class OpenAiLlmClient implements LlmClient {
                 }
 
                 if (response.statusCode() != 200) {
+                    response.body().close();
                     throw new RuntimeException("OpenAI API error: " + response.statusCode());
                 }
 
@@ -115,9 +116,16 @@ public class OpenAiLlmClient implements LlmClient {
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
+        long fallback = (long) Math.pow(2, attempt) * 2000L;
         return response.headers().firstValue("Retry-After")
-                .map(v -> Long.parseLong(v) * 1000L)
-                .orElse((long) Math.pow(2, attempt) * 2000L);
+                .map(v -> {
+                    try {
+                        return Long.parseLong(v) * 1000L;
+                    } catch (NumberFormatException e) {
+                        return fallback;
+                    }
+                })
+                .orElse(fallback);
     }
 
     private String buildRequestBody(LlmRequest request) throws Exception {

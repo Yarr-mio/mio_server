@@ -40,27 +40,31 @@ class ExtractorLlmScaleTest {
         System.out.printf("%n총 시나리오: %d건 실행 시작 (병렬 3)%n", cases.size());
 
         ExecutorService pool = Executors.newFixedThreadPool(3);
-        List<Future<Result>> futures = cases.stream()
-                .map(c -> pool.submit(() -> runCase(c)))
-                .toList();
-
         List<Result> results = new ArrayList<>(cases.size());
-        for (int i = 0; i < futures.size(); i++) {
-            try {
-                results.add(futures.get(i).get(90, TimeUnit.SECONDS));
-            } catch (TimeoutException e) {
-                Case c = cases.get(i);
-                results.add(new Result(c.id(), c.expected(), "TIMEOUT", false, c.cat()));
-            } catch (Exception e) {
-                Case c = cases.get(i);
-                results.add(new Result(c.id(), c.expected(), "ERROR", false, c.cat()));
+        try {
+            List<Future<Result>> futures = cases.stream()
+                    .map(c -> pool.submit(() -> runCase(c)))
+                    .toList();
+
+            for (int i = 0; i < futures.size(); i++) {
+                try {
+                    results.add(futures.get(i).get(90, TimeUnit.SECONDS));
+                } catch (TimeoutException e) {
+                    futures.get(i).cancel(true);
+                    Case c = cases.get(i);
+                    results.add(new Result(c.id(), c.expected(), "TIMEOUT", false, c.cat()));
+                } catch (Exception e) {
+                    Case c = cases.get(i);
+                    results.add(new Result(c.id(), c.expected(), "ERROR", false, c.cat()));
+                }
+                if ((i + 1) % 100 == 0) {
+                    long p = results.stream().filter(Result::passed).count();
+                    System.out.printf("  진행: %d/%d (현재 pass: %d)%n", i + 1, cases.size(), p);
+                }
             }
-            if ((i + 1) % 100 == 0) {
-                long p = results.stream().filter(Result::passed).count();
-                System.out.printf("  진행: %d/%d (현재 pass: %d)%n", i + 1, cases.size(), p);
-            }
+        } finally {
+            pool.shutdownNow();
         }
-        pool.shutdown();
 
         report(results, cases.size());
 
