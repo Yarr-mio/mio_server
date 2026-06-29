@@ -81,6 +81,9 @@ public class OpenAiLlmClient implements LlmClient {
                         });
             }
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("LLM streaming request interrupted", e);
         } catch (Exception e) {
             log.error("LLM streaming error: {}", e.getMessage());
             throw new RuntimeException("LLM streaming failed", e);
@@ -127,6 +130,9 @@ public class OpenAiLlmClient implements LlmClient {
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("choices").path(0).path("message").path("content").asText();
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("LLM complete request interrupted", e);
         } catch (Exception e) {
             log.error("LLM complete error: {}", e.getMessage());
             throw new RuntimeException("LLM complete failed", e);
@@ -180,6 +186,9 @@ public class OpenAiLlmClient implements LlmClient {
                 result[i] = (float) embeddingNode.get(i).asDouble();
             }
             return result;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Embeddings request interrupted", e);
         } catch (Exception e) {
             log.error("Embeddings API error: {}", e.getMessage());
             throw new RuntimeException("Embeddings request failed", e);
