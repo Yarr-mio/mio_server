@@ -159,7 +159,7 @@ public class StructuredRetriever {
             return jdbcTemplate.query(
                     """
                     SELECT id::text,
-                           title || ' [' || status || ']' AS content,
+                           action_text || ' [' || status || ']' AS content,
                            CASE status WHEN 'completed' THEN 1.0 WHEN 'skipped' THEN 0.3 ELSE 0.5 END AS score
                     FROM behavior_tasks
                     WHERE user_id = ?
