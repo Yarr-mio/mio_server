@@ -41,55 +41,83 @@ public class OpenAiLlmClient implements LlmClient {
         this.objectMapper = objectMapper;
     }
 
+    private static final int MAX_RETRIES = 4;
+
     @Override
     public long stream(LlmRequest request, Consumer<String> chunkHandler) {
         long startMs = System.currentTimeMillis();
         AtomicLong ttft = new AtomicLong(0);
 
-        try {
-            String requestBody = buildRequestBody(request);
+        int attempt = 0;
+        while (true) {
+            try {
+                String requestBody = buildRequestBody(request);
 
-            HttpRequest httpRequest = HttpRequest.newBuilder()
-                    .uri(URI.create(CHAT_URL))
-                    .header("Authorization", "Bearer " + apiKey)
-                    .header("Content-Type", "application/json")
-                    .timeout(Duration.ofSeconds(60))
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
+                HttpRequest httpRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(CHAT_URL))
+                        .header("Authorization", "Bearer " + apiKey)
+                        .header("Content-Type", "application/json")
+                        .timeout(Duration.ofSeconds(60))
+                        .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                        .build();
 
-            HttpResponse<Stream<String>> response = httpClient.send(
-                    httpRequest,
-                    HttpResponse.BodyHandlers.ofLines()
-            );
+                HttpResponse<Stream<String>> response = httpClient.send(
+                        httpRequest,
+                        HttpResponse.BodyHandlers.ofLines()
+                );
 
-            if (response.statusCode() != 200) {
-                throw new RuntimeException("OpenAI API error: " + response.statusCode());
-            }
+                if (response.statusCode() == 429) {
+                    response.body().close();
+                    if (attempt >= MAX_RETRIES) {
+                        throw new RuntimeException("OpenAI API error: 429 (rate limited, max retries exceeded)");
+                    }
+                    long delayMs = streamRetryDelayMs(response, attempt);
+                    log.warn("OpenAI rate limited (429), retrying in {}ms (attempt {}/{})",
+                            delayMs, attempt + 1, MAX_RETRIES + 1);
+                    Thread.sleep(delayMs);
+                    attempt++;
+                    ttft.set(0);
+                    continue;
+                }
 
-            try (Stream<String> lines = response.body()) {
-                lines.filter(line -> line.startsWith(DATA_PREFIX))
-                        .takeWhile(line -> !line.equals(DONE_MARKER))
-                        .forEach(line -> {
-                            String json = line.substring(DATA_PREFIX.length());
-                            String content = extractDeltaContent(json);
-                            if (content != null && !content.isEmpty()) {
-                                if (ttft.get() == 0) {
-                                    ttft.set(System.currentTimeMillis() - startMs);
+                if (response.statusCode() != 200) {
+                    throw new RuntimeException("OpenAI API error: " + response.statusCode());
+                }
+
+                try (Stream<String> lines = response.body()) {
+                    lines.filter(line -> line.startsWith(DATA_PREFIX))
+                            .takeWhile(line -> !line.equals(DONE_MARKER))
+                            .forEach(line -> {
+                                String json = line.substring(DATA_PREFIX.length());
+                                String content = extractDeltaContent(json);
+                                if (content != null && !content.isEmpty()) {
+                                    if (ttft.get() == 0) {
+                                        ttft.set(System.currentTimeMillis() - startMs);
+                                    }
+                                    chunkHandler.accept(content);
                                 }
-                                chunkHandler.accept(content);
-                            }
-                        });
-            }
+                            });
+                }
+                break;
 
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("LLM streaming request interrupted", e);
-        } catch (Exception e) {
-            log.error("LLM streaming error: {}", e.getMessage());
-            throw new RuntimeException("LLM streaming failed", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("LLM streaming request interrupted", e);
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                log.error("LLM streaming error: {}", e.getMessage());
+                throw new RuntimeException("LLM streaming failed", e);
+            }
         }
 
         return ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
+    }
+
+    private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
+        return response.headers().firstValue("Retry-After")
+                .map(v -> Long.parseLong(v) * 1000L)
+                .orElse((long) Math.pow(2, attempt) * 2000L);
     }
 
     private String buildRequestBody(LlmRequest request) throws Exception {
