@@ -9,6 +9,7 @@ import com.mio.todo.dto.TodoCheckinRequest;
 import com.mio.todo.dto.TodoCheckinResponse;
 import com.mio.todo.dto.TodoResponse;
 import com.mio.todo.event.TodoCompletedEvent;
+import com.mio.todo.event.TodoPartialCompletedEvent;
 import com.mio.todo.event.TodoSkippedEvent;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
@@ -28,7 +29,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class TodoService {
 
-    private static final Set<String> VALID_CHECKIN_STATUSES = Set.of("completed", "skipped");
+    private static final Set<String> VALID_CHECKIN_STATUSES = Set.of("completed", "partial_completed", "skipped");
 
     private final UserRepository userRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
@@ -73,6 +74,9 @@ public class TodoService {
         if ("completed".equals(request.status())) {
             task.complete(request.beforeEmotion(), request.afterEmotion(), request.feedback());
             publishCompletedEvent(userId, task, request);
+        } else if ("partial_completed".equals(request.status())) {
+            task.partialComplete(request.beforeEmotion(), request.afterEmotion(), request.feedback());
+            publishPartialCompletedEvent(userId, task, request);
         } else {
             task.skip();
             publishSkippedEvent(userId, task);
@@ -116,6 +120,20 @@ public class TodoService {
         UUID sessionId = task.getSourceSession() != null
                 ? task.getSourceSession().getId() : null;
         eventPublisher.publishEvent(new TodoCompletedEvent(
+                userId,
+                task.getId(),
+                sessionId,
+                task.getInterventionKind(),
+                request.beforeEmotion(),
+                request.afterEmotion(),
+                task.getCharacterId()
+        ));
+    }
+
+    private void publishPartialCompletedEvent(UUID userId, BehaviorTask task, TodoCheckinRequest request) {
+        UUID sessionId = task.getSourceSession() != null
+                ? task.getSourceSession().getId() : null;
+        eventPublisher.publishEvent(new TodoPartialCompletedEvent(
                 userId,
                 task.getId(),
                 sessionId,

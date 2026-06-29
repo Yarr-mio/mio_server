@@ -212,7 +212,7 @@ public class ReportService {
     private TodoSummaryDto buildTodoSummary(UUID userId, OffsetDateTime start, OffsetDateTime end) {
         List<Object[]> rows = behaviorTaskRepository.findTodoStatsByUserAndPeriod(userId, start, end);
 
-        int total = 0, completed = 0, skipped = 0, expired = 0;
+        int total = 0, completed = 0, partialCompleted = 0, skipped = 0, expired = 0;
         Map<String, Integer> categoryDist = new LinkedHashMap<>();
 
         for (Object[] row : rows) {
@@ -221,16 +221,17 @@ public class ReportService {
             int count         = ((Long) row[2]).intValue();
             total += count;
             switch (status) {
-                case COMPLETED -> completed += count;
-                case SKIPPED   -> skipped += count;
-                case EXPIRED   -> expired += count;
+                case COMPLETED         -> completed += count;
+                case PARTIAL_COMPLETED -> partialCompleted += count;
+                case SKIPPED           -> skipped += count;
+                case EXPIRED           -> expired += count;
                 default -> {}
             }
             categoryDist.merge(category, count, Integer::sum);
         }
 
         double completionRate = total > 0 ? Math.round(completed * 1000.0 / total) / 10.0 : 0.0;
-        return new TodoSummaryDto(total, completed, skipped, expired, completionRate, categoryDist);
+        return new TodoSummaryDto(total, completed, partialCompleted, skipped, expired, completionRate, categoryDist);
     }
 
     private SessionSummaryDto buildSessionSummary(UUID userId, OffsetDateTime start, OffsetDateTime end) {

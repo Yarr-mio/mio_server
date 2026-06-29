@@ -77,7 +77,7 @@ public class BehaviorTask {
     private OffsetDateTime completedAt;
 
     public void complete(Integer beforeEmotion, Integer afterEmotion, String feedback) {
-        if (TaskStatus.SUGGESTED != this.status) {
+        if (this.status != TaskStatus.SUGGESTED && this.status != TaskStatus.PARTIAL_COMPLETED) {
             throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
         }
         validateEmotionRange(beforeEmotion);
@@ -87,6 +87,18 @@ public class BehaviorTask {
         this.afterEmotion = afterEmotion;
         this.feedback = feedback;
         this.completedAt = OffsetDateTime.now(AppConstants.ZONE);
+    }
+
+    public void partialComplete(Integer beforeEmotion, Integer afterEmotion, String feedback) {
+        if (this.status != TaskStatus.SUGGESTED) {
+            throw new BusinessException(ErrorCode.TODO_ALREADY_COMPLETED);
+        }
+        validateEmotionRange(beforeEmotion);
+        validateEmotionRange(afterEmotion);
+        this.status = TaskStatus.PARTIAL_COMPLETED;
+        this.beforeEmotion = beforeEmotion;
+        this.afterEmotion = afterEmotion;
+        this.feedback = feedback;
     }
 
     public void skip() {
