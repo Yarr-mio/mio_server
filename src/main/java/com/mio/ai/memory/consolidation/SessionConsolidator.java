@@ -151,8 +151,13 @@ public class SessionConsolidator {
                         .toList());
         String keyThoughtsJson = toJson(
                 validThoughts.stream()
-                        .map(ExtractorResult.ExtractedThought::thoughtText)
-                        .filter(text -> text != null && !text.isBlank())
+                        .filter(t -> t.thoughtText() != null && !t.thoughtText().isBlank())
+                        .map(t -> {
+                            java.util.Map<String, String> m = new java.util.LinkedHashMap<>();
+                            m.put("content", t.thoughtText());
+                            m.put("distortion_type", t.distortionCode());
+                            return m;
+                        })
                         .toList());
         boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
                 || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
@@ -344,7 +349,7 @@ public class SessionConsolidator {
 
     // ── JSON 직렬화 ───────────────────────────────────────────────
 
-    private String toJson(List<String> list) {
+    private String toJson(List<?> list) {
         try {
             return objectMapper.writeValueAsString(list);
         } catch (Exception e) {
