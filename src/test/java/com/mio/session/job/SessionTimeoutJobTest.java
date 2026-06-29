@@ -1,6 +1,7 @@
 package com.mio.session.job;
 
 import com.mio.ai.memory.consolidation.SessionEndedEvent;
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.session.domain.Session;
 import com.mio.session.repository.SessionRepository;
 import com.mio.user.domain.User;
@@ -33,7 +34,9 @@ class SessionTimeoutJobTest {
         SessionRepository sessionRepository = mock(SessionRepository.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
-        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate);
+        WorkingMemory workingMemory = mock(WorkingMemory.class);
+        when(workingMemory.getSocraticQuestionCount(any())).thenReturn(0);
+        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate, workingMemory);
 
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
@@ -61,7 +64,9 @@ class SessionTimeoutJobTest {
         SessionRepository sessionRepository = mock(SessionRepository.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
-        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate);
+        WorkingMemory workingMemory = mock(WorkingMemory.class);
+        when(workingMemory.getSocraticQuestionCount(any())).thenReturn(0);
+        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate, workingMemory);
 
         UUID sessionId = UUID.randomUUID();
         Session session = buildSession(UUID.randomUUID(), sessionId);
@@ -85,7 +90,9 @@ class SessionTimeoutJobTest {
         SessionRepository sessionRepository = mock(SessionRepository.class);
         ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         TransactionTemplate transactionTemplate = mock(TransactionTemplate.class);
-        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate);
+        WorkingMemory workingMemory = mock(WorkingMemory.class);
+        when(workingMemory.getSocraticQuestionCount(any())).thenReturn(0);
+        SessionTimeoutJob job = new SessionTimeoutJob(sessionRepository, eventPublisher, transactionTemplate, workingMemory);
 
         UUID sessionId1 = UUID.randomUUID();
         UUID sessionId2 = UUID.randomUUID();

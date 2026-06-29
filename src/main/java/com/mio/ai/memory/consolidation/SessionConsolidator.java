@@ -103,7 +103,7 @@ public class SessionConsolidator {
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         try {
-            consolidate(event.sessionId(), event.userId(), event.characterId());
+            consolidate(event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
             sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
@@ -113,7 +113,7 @@ public class SessionConsolidator {
         }
     }
 
-    public void consolidate(UUID sessionId, UUID userId, String characterId) {
+    public void consolidate(UUID sessionId, UUID userId, String characterId, int socraticCount) {
         var session = sessionRepository.findById(sessionId).orElse(null);
         var user = userRepository.findById(userId).orElse(null);
         if (session == null || user == null) {
@@ -142,9 +142,24 @@ public class SessionConsolidator {
         List<ExtractorResult.ExtractedThought> validThoughts = filterValidThoughts(extracted.thoughts());
         String dominantEmotion = filterValidEmotion(extracted.dominantEmotion());
 
-        // 6. session_summaries 저장/갱신
+        // 6. session_summaries 저장/갱신 (CBT 필드 포함)
+        String biasTypesJson = toJson(
+                validThoughts.stream()
+                        .map(ExtractorResult.ExtractedThought::distortionCode)
+                        .filter(code -> code != null && !code.isBlank())
+                        .distinct()
+                        .toList());
+        String keyThoughtsJson = toJson(
+                validThoughts.stream()
+                        .map(ExtractorResult.ExtractedThought::thoughtText)
+                        .filter(text -> text != null && !text.isBlank())
+                        .toList());
+        boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
+                || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
+
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
-                dominantEmotion, extracted.triggerTags(), extracted.episodeType());
+                dominantEmotion, extracted.triggerTags(), extracted.episodeType(),
+                biasTypesJson, keyThoughtsJson, cbtIntervened, socraticCount);
 
         // emotion_score_ai: AI 추정 세션 감정 점수 (0~100) 저장
         if (extracted.emotionScore() != null) {
@@ -278,7 +293,11 @@ public class SessionConsolidator {
             String dekId,
             String dominantEmotion,
             List<String> triggerTags,
-            String episodeType) {
+            String episodeType,
+            String biasTypesJson,
+            String keyThoughtsJson,
+            boolean cbtIntervened,
+            int socraticCount) {
 
         String[] tagsArray = triggerTags.toArray(new String[0]);
 
@@ -289,12 +308,14 @@ public class SessionConsolidator {
                             UPDATE session_summaries
                             SET summary_text = ?, summary_ciphertext = ?, summary_dek_id = ?,
                                 dominant_emotion = ?, trigger_tags = ?, episode_type = ?,
-                                embedding_status = 'pending'
+                                bias_types_detected = ?::jsonb, cbt_intervened = ?, key_thoughts = ?::jsonb,
+                                socratic_count = ?, embedding_status = 'pending'
                             WHERE session_id = ?
                             """,
                             summaryText, ciphertext, dekId,
                             dominantEmotion, tagsArray, episodeType,
-                            session.getId()
+                            biasTypesJson, cbtIntervened, keyThoughtsJson,
+                            socraticCount, session.getId()
                     );
                 },
                 () -> {
@@ -306,6 +327,10 @@ public class SessionConsolidator {
                             .summaryCiphertext(ciphertext)
                             .summaryDekId(dekId)
                             .dominantEmotion(dominantEmotion)
+                            .biasTypesDetected(biasTypesJson)
+                            .cbtIntervened(cbtIntervened)
+                            .keyThoughts(keyThoughtsJson)
+                            .socraticCount(socraticCount)
                             .build();
                     // saveAndFlush: JPA flush 후 jdbcTemplate.update가 실제 row를 찾도록 보장
                     sessionSummaryRepository.saveAndFlush(summary);
@@ -315,6 +340,17 @@ public class SessionConsolidator {
                     );
                 }
         );
+    }
+
+    // ── JSON 직렬화 ───────────────────────────────────────────────
+
+    private String toJson(List<String> list) {
+        try {
+            return objectMapper.writeValueAsString(list);
+        } catch (Exception e) {
+            log.warn("SessionConsolidator: JSON serialization failed", e);
+            return "[]";
+        }
     }
 
     // ── cbt_patterns upsert ──────────────────────────────────────

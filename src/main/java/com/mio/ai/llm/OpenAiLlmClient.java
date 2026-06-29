@@ -23,6 +23,8 @@ import java.util.stream.Stream;
 public class OpenAiLlmClient implements LlmClient {
 
     private static final String CHAT_URL = "https://api.openai.com/v1/chat/completions";
+    private static final String EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
+    private static final String EMBEDDING_MODEL = "text-embedding-3-small";
     private static final String DONE_MARKER = "data: [DONE]";
     private static final String DATA_PREFIX = "data: ";
 
@@ -79,6 +81,9 @@ public class OpenAiLlmClient implements LlmClient {
                         });
             }
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("LLM streaming request interrupted", e);
         } catch (Exception e) {
             log.error("LLM streaming error: {}", e.getMessage());
             throw new RuntimeException("LLM streaming failed", e);
@@ -125,6 +130,9 @@ public class OpenAiLlmClient implements LlmClient {
             JsonNode root = objectMapper.readTree(response.body());
             return root.path("choices").path(0).path("message").path("content").asText();
 
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("LLM complete request interrupted", e);
         } catch (Exception e) {
             log.error("LLM complete error: {}", e.getMessage());
             throw new RuntimeException("LLM complete failed", e);
@@ -145,10 +153,52 @@ public class OpenAiLlmClient implements LlmClient {
         return objectMapper.writeValueAsString(body);
     }
 
+    public float[] embed(String text) {
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("embed() requires non-blank text");
+        }
+        try {
+            String requestBody = objectMapper.writeValueAsString(
+                    Map.of("model", EMBEDDING_MODEL, "input", text));
+
+            HttpRequest httpRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(EMBEDDINGS_URL))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(30))
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(
+                    httpRequest, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                throw new RuntimeException("OpenAI Embeddings API error: " + response.statusCode());
+            }
+
+            JsonNode root = objectMapper.readTree(response.body());
+            JsonNode embeddingNode = root.path("data").path(0).path("embedding");
+            if (embeddingNode.isMissingNode() || !embeddingNode.isArray()) {
+                throw new RuntimeException("Unexpected embeddings response structure: " + response.body());
+            }
+            float[] result = new float[embeddingNode.size()];
+            for (int i = 0; i < result.length; i++) {
+                result[i] = (float) embeddingNode.get(i).asDouble();
+            }
+            return result;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Embeddings request interrupted", e);
+        } catch (Exception e) {
+            log.error("Embeddings API error: {}", e.getMessage());
+            throw new RuntimeException("Embeddings request failed", e);
+        }
+    }
+
     private String extractDeltaContent(String json) {
         try {
             JsonNode root = objectMapper.readTree(json);
-            JsonNode delta = root.path("choices").get(0).path("delta");
+            JsonNode delta = root.path("choices").path(0).path("delta");
             JsonNode content = delta.path("content");
             if (!content.isMissingNode() && !content.isNull()) {
                 return content.asText();

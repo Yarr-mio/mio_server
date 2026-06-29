@@ -1,6 +1,7 @@
 package com.mio.session.job;
 
 import com.mio.ai.memory.consolidation.SessionEndedEvent;
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.session.domain.Session;
 import com.mio.session.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class SessionTimeoutJob {
     private final SessionRepository sessionRepository;
     private final ApplicationEventPublisher eventPublisher;
     private final TransactionTemplate transactionTemplate;
+    private final WorkingMemory workingMemory;
 
     @Scheduled(fixedDelay = 5 * 60 * 1000)
     public void run() {
@@ -56,11 +58,13 @@ public class SessionTimeoutJob {
                     log.debug("SessionTimeoutJob: sessionId={} no longer timed out, skipping", session.getId());
                     return Boolean.FALSE;
                 }
+                int socraticCount = workingMemory.getSocraticQuestionCount(session.getId());
                 eventPublisher.publishEvent(
-                        new SessionEndedEvent(session.getId(), session.getUser().getId(), session.getCharacterId()));
+                        new SessionEndedEvent(session.getId(), session.getUser().getId(), session.getCharacterId(), socraticCount));
                 return Boolean.TRUE;
             });
             if (Boolean.TRUE.equals(ended)) {
+                workingMemory.clear(session.getId());
                 log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
             }
         } catch (Exception e) {
