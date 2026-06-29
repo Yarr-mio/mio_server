@@ -29,11 +29,16 @@ public class EmbeddingWorker {
     public void processPending() {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 """
-                SELECT id, summary_text
-                FROM session_summaries
-                WHERE embedding_status = 'pending'
-                ORDER BY created_at
-                LIMIT ?
+                UPDATE session_summaries
+                SET embedding_status = 'processing'
+                WHERE id IN (
+                    SELECT id FROM session_summaries
+                    WHERE embedding_status = 'pending'
+                    ORDER BY created_at
+                    LIMIT ?
+                    FOR UPDATE SKIP LOCKED
+                )
+                RETURNING id, summary_text
                 """,
                 BATCH_SIZE
         );
@@ -49,6 +54,14 @@ public class EmbeddingWorker {
     }
 
     private void embedOne(UUID summaryId, String summaryText) {
+        if (summaryText == null || summaryText.isBlank()) {
+            log.warn("EmbeddingWorker: summaryText is null or blank for summaryId={}, marking failed", summaryId);
+            jdbcTemplate.update(
+                    "UPDATE session_summaries SET embedding_status = 'failed' WHERE id = ? AND embedding_status = 'processing'",
+                    summaryId
+            );
+            return;
+        }
         try {
             float[] embedding = openAiLlmClient.embed(summaryText);
             String vectorLiteral = toVectorLiteral(embedding);
@@ -59,7 +72,7 @@ public class EmbeddingWorker {
                     SET episode_emb = ?::vector,
                         embedding_status = 'done'
                     WHERE id = ?
-                      AND embedding_status = 'pending'
+                      AND embedding_status = 'processing'
                     """,
                     vectorLiteral, summaryId
             );
@@ -71,7 +84,7 @@ public class EmbeddingWorker {
         } catch (Exception e) {
             log.warn("EmbeddingWorker: failed for summaryId={}, marking failed", summaryId, e);
             jdbcTemplate.update(
-                    "UPDATE session_summaries SET embedding_status = 'failed' WHERE id = ? AND embedding_status = 'pending'",
+                    "UPDATE session_summaries SET embedding_status = 'failed' WHERE id = ? AND embedding_status = 'processing'",
                     summaryId
             );
         }
