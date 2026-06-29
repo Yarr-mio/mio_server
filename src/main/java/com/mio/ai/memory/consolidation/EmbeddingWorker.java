@@ -54,27 +54,32 @@ public class EmbeddingWorker {
             float[] embedding = openAiLlmClient.embed(summaryText);
             String vectorLiteral = toVectorLiteral(embedding);
 
-            jdbcTemplate.update(
+            int updated = jdbcTemplate.update(
                     """
                     UPDATE session_summaries
                     SET episode_emb = ?::vector,
                         embedding_status = 'done'
                     WHERE id = ?
+                      AND embedding_status = 'pending'
                     """,
                     vectorLiteral, summaryId
             );
-            log.debug("EmbeddingWorker: embedded summaryId={}", summaryId);
+            if (updated == 0) {
+                log.debug("EmbeddingWorker: summaryId={} already processed by another instance, skipping", summaryId);
+            } else {
+                log.debug("EmbeddingWorker: embedded summaryId={}", summaryId);
+            }
         } catch (Exception e) {
             log.warn("EmbeddingWorker: failed for summaryId={}, marking failed", summaryId, e);
             jdbcTemplate.update(
-                    "UPDATE session_summaries SET embedding_status = 'failed' WHERE id = ?",
+                    "UPDATE session_summaries SET embedding_status = 'failed' WHERE id = ? AND embedding_status = 'pending'",
                     summaryId
             );
         }
     }
 
     private String toVectorLiteral(float[] embedding) {
-        StringBuilder sb = new StringBuilder("[");
+        StringBuilder sb = new StringBuilder(embedding.length * 12);
         for (int i = 0; i < embedding.length; i++) {
             if (i > 0) sb.append(',');
             sb.append(embedding[i]);

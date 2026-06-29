@@ -148,6 +148,9 @@ public class OpenAiLlmClient implements LlmClient {
     }
 
     public float[] embed(String text) {
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("embed() requires non-blank text");
+        }
         try {
             String requestBody = objectMapper.writeValueAsString(
                     Map.of("model", EMBEDDING_MODEL, "input", text));
@@ -168,7 +171,10 @@ public class OpenAiLlmClient implements LlmClient {
             }
 
             JsonNode root = objectMapper.readTree(response.body());
-            JsonNode embeddingNode = root.path("data").get(0).path("embedding");
+            JsonNode embeddingNode = root.path("data").path(0).path("embedding");
+            if (embeddingNode.isMissingNode() || !embeddingNode.isArray()) {
+                throw new RuntimeException("Unexpected embeddings response structure: " + response.body());
+            }
             float[] result = new float[embeddingNode.size()];
             for (int i = 0; i < result.length; i++) {
                 result[i] = (float) embeddingNode.get(i).asDouble();
@@ -183,7 +189,7 @@ public class OpenAiLlmClient implements LlmClient {
     private String extractDeltaContent(String json) {
         try {
             JsonNode root = objectMapper.readTree(json);
-            JsonNode delta = root.path("choices").get(0).path("delta");
+            JsonNode delta = root.path("choices").path(0).path("delta");
             JsonNode content = delta.path("content");
             if (!content.isMissingNode() && !content.isNull()) {
                 return content.asText();
