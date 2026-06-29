@@ -8,6 +8,7 @@ import com.mio.ai.memory.retrieval.RetrievalPlan;
 import com.mio.ai.memory.retrieval.RetrievedItem;
 import com.mio.ai.memory.retrieval.StructuredRetriever;
 import com.mio.ai.memory.retrieval.VectorRetriever;
+import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.session.repository.SessionCheckpointRepository;
 import lombok.RequiredArgsConstructor;
@@ -47,6 +48,7 @@ public class ContextPreWarmer {
     private final SessionCheckpointRepository checkpointRepository;
     private final StringRedisTemplate redisTemplate;
     private final JdbcTemplate jdbcTemplate;
+    private final WorkingMemory workingMemory;
 
     private final Executor retrievalPool = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -59,7 +61,7 @@ public class ContextPreWarmer {
 
             // 2. 기본 컨텍스트: clearLow plan
             RetrievalPlan plan = RetrievalPlan.clearLow();
-            List<List<RetrievedItem>> results = retrieveParallel(userId, plan);
+            List<List<RetrievedItem>> results = retrieveParallel(sessionId, userId, plan);
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             String context = contextComposer.compose(ranked, plan.sensitivityCap(), false);
 
@@ -115,7 +117,7 @@ public class ContextPreWarmer {
         try {
             boolean hasHistory = checkHasHistory(userId);
             RetrievalPlan plan = memoryRetrievalPlanner.plan(combined, profile, userId, hasHistory);
-            List<List<RetrievedItem>> results = retrieveParallel(userId, plan);
+            List<List<RetrievedItem>> results = retrieveParallel(sessionId, userId, plan);
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             boolean highRisk = combined.hardCrisis() || combined.riskCandidate();
             return contextComposer.compose(ranked, plan.sensitivityCap(), highRisk);
@@ -127,7 +129,7 @@ public class ContextPreWarmer {
 
     // ── 실제 병렬 retrieval (CompletableFuture) ────────────────────
 
-    private List<List<RetrievedItem>> retrieveParallel(UUID userId, RetrievalPlan plan) {
+    private List<List<RetrievedItem>> retrieveParallel(UUID sessionId, UUID userId, RetrievalPlan plan) {
         int k = plan.maxK();
         List<CompletableFuture<List<RetrievedItem>>> futures = new ArrayList<>();
 
@@ -146,7 +148,9 @@ public class ContextPreWarmer {
                 case SQL_TODO_HISTORY    -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveTodoHistory(userId), retrievalPool);
                 case GRAPH_TRIGGER       -> CompletableFuture.supplyAsync(
-                        () -> structuredRetriever.retrieveTriggers(userId, List.of()), retrievalPool);
+                        () -> structuredRetriever.retrieveTriggers(userId,
+                                new ArrayList<>(workingMemory.getSessionDelta(sessionId).currentSessionTriggers())),
+                        retrievalPool);
                 case GRAPH_INTERVENTION_FIT -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveInterventionFit(userId), retrievalPool);
                 case GRAPH_BELIEF_NEIGH  -> CompletableFuture.supplyAsync(
