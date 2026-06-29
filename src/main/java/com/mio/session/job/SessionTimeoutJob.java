@@ -64,6 +64,7 @@ public class SessionTimeoutJob {
                 return Boolean.TRUE;
             });
             if (Boolean.TRUE.equals(ended)) {
+                workingMemory.clear(session.getId());
                 log.debug("SessionTimeoutJob: ended sessionId={}", session.getId());
             }
         } catch (Exception e) {

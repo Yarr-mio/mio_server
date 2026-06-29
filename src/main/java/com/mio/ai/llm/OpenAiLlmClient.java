@@ -180,6 +180,9 @@ public class OpenAiLlmClient implements LlmClient {
                 result[i] = (float) embeddingNode.get(i).asDouble();
             }
             return result;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Embeddings request interrupted", e);
         } catch (Exception e) {
             log.error("Embeddings API error: {}", e.getMessage());
             throw new RuntimeException("Embeddings request failed", e);
