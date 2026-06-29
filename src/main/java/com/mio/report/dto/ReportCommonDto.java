@@ -11,6 +11,7 @@ public class ReportCommonDto {
     public record TodoSummaryDto(
             int total,
             int completed,
+            @JsonProperty("partial_completed") int partialCompleted,
             int skipped,
             int expired,
             @JsonProperty("completion_rate") double completionRate,

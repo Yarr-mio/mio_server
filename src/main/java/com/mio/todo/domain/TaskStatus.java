@@ -5,6 +5,7 @@ import java.util.Arrays;
 public enum TaskStatus {
     SUGGESTED("suggested"),
     COMPLETED("completed"),
+    PARTIAL_COMPLETED("partial_completed"),
     SKIPPED("skipped"),
     EXPIRED("expired");
 
