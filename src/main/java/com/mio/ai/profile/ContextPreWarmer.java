@@ -149,6 +149,8 @@ public class ContextPreWarmer {
                         () -> structuredRetriever.retrieveTriggers(userId, List.of()), retrievalPool);
                 case GRAPH_INTERVENTION_FIT -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveInterventionFit(userId), retrievalPool);
+                case GRAPH_BELIEF_NEIGH  -> CompletableFuture.supplyAsync(
+                        () -> structuredRetriever.retrieveBeliefNeighbors(userId), retrievalPool);
                 default                  -> CompletableFuture.completedFuture(List.of());
             };
             futures.add(future);

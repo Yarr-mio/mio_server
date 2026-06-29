@@ -213,4 +213,39 @@ public class StructuredRetriever {
             return Collections.emptyList();
         }
     }
+
+    // belief_text는 AES-256 암호화 컬럼이므로 메타데이터 컬럼만 사용해 인접 신념 구성
+    public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId) {
+        try {
+            return jdbcTemplate.query(
+                    """
+                    SELECT b.id::text,
+                           b.belief_kind
+                             || ' [' || COALESCE(b.polarity, 'neutral') || ']'
+                             || ' conf:' || ROUND(b.confidence::numeric, 2)
+                             || ' support:' || COALESCE(b.support_count, 0)
+                             || ' contradict:' || COALESCE(b.contradict_count, 0) AS content,
+                           b.confidence AS score
+                    FROM user_beliefs b
+                    WHERE b.user_id = ?
+                      AND b.status = 'active'
+                      AND b.confidence BETWEEN 0.3 AND 0.85
+                    ORDER BY (COALESCE(b.support_count, 0) + COALESCE(b.contradict_count, 0)) DESC, b.confidence DESC
+                    LIMIT 5
+                    """,
+                    (rs, rowNum) -> new RetrievedItem(
+                            rs.getString("id"),
+                            RetrievalSource.GRAPH_BELIEF_NEIGH,
+                            rs.getString("content"),
+                            "sensitive",
+                            rs.getDouble("score"),
+                            rowNum + 1
+                    ),
+                    userId
+            );
+        } catch (Exception e) {
+            log.warn("StructuredRetriever.retrieveBeliefNeighbors failed for userId={}", userId, e);
+            return Collections.emptyList();
+        }
+    }
 }
