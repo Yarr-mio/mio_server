@@ -20,6 +20,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -147,10 +148,16 @@ public class ContextPreWarmer {
                         () -> structuredRetriever.retrieveRecentRisk(userId), retrievalPool);
                 case SQL_TODO_HISTORY    -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveTodoHistory(userId), retrievalPool);
-                case GRAPH_TRIGGER       -> CompletableFuture.supplyAsync(
-                        () -> structuredRetriever.retrieveTriggers(userId,
-                                new ArrayList<>(workingMemory.getSessionDelta(sessionId).currentSessionTriggers())),
-                        retrievalPool);
+                case GRAPH_TRIGGER       -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<String> triggers = new ArrayList<>(
+                                workingMemory.getSessionDelta(sessionId).currentSessionTriggers());
+                        return structuredRetriever.retrieveTriggers(userId, triggers);
+                    } catch (Exception e) {
+                        log.warn("ContextPreWarmer: GRAPH_TRIGGER triggers fetch failed for sessionId={}", sessionId, e);
+                        return Collections.<RetrievedItem>emptyList();
+                    }
+                }, retrievalPool);
                 case GRAPH_INTERVENTION_FIT -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveInterventionFit(userId), retrievalPool);
                 case GRAPH_BELIEF_NEIGH  -> CompletableFuture.supplyAsync(
