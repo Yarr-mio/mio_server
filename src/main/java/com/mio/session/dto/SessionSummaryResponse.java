@@ -19,7 +19,7 @@ public record SessionSummaryResponse(
         String summary,
         @JsonProperty("dominant_emotion") String dominantEmotion,
         @JsonProperty("avg_emotion_score") Integer avgEmotionScore,
-        @JsonProperty("bias_types_detected") String biasTypesDetected,
+        @JsonRawValue @JsonProperty("bias_types_detected") String biasTypesDetected,
         @JsonProperty("cbt_intervened") Boolean cbtIntervened,
         @JsonRawValue @JsonProperty("key_thoughts") String keyThoughts,
         @JsonProperty("socratic_count") Integer socraticCount,

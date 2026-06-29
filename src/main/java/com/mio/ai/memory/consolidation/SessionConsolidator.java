@@ -154,8 +154,8 @@ public class SessionConsolidator {
                         .map(ExtractorResult.ExtractedThought::thoughtText)
                         .filter(text -> text != null && !text.isBlank())
                         .toList());
-        boolean cbtIntervened = "cbt_success".equals(extracted.episodeType())
-                || "cbt_partial".equals(extracted.episodeType());
+        boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
+                || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
 
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType(),
