@@ -45,8 +45,8 @@ class ExtractorEpisodeTypeQaTest {
     static void setUp() {
         String apiKey = System.getenv("OPENAI_API_KEY");
         Assumptions.assumeTrue(
-                apiKey != null && !apiKey.isBlank(),
-                "OPENAI_API_KEY 환경변수 없음 — LLM 통합 테스트 skip"
+                apiKey != null && apiKey.startsWith("sk-"),
+                "OPENAI_API_KEY 미설정 또는 placeholder — LLM 통합 테스트 skip"
         );
         extractor = new ExtractorLlmClient(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper()),
