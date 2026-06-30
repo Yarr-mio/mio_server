@@ -66,7 +66,7 @@ public class CbtMetadataClassifier {
                     userSignal,
                     socraticQuestionsUsed));
             String responseJson = llmClient.complete(request);
-            return parse(responseJson, previousState, userSignal);
+            return parse(responseJson, CbtInterventionState.fromWireValue(previousState), userSignal);
         } catch (Exception e) {
             log.warn("CBT metadata classifier failed, defaulting to none: {}", e.getMessage());
             return CbtMetadataResult.none();
@@ -114,9 +114,8 @@ public class CbtMetadataClassifier {
                 socraticQuestionsUsed);
     }
 
-    private CbtMetadataResult parse(String json, String previousState, UserMessageSignal userSignal) throws Exception {
+    private CbtMetadataResult parse(String json, CbtInterventionState previous, UserMessageSignal userSignal) throws Exception {
         JsonNode root = objectMapper.readTree(sanitizeJson(json));
-        CbtInterventionState previous = CbtInterventionState.fromWireValue(previousState);
         CbtInterventionState state = CbtInterventionState.fromWireValue(
                 root.path("cbt_intervention_state").asText("none"));
         String completionReason = textOrNull(root, "completion_reason");
