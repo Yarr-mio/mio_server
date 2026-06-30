@@ -113,9 +113,9 @@ jobs:
 
             docker compose -f docker-compose.prod.yml pull
 
-            # 볼륨 재초기화: 비밀번호 불일치 해결 (최초 1회)
-            docker compose -f docker-compose.prod.yml down -v
-
+            # up -d: 이미지가 갱신된 app 컨테이너만 재생성하고 postgres/redis 볼륨은 보존한다.
+            # (과거 'down -v'는 매 배포마다 named volume을 삭제해 DB가 전부 초기화되는 문제가 있었음.
+            #  비밀번호 변경 등으로 볼륨 리셋이 필요하면 워크플로우가 아니라 수동 1회 작업으로 수행한다.)
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
 
             docker image prune -f
