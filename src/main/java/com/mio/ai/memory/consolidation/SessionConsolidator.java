@@ -104,19 +104,20 @@ public class SessionConsolidator {
     private static final Set<String> VALID_POLARITIES = Set.of("positive", "negative", "neutral");
 
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
-    // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
-    //   - @TransactionalEventListener와 @Transactional 조합 시 REQUIRES_NEW 또는 NOT_SUPPORTED 필수
-    //   - self-invocation 방지: 진입점(onSessionEnded)에 @Transactional 선언
+    // 진입점 자체에는 @Transactional을 두지 않는다. 1·2단계를 각각 self 프록시 + REQUIRES_NEW로
+    // 호출해, 요약 트랜잭션이 먼저 커밋된 뒤 메모리 보강 트랜잭션이 독립적으로 실행되게 한다.
+    // (진입점을 @Transactional로 두면 요약 tx가 커밋되지 않은 채 보강 tx가 suspend 상태로 겹쳐
+    //  커넥션 동시 점유·가시성 문제가 생긴다.)
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         EnrichmentInput enrichInput;
         try {
-            // 1단계: 사용자에게 노출되는 세션 요약을 이 트랜잭션에 영속화하고 DONE으로 표시한다.
-            enrichInput = consolidate(event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
-            sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
+            // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화하고 DONE까지 커밋한다.
+            // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
+            enrichInput = self.getObject().consolidate(
+                    event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
             // REQUIRES_NEW: 현재 트랜잭션이 rollback-only 또는 DB-aborted 상태일 수 있으므로
@@ -126,7 +127,7 @@ public class SessionConsolidator {
         }
 
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
-        // best-effort로 실행한다. 보강 단계가 실패해도 이미 커밋될 요약을 롤백시키지 않는다.
+        // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
         if (enrichInput != null) {
             try {
                 self.getObject().enrichMemory(enrichInput);
@@ -138,9 +139,11 @@ public class SessionConsolidator {
     }
 
     /**
-     * 1단계: 세션 요약을 생성·영속화한다(현재 트랜잭션).
-     * 메모리 보강에 필요한 입력을 반환하며, 보강 대상이 없으면 null을 반환한다.
+     * 1단계: 세션 요약을 생성·영속화하고 summary_status=DONE까지 커밋한다(독립 트랜잭션).
+     * 메모리 보강에 필요한 입력을 반환하며, 영속화할 요약이 없으면(세션/유저 부재·메시지 없음)
+     * 상태를 변경하지 않고 null을 반환한다. (요약 row 없이 DONE으로 표시되어 조회 시 404가 나는 것을 방지)
      */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public EnrichmentInput consolidate(UUID sessionId, UUID userId, String characterId, int socraticCount) {
         var session = sessionRepository.findById(sessionId).orElse(null);
         var user = userRepository.findById(userId).orElse(null);
@@ -207,6 +210,9 @@ public class SessionConsolidator {
                 .filter(code -> code != null && !code.isBlank())
                 .distinct()
                 .toList();
+
+        // 요약 row가 실제로 영속화된 성공 경로에서만 DONE으로 표시한다(이 트랜잭션 커밋 시 함께 반영).
+        sessionRepository.updateSummaryStatus(sessionId, SummaryStatus.DONE);
 
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
@@ -479,10 +485,10 @@ public class SessionConsolidator {
         List<UserBelief> existing = beliefRepository.findByUser_IdAndStatus(user.getId(), "active");
         // 동일 beliefKind + polarity의 기존 신념에 support/contradict 증거 추가
         // 없으면 새 belief 생성
+        // polarity가 둘 다 null이어도 동일 신념으로 매칭한다(중복 belief 생성 방지).
         UserBelief belief = existing.stream()
                 .filter(b -> b.getBeliefKind().equals(beliefKind)
-                        && b.getPolarity() != null
-                        && b.getPolarity().equals(polarity))
+                        && java.util.Objects.equals(b.getPolarity(), polarity))
                 .findFirst()
                 .orElseGet(() -> {
                     byte[] enc = messageEncryptor.encrypt(

@@ -7,6 +7,7 @@ import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.common.crypto.MessageEncryptor;
+import com.mio.session.domain.SummaryStatus;
 import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
@@ -20,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +42,7 @@ class SessionConsolidatorTest {
     private UserBeliefRepository beliefRepository;
     private BeliefEvidenceAccumulator evidenceAccumulator;
     private JdbcTemplate jdbcTemplate;
+    private SessionRepository sessionRepository;
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
@@ -47,6 +50,7 @@ class SessionConsolidatorTest {
         beliefRepository = mock(UserBeliefRepository.class);
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
         jdbcTemplate = mock(JdbcTemplate.class);
+        sessionRepository = mock(SessionRepository.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
 
@@ -54,7 +58,7 @@ class SessionConsolidatorTest {
         ObjectProvider<SessionConsolidator> self = mock(ObjectProvider.class);
 
         return new SessionConsolidator(
-                mock(SessionRepository.class),
+                sessionRepository,
                 mock(SessionSummaryRepository.class),
                 mock(SessionCheckpointRepository.class),
                 mock(UserRepository.class),
@@ -144,6 +148,20 @@ class SessionConsolidatorTest {
         assertThat(captor.getValue().getBeliefKind()).isEqualTo("core_self");
         assertThat(captor.getValue().getPolarity()).isEqualTo("negative");
         verify(evidenceAccumulator).accumulate(any(), eq("support"), eq(sessionId), eq(null));
+    }
+
+    @Test
+    @DisplayName("세션을 찾지 못하면 요약을 영속화하지 않고 DONE으로 표시하지 않는다")
+    void consolidate_sessionNotFound_doesNotMarkDone() {
+        SessionConsolidator consolidator = newConsolidator();
+        when(sessionRepository.findById(any())).thenReturn(Optional.empty());
+
+        SessionConsolidator.EnrichmentInput result =
+                consolidator.consolidate(UUID.randomUUID(), UUID.randomUUID(), "char-1", 0);
+
+        assertThat(result).isNull();
+        // 요약 row가 없는데 DONE으로 표시되면 조회 시 404가 발생하므로, 상태를 건드리지 않아야 한다.
+        verify(sessionRepository, never()).updateSummaryStatus(any(), any());
     }
 
     @Test
