@@ -23,6 +23,7 @@ import com.mio.user.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -92,40 +93,70 @@ public class SessionConsolidator {
     private final OntologyValidator ontologyValidator;
     private final TodoRecommendationService todoRecommendationService;
     private final SummaryStatusWriter summaryStatusWriter;
+    // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
+    // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
+    private final ObjectProvider<SessionConsolidator> self;
+
+    // belief_kind / polarity DB CHECK 제약과 동일한 허용값 화이트리스트.
+    // ExtractorLLM이 문자열 "null"이나 시드 밖 환각값을 반환해도 DB 위반 없이 걸러내기 위함.
+    private static final Set<String> VALID_BELIEF_KINDS = Set.of(
+            "core_self", "core_other", "core_world", "intermediate_rule", "compensatory_strategy");
+    private static final Set<String> VALID_POLARITIES = Set.of("positive", "negative", "neutral");
 
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
-    // @Transactional(REQUIRES_NEW): 응고 작업을 독립 트랜잭션으로 실행
-    //   - @TransactionalEventListener와 @Transactional 조합 시 REQUIRES_NEW 또는 NOT_SUPPORTED 필수
-    //   - self-invocation 방지: 진입점(onSessionEnded)에 @Transactional 선언
+    // 진입점 자체에는 @Transactional을 두지 않는다. 1·2단계를 각각 self 프록시 + REQUIRES_NEW로
+    // 호출해, 요약 트랜잭션이 먼저 커밋된 뒤 메모리 보강 트랜잭션이 독립적으로 실행되게 한다.
+    // (진입점을 @Transactional로 두면 요약 tx가 커밋되지 않은 채 보강 tx가 suspend 상태로 겹쳐
+    //  커넥션 동시 점유·가시성 문제가 생긴다.)
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
+        EnrichmentInput enrichInput;
         try {
-            consolidate(event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
-            sessionRepository.updateSummaryStatus(event.sessionId(), SummaryStatus.DONE);
+            // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화하고 DONE까지 커밋한다.
+            // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
+            enrichInput = self.getObject().consolidate(
+                    event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
         } catch (Exception e) {
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
             // REQUIRES_NEW: 현재 트랜잭션이 rollback-only 또는 DB-aborted 상태일 수 있으므로
             // 별도 트랜잭션에서 failed 상태를 저장한다.
             summaryStatusWriter.markFailed(event.sessionId());
+            return;
+        }
+
+        // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
+        // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
+        if (enrichInput != null) {
+            try {
+                self.getObject().enrichMemory(enrichInput);
+            } catch (Exception e) {
+                log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
+                        event.sessionId(), e);
+            }
         }
     }
 
-    public void consolidate(UUID sessionId, UUID userId, String characterId, int socraticCount) {
+    /**
+     * 1단계: 세션 요약을 생성·영속화하고 summary_status=DONE까지 커밋한다(독립 트랜잭션).
+     * 메모리 보강에 필요한 입력을 반환하며, 영속화할 요약이 없으면(세션/유저 부재·메시지 없음)
+     * 상태를 변경하지 않고 null을 반환한다. (요약 row 없이 DONE으로 표시되어 조회 시 404가 나는 것을 방지)
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public EnrichmentInput consolidate(UUID sessionId, UUID userId, String characterId, int socraticCount) {
         var session = sessionRepository.findById(sessionId).orElse(null);
         var user = userRepository.findById(userId).orElse(null);
         if (session == null || user == null) {
             log.warn("SessionConsolidator: session or user not found sessionId={}", sessionId);
-            return;
+            return null;
         }
 
         // 1. 대화 컨텍스트 구성 (체크포인트 요약 + 잔여 메시지)
         String conversationText = buildConversationContext(sessionId);
         if (conversationText.isBlank()) {
             log.info("SessionConsolidator: no messages found for sessionId={}", sessionId);
-            return;
+            return null;
         }
 
         // 2. 세션 요약 생성 (LLM)
@@ -174,38 +205,67 @@ public class SessionConsolidator {
             );
         }
 
-        // 7. cbt_patterns 갱신 (세션 내 동일 왜곡 중복 방지 — distinct codes만 처리)
-        validThoughts.stream()
-                .map(ExtractorResult.ExtractedThought::distortionCode)
-                .filter(code -> code != null && !code.isBlank())
-                .distinct()
-                .forEach(code -> upsertCbtPattern(userId, code));
-
-        // 8. emotional_states INSERT
-        if (dominantEmotion != null) {
-            insertEmotionalState(user, sessionId, dominantEmotion);
-        }
-
-        // 9. thoughts + UserBelief 연결
-        for (ExtractorResult.ExtractedThought extracted_thought : validThoughts) {
-            persistThought(user, sessionId, extracted_thought);
-        }
-
-        // 10. 세션 종료 시 Todo 3건 자동 생성 (MIO-CBT-015)
         List<String> distortionCodes = validThoughts.stream()
                 .map(ExtractorResult.ExtractedThought::distortionCode)
                 .filter(code -> code != null && !code.isBlank())
                 .distinct()
                 .toList();
+
+        // 요약 row가 실제로 영속화된 성공 경로에서만 DONE으로 표시한다(이 트랜잭션 커밋 시 함께 반영).
+        sessionRepository.updateSummaryStatus(sessionId, SummaryStatus.DONE);
+
+        log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
+                sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
+
+        return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes);
+    }
+
+    /**
+     * 2단계: 메모리 보강(cbt_patterns / emotional_states / thoughts·beliefs / todos)을
+     * 요약과 분리된 별도 트랜잭션으로 실행한다. 이 단계의 실패는 요약 영속화에 영향을 주지 않는다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void enrichMemory(EnrichmentInput in) {
+        var user = userRepository.findById(in.userId()).orElse(null);
+        var session = sessionRepository.findById(in.sessionId()).orElse(null);
+        if (user == null || session == null) {
+            log.warn("SessionConsolidator: enrich skipped — session or user not found sessionId={}", in.sessionId());
+            return;
+        }
+        UUID sessionId = in.sessionId();
+
+        // 7. cbt_patterns 갱신 (세션 내 동일 왜곡 중복 방지 — distinct codes만 처리)
+        in.distortionCodes().forEach(code -> upsertCbtPattern(in.userId(), code));
+
+        // 8. emotional_states INSERT
+        if (in.dominantEmotion() != null) {
+            insertEmotionalState(user, sessionId, in.dominantEmotion());
+        }
+
+        // 9. thoughts + UserBelief 연결
+        for (ExtractorResult.ExtractedThought extractedThought : in.validThoughts()) {
+            persistThought(user, sessionId, extractedThought);
+        }
+
+        // 10. 세션 종료 시 Todo 3건 자동 생성 (MIO-CBT-015)
         try {
-            todoRecommendationService.generateForSession(user, session, distortionCodes, dominantEmotion);
+            todoRecommendationService.generateForSession(user, session, in.distortionCodes(), in.dominantEmotion());
         } catch (Exception e) {
             log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
         }
 
-        log.info("SessionConsolidator: completed sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
-                sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
+        log.info("SessionConsolidator: enrichment completed sessionId={} thoughts={} emotion={}",
+                sessionId, in.validThoughts().size(), in.dominantEmotion());
     }
+
+    /** 2단계 메모리 보강에 필요한 입력 (요약 트랜잭션 종료 후 별도 트랜잭션으로 전달). */
+    public record EnrichmentInput(
+            UUID userId,
+            UUID sessionId,
+            List<ExtractorResult.ExtractedThought> validThoughts,
+            String dominantEmotion,
+            List<String> distortionCodes
+    ) {}
 
     // ── 대화 컨텍스트 구성 ────────────────────────────────────────
 
@@ -405,20 +465,30 @@ public class SessionConsolidator {
         thoughtRepository.save(thought);
 
         // UserBelief 연결 (new belief로 추가 또는 existing에 evidence 추가)
-        if (extracted.beliefKind() != null) {
-            addBeliefEvidence(user, sessionId, extracted);
+        // ExtractorLLM이 문자열 "null"·시드 밖 환각값을 반환할 수 있으므로 DB CHECK 허용값으로 검증한다.
+        // !=null 만으로는 문자열 "null"을 거르지 못해 user_beliefs CHECK(23514) 위반을 유발한다.
+        String beliefKind = extracted.beliefKind();
+        if (beliefKind != null && !VALID_BELIEF_KINDS.contains(beliefKind)) {
+            log.warn("SessionConsolidator: discarded unknown beliefKind='{}' sessionId={}", beliefKind, sessionId);
+            beliefKind = null;
+        }
+        if (beliefKind != null) {
+            addBeliefEvidence(user, sessionId, extracted, beliefKind);
         }
     }
 
     private void addBeliefEvidence(User user, UUID sessionId,
-                                   ExtractorResult.ExtractedThought extracted) {
+                                   ExtractorResult.ExtractedThought extracted, String beliefKind) {
+        // polarity도 DB CHECK(IN positive/negative/neutral) 대상 — 허용값 밖이면 null(컬럼 nullable)로 정규화.
+        String polarity = VALID_POLARITIES.contains(extracted.polarity()) ? extracted.polarity() : null;
+
         List<UserBelief> existing = beliefRepository.findByUser_IdAndStatus(user.getId(), "active");
         // 동일 beliefKind + polarity의 기존 신념에 support/contradict 증거 추가
         // 없으면 새 belief 생성
+        // polarity가 둘 다 null이어도 동일 신념으로 매칭한다(중복 belief 생성 방지).
         UserBelief belief = existing.stream()
-                .filter(b -> b.getBeliefKind().equals(extracted.beliefKind())
-                        && b.getPolarity() != null
-                        && b.getPolarity().equals(extracted.polarity()))
+                .filter(b -> b.getBeliefKind().equals(beliefKind)
+                        && java.util.Objects.equals(b.getPolarity(), polarity))
                 .findFirst()
                 .orElseGet(() -> {
                     byte[] enc = messageEncryptor.encrypt(
@@ -427,13 +497,13 @@ public class SessionConsolidator {
                             .user(user)
                             .beliefTextCiphertext(enc)
                             .beliefTextDekId(messageEncryptor.dekId())
-                            .beliefKind(extracted.beliefKind())
-                            .polarity(extracted.polarity())
+                            .beliefKind(beliefKind)
+                            .polarity(polarity)
                             .build();
                     return beliefRepository.save(newBelief);
                 });
 
-        String evidenceKind = "negative".equals(extracted.polarity()) ? "support" : "contradict";
+        String evidenceKind = "negative".equals(polarity) ? "support" : "contradict";
         evidenceAccumulator.accumulate(belief, evidenceKind, sessionId, null);
     }
 
