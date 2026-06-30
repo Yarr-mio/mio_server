@@ -48,4 +48,35 @@ class CbtMetadataClassifierTest {
         assertThat(result.requiresEmotionScore()).isTrue();
         assertThat(result.biasType()).isEqualTo("catastrophizing");
     }
+
+    @Test
+    @DisplayName("이미 completed 상태인 후속 턴에서는 감정점수 target 생성을 다시 요구하지 않는다")
+    void classify_completedPreviousState_suppressesDuplicateEmotionScoreTarget() {
+        LlmClient llmClient = mock(LlmClient.class);
+        when(llmClient.complete(any(LlmRequest.class))).thenReturn("""
+                {
+                  "cbt_intervention_state": "completed",
+                  "completion_reason": "user_reframed_thought",
+                  "requires_emotion_score": true,
+                  "is_socratic": false,
+                  "bias_type": "catastrophizing",
+                  "reconstructed_thought": "최악은 아닐 수 있다"
+                }
+                """);
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+
+        CbtMetadataResult result = classifier.classify(
+                "completed",
+                List.of(),
+                "고마워. 이제 다른 얘기 해도 될까?",
+                "물론이에요. 지금 떠오르는 이야기를 편하게 말해 주세요.",
+                new UserMessageSignal(45, "catastrophizing"),
+                1,
+                false
+        );
+
+        assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);
+        assertThat(result.requiresEmotionScore()).isFalse();
+        assertThat(result.shouldCreateEmotionScoreTarget()).isFalse();
+    }
 }
