@@ -29,13 +29,13 @@ public class ExtractorLlmClient {
               "thoughts": [
                 {
                   "thoughtText": "사용자의 자동적 사고 원문",
-                  "distortionCode": "overgeneralization|catastrophizing|mind_reading|all_or_nothing|self_blame|emotional_reasoning|null",
-                  "beliefKind": "core_self|core_other|core_world|intermediate_rule|compensatory_strategy|null",
-                  "polarity": "positive|negative|neutral",
+                  "distortionCode": "overgeneralization|catastrophizing|mind_reading|all_or_nothing|self_blame|emotional_reasoning 중 하나, 없으면 JSON null",
+                  "beliefKind": "core_self|core_other|core_world|intermediate_rule|compensatory_strategy 중 하나, 없으면 JSON null",
+                  "polarity": "positive|negative|neutral 중 하나, 불명확하면 JSON null",
                   "confidence": 0.0~1.0
                 }
               ],
-              "dominantEmotion": "happy|calm|anxious|sad|angry|ashamed|numb|tired|confused|null",
+              "dominantEmotion": "happy|calm|anxious|sad|angry|ashamed|numb|tired|confused 중 하나, 없으면 JSON null",
               "emotionScore": 0~100,
               "triggerTags": ["trigger1", "trigger2"],
               "episodeType": "crisis|cbt_success|cbt_partial|support_only|regular"
@@ -74,7 +74,9 @@ public class ExtractorLlmClient {
                  잡담, 계획 수립, 긍정적인 근황 이야기 등.
 
             - thoughts는 최대 3개만 추출합니다.
-            - distortionCode와 beliefKind는 시드에 없는 값이면 null로 설정하세요.
+            - distortionCode, beliefKind, polarity, dominantEmotion은 해당하는 값이 없으면
+              반드시 문자열 "null"이 아니라 JSON null로 설정하세요. (올바른 예: "beliefKind": null)
+            - 위 목록(시드)에 없는 값은 임의로 만들어내지 말고 JSON null로 두세요.
             - triggerTags는 구체적인 상황 키워드로 2~4개를 추출합니다.
             - emotionScore: 세션 종료 시점의 사용자 감정 상태를 0(매우 부정)~100(매우 긍정)으로 수치화합니다.
             """;
