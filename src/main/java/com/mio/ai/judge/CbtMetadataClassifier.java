@@ -66,7 +66,7 @@ public class CbtMetadataClassifier {
                     userSignal,
                     socraticQuestionsUsed));
             String responseJson = llmClient.complete(request);
-            return parse(responseJson, userSignal);
+            return parse(responseJson, CbtInterventionState.fromWireValue(previousState), userSignal);
         } catch (Exception e) {
             log.warn("CBT metadata classifier failed, defaulting to none: {}", e.getMessage());
             return CbtMetadataResult.none();
@@ -114,7 +114,7 @@ public class CbtMetadataClassifier {
                 socraticQuestionsUsed);
     }
 
-    private CbtMetadataResult parse(String json, UserMessageSignal userSignal) throws Exception {
+    private CbtMetadataResult parse(String json, CbtInterventionState previous, UserMessageSignal userSignal) throws Exception {
         JsonNode root = objectMapper.readTree(sanitizeJson(json));
         CbtInterventionState state = CbtInterventionState.fromWireValue(
                 root.path("cbt_intervention_state").asText("none"));
@@ -129,10 +129,13 @@ public class CbtMetadataClassifier {
             biasType = null;
         }
         String reconstructedThought = textOrNull(root, "reconstructed_thought");
+        boolean shouldRequireEmotionScore = state == CbtInterventionState.COMPLETED
+                && previous != CbtInterventionState.COMPLETED
+                && requiresEmotionScore;
         return new CbtMetadataResult(
                 state,
                 completionReason,
-                state == CbtInterventionState.COMPLETED && requiresEmotionScore,
+                shouldRequireEmotionScore,
                 isSocratic,
                 biasType,
                 reconstructedThought
