@@ -135,6 +135,18 @@ public class SessionConsolidator {
                 log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
                         event.sessionId(), e);
             }
+
+            // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
+            // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
+            try {
+                todoRecommendationService.generateForSession(
+                        enrichInput.userId(), enrichInput.sessionId(),
+                        new TodoRecommendationService.TodoGenerationInput(
+                                enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
+                                enrichInput.triggerTags(), enrichInput.summaryText()));
+            } catch (Exception e) {
+                log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
+            }
         }
     }
 
@@ -217,7 +229,8 @@ public class SessionConsolidator {
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
 
-        return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes);
+        return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes,
+                extracted.triggerTags(), summaryText);
     }
 
     /**
@@ -247,12 +260,8 @@ public class SessionConsolidator {
             persistThought(user, sessionId, extractedThought);
         }
 
-        // 10. 세션 종료 시 Todo 3건 자동 생성 (MIO-CBT-015)
-        try {
-            todoRecommendationService.generateForSession(user, session, in.distortionCodes(), in.dominantEmotion());
-        } catch (Exception e) {
-            log.warn("SessionConsolidator: todo generation failed sessionId={}", sessionId, e);
-        }
+        // Todo 자동 생성은 블로킹 LLM 개인화 호출을 포함하므로 이 트랜잭션 안에서 하지 않는다.
+        // onSessionEnded에서 이 트랜잭션 커밋 이후 별도로 호출한다(이슈 #228).
 
         log.info("SessionConsolidator: enrichment completed sessionId={} thoughts={} emotion={}",
                 sessionId, in.validThoughts().size(), in.dominantEmotion());
@@ -264,7 +273,9 @@ public class SessionConsolidator {
             UUID sessionId,
             List<ExtractorResult.ExtractedThought> validThoughts,
             String dominantEmotion,
-            List<String> distortionCodes
+            List<String> distortionCodes,
+            List<String> triggerTags,
+            String summaryText
     ) {}
 
     // ── 대화 컨텍스트 구성 ────────────────────────────────────────
