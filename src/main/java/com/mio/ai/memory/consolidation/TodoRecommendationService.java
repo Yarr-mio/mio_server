@@ -3,24 +3,37 @@ package com.mio.ai.memory.consolidation;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.UserMemoryPreference;
+import com.mio.ai.memory.episodic.InterventionOutcome;
+import com.mio.ai.memory.episodic.InterventionOutcomeRepository;
 import com.mio.ai.memory.ontology.BehaviorTemplate;
 import com.mio.ai.memory.ontology.BehaviorTemplateRepository;
 import com.mio.ai.repository.UserMemoryPreferenceRepository;
 import com.mio.session.domain.Session;
+import com.mio.session.repository.SessionRepository;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
+import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
  * CBT 개입 완료 세션 종료 시 behavior_template 기반으로 Todo 3건 자동 생성 (MIO-CBT-015).
  * 3가지 카테고리(심리_안정 / 인지_재구성 / 행동_활성화) 각 1건씩 균형 배정.
+ *
+ * <p>선택은 세션 신호(전체 왜곡코드·지배 감정)로 템플릿을 스코어링하고, 최고점 동점 후보 중
+ * 무작위로 뽑아 다양성을 확보한다. 이후 {@link TodoActionPersonalizer}가 선택된 템플릿의
+ * action_text를 세션 맥락으로 개인화한다(실패 시 원본 문구 폴백). — 이슈 #228
  */
 @Slf4j
 @Service
@@ -29,59 +42,161 @@ public class TodoRecommendationService {
 
     private static final List<String> CATEGORIES = List.of("심리_안정", "인지_재구성", "행동_활성화");
     private static final int TODOS_PER_SESSION = 3;
+    private static final int DISTORTION_MATCH_WEIGHT = 2;
+    private static final int EMOTION_MATCH_WEIGHT = 1;
+    // 과거 성과(intervention_outcomes) 반영 상한. 왜곡 매칭 1건(+2)과 동일 크기로 제한해
+    // 임상 적합도가 이력보다 우선하도록 한다.
+    private static final int HISTORY_AFFINITY_CAP = 2;
 
     private final BehaviorTemplateRepository templateRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserMemoryPreferenceRepository memoryPreferenceRepository;
+    private final InterventionOutcomeRepository outcomeRepository;
+    private final UserRepository userRepository;
+    private final SessionRepository sessionRepository;
+    private final TodoActionPersonalizer actionPersonalizer;
     private final ObjectMapper objectMapper;
 
-    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
-    public void generateForSession(User user, Session session,
-                                   List<String> distortionCodes, String dominantEmotion) {
-        List<String> disliked = loadDislikedPatterns(user.getId());
-        String firstDistortion = distortionCodes.isEmpty() ? null : distortionCodes.get(0);
+    /**
+     * 세션 신호로 템플릿을 선별·개인화한 뒤 Todo를 저장한다.
+     *
+     * <p>블로킹 LLM 호출({@link TodoActionPersonalizer#personalize})이 DB 트랜잭션 안에서
+     * 실행되지 않도록, 이 메서드 자체에는 트랜잭션을 두지 않는다. 조회는 트랜잭션 없이 수행하고,
+     * 개인화(LLM) 이후 쓰기만 {@link #persistTasks}의 짧은 트랜잭션으로 분리한다.
+     * (호출부 {@code SessionConsolidator#onSessionEnded}는 다른 트랜잭션이 열려있지 않은
+     *  지점에서 호출한다.)
+     */
+    public void generateForSession(UUID userId, UUID sessionId, TodoGenerationInput input) {
+        List<String> disliked = loadDislikedPatterns(userId);
+        Set<String> distortions = Set.copyOf(input.distortionCodes());
+        String emotion = input.dominantEmotion();
 
-        List<BehaviorTemplate> candidates = templateRepository
-                .findByDistortionOrEmotion(firstDistortion, dominantEmotion);
-
-        if (candidates.isEmpty()) {
-            candidates = templateRepository.findAll();
-        }
-
-        List<BehaviorTemplate> filtered = candidates.stream()
+        List<BehaviorTemplate> pool = templateRepository.findAll().stream()
                 .filter(t -> !disliked.contains(t.getInterventionKind()))
                 .toList();
-
-        List<BehaviorTask> tasks = selectBalanced(filtered, user, session);
-        if (!tasks.isEmpty()) {
-            behaviorTaskRepository.saveAll(tasks);
-            log.info("[TodoRecommendation] generated {} todos for userId={} sessionId={}",
-                    tasks.size(), user.getId(), session.getId());
+        if (pool.isEmpty()) {
+            log.info("[TodoRecommendation] no candidate templates for userId={}", userId);
+            return;
         }
+
+        Map<String, Integer> historyAffinity = loadHistoryAffinity(userId);
+        List<BehaviorTemplate> selected = selectBalanced(pool, distortions, emotion, historyAffinity);
+        if (selected.isEmpty()) {
+            return;
+        }
+
+        // LLM 개인화는 트랜잭션 밖에서 수행 (블로킹 HTTP 호출 동안 커넥션 점유 방지).
+        List<String> actionTexts = actionPersonalizer.personalize(
+                input.sessionSummary(), input.triggerTags(), selected);
+
+        persistTasks(userId, sessionId, selected, actionTexts);
     }
 
-    private List<BehaviorTask> selectBalanced(List<BehaviorTemplate> pool, User user, Session session) {
+    /**
+     * 선택·개인화가 끝난 Todo를 저장한다. {@code saveAll}이 자체 트랜잭션으로 원자적으로 처리하므로
+     * 별도 트랜잭션 경계를 두지 않는다(별도로 두면 같은 빈 self-invocation이라 어차피 적용되지 않음).
+     */
+    private void persistTasks(UUID userId, UUID sessionId,
+                              List<BehaviorTemplate> selected, List<String> actionTexts) {
+        User user = userRepository.findById(userId).orElse(null);
+        Session session = sessionRepository.findById(sessionId).orElse(null);
+        if (user == null || session == null) {
+            log.warn("[TodoRecommendation] persist skipped — user or session not found userId={} sessionId={}",
+                    userId, sessionId);
+            return;
+        }
+
+        List<BehaviorTask> tasks = new ArrayList<>(selected.size());
+        for (int i = 0; i < selected.size(); i++) {
+            tasks.add(toTask(user, session, selected.get(i), actionTexts.get(i)));
+        }
+        behaviorTaskRepository.saveAll(tasks);
+        log.info("[TodoRecommendation] generated {} todos for userId={} sessionId={}",
+                tasks.size(), userId, sessionId);
+    }
+
+    /** 카테고리별로 세션 신호 스코어 최고점 후보 중 무작위 1건 선택. */
+    private List<BehaviorTemplate> selectBalanced(List<BehaviorTemplate> pool,
+                                                  Set<String> distortions, String emotion,
+                                                  Map<String, Integer> historyAffinity) {
         Map<String, List<BehaviorTemplate>> byCategory = pool.stream()
                 .collect(Collectors.groupingBy(BehaviorTemplate::getCategory));
 
-        List<BehaviorTask> result = new ArrayList<>();
+        List<BehaviorTemplate> result = new ArrayList<>();
         for (String category : CATEGORIES) {
             List<BehaviorTemplate> group = byCategory.getOrDefault(category, List.of());
             if (group.isEmpty()) continue;
-            BehaviorTemplate chosen = group.get(0);
-            result.add(BehaviorTask.builder()
-                    .user(user)
-                    .sourceSession(session)
-                    .generatedFrom("chat")
-                    .actionText(chosen.getActionTextKo())
-                    .category(chosen.getCategory())
-                    .difficulty(chosen.getDifficulty())
-                    .estimatedMinutes(chosen.getEstimatedMinutes())
-                    .interventionKind(chosen.getInterventionKind())
-                    .build());
+
+            int topScore = group.stream()
+                    .mapToInt(t -> score(t, distortions, emotion, historyAffinity))
+                    .max()
+                    .orElse(0);
+            List<BehaviorTemplate> best = group.stream()
+                    .filter(t -> score(t, distortions, emotion, historyAffinity) == topScore)
+                    .toList();
+
+            result.add(best.get(ThreadLocalRandom.current().nextInt(best.size())));
             if (result.size() >= TODOS_PER_SESSION) break;
         }
         return result;
+    }
+
+    private int score(BehaviorTemplate template, Set<String> distortions, String emotion,
+                      Map<String, Integer> historyAffinity) {
+        int score = 0;
+        List<String> fitsDistortions = template.getFitsDistortions();
+        if (fitsDistortions != null) {
+            for (String code : fitsDistortions) {
+                // distortions는 null 비허용 Set(Set.copyOf)이라 contains(null)이 NPE를 던진다.
+                if (code != null && distortions.contains(code)) {
+                    score += DISTORTION_MATCH_WEIGHT;
+                }
+            }
+        }
+        List<String> fitsEmotions = template.getFitsEmotions();
+        if (emotion != null && fitsEmotions != null && fitsEmotions.contains(emotion)) {
+            score += EMOTION_MATCH_WEIGHT;
+        }
+        // 과거 성과: 감정이 개선됐던 개입은 가점, 악화됐던 개입은 감점 (상한/하한 클램프).
+        score += historyAffinity.getOrDefault(template.getInterventionKind(), 0);
+        return score;
+    }
+
+    /**
+     * 최근 개입 성과(intervention_outcomes)를 intervention_kind별 선호도 점수로 집계한다.
+     * userReaction: positive(+1) / negative(-1) / neutral(0)을 합산 후 [-CAP, +CAP]로 클램프.
+     */
+    private Map<String, Integer> loadHistoryAffinity(UUID userId) {
+        List<InterventionOutcome> recent = outcomeRepository.findRecentByUserId(userId);
+        Map<String, Integer> raw = new HashMap<>();
+        for (InterventionOutcome outcome : recent) {
+            String kind = outcome.getInterventionKind();
+            if (kind == null) continue;
+            raw.merge(kind, reactionScore(outcome.getUserReaction()), Integer::sum);
+        }
+        Map<String, Integer> affinity = new HashMap<>();
+        raw.forEach((kind, sum) ->
+                affinity.put(kind, Math.max(-HISTORY_AFFINITY_CAP, Math.min(HISTORY_AFFINITY_CAP, sum))));
+        return affinity;
+    }
+
+    private int reactionScore(String reaction) {
+        if ("positive".equals(reaction)) return 1;
+        if ("negative".equals(reaction)) return -1;
+        return 0;
+    }
+
+    private BehaviorTask toTask(User user, Session session, BehaviorTemplate template, String actionText) {
+        return BehaviorTask.builder()
+                .user(user)
+                .sourceSession(session)
+                .generatedFrom("chat")
+                .actionText(actionText)
+                .category(template.getCategory())
+                .difficulty(template.getDifficulty())
+                .estimatedMinutes(template.getEstimatedMinutes())
+                .interventionKind(template.getInterventionKind())
+                .build();
     }
 
     private List<String> loadDislikedPatterns(UUID userId) {
@@ -95,5 +210,22 @@ public class TodoRecommendationService {
                     }
                 })
                 .orElse(List.of());
+    }
+
+    /** Todo 생성에 필요한 세션 신호 묶음. 선택은 왜곡·감정, 문구 개인화는 요약·트리거를 사용한다. */
+    public record TodoGenerationInput(
+            List<String> distortionCodes,
+            String dominantEmotion,
+            List<String> triggerTags,
+            String sessionSummary
+    ) {
+        public TodoGenerationInput {
+            // List.copyOf는 null 원소가 있으면 NPE. LLM 파생 값(triggerTags 등)에 null이 섞일 수 있어
+            // 스트림으로 null을 걸러낸다.
+            distortionCodes = distortionCodes != null
+                    ? distortionCodes.stream().filter(java.util.Objects::nonNull).toList() : List.of();
+            triggerTags = triggerTags != null
+                    ? triggerTags.stream().filter(java.util.Objects::nonNull).toList() : List.of();
+        }
     }
 }
