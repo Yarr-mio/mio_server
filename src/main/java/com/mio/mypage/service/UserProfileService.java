@@ -69,7 +69,8 @@ public class UserProfileService {
                 preferredCharacter,
                 new UserStatsDto(totalCheckins, consecutiveDays, todoCompleted),
                 emotionDist,
-                user.getSignupStep().name()
+                user.getSignupStep().name(),
+                user.getSignupCompletedAt()
         );
     }
 
