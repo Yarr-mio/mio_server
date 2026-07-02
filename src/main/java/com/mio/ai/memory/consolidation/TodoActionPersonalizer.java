@@ -88,9 +88,13 @@ public class TodoActionPersonalizer {
     /** 파싱·검증 실패 시 null 반환(호출측 전체 폴백). 개별 항목 검증은 {@link #mergeWithFallback}에서 처리. */
     private List<String> parse(String raw, int expectedSize) {
         try {
+            // 마크다운 코드블록·대화형 접두사("Here is the JSON:" 등)를 모두 견고하게 처리:
+            // 첫 '{'와 마지막 '}' 사이만 추출한다.
             String cleaned = raw.trim();
-            if (cleaned.startsWith("```")) {
-                cleaned = cleaned.replaceAll("```json\\n?", "").replaceAll("```", "").trim();
+            int start = cleaned.indexOf('{');
+            int end = cleaned.lastIndexOf('}');
+            if (start != -1 && end != -1 && start < end) {
+                cleaned = cleaned.substring(start, end + 1);
             }
             JsonNode node = objectMapper.readTree(cleaned);
             JsonNode actions = node.get("actions");
@@ -104,7 +108,9 @@ public class TodoActionPersonalizer {
             }
             return result;
         } catch (Exception e) {
-            log.warn("[TodoPersonalizer] response parsing failed: {}", raw, e);
+            // raw는 세션 파생 민감 정보를 포함할 수 있어 본문을 로깅하지 않고 길이만 남긴다.
+            log.warn("[TodoPersonalizer] response parsing failed; using template defaults. responseLength={}",
+                    raw == null ? 0 : raw.length(), e);
             return null;
         }
     }
