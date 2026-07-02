@@ -2,6 +2,7 @@ package com.mio.mypage.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -12,7 +13,8 @@ public record UserProfileResponse(
         @JsonProperty("preferred_character") PreferredCharacterDto preferredCharacter,
         UserStatsDto stats,
         @JsonProperty("monthly_emotion_distribution") List<EmotionDistributionDto> monthlyEmotionDistribution,
-        @JsonProperty("signup_step") String signupStep
+        @JsonProperty("signup_step") String signupStep,
+        @JsonProperty("joined_at") OffsetDateTime joinedAt
 ) {
     public record PreferredCharacterDto(
             @JsonProperty("character_id") String characterId,
