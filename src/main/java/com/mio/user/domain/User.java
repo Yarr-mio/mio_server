@@ -93,6 +93,9 @@ public class User {
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
+    @Column(name = "signup_completed_at")
+    private OffsetDateTime signupCompletedAt;
+
     @Column(name = "deleted_at")
     private OffsetDateTime deletedAt;
 
@@ -131,6 +134,7 @@ public class User {
     public void finalizeSignup() {
         this.signupStep = SignupStep.COMPLETED;
         this.status = "ACTIVE";
+        this.signupCompletedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public void updateProfile(String nickname, String ageRange, boolean ageRangePresent) {
