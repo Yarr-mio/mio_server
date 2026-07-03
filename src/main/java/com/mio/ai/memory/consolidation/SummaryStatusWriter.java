@@ -18,6 +18,11 @@ public class SummaryStatusWriter {
     private final SessionRepository sessionRepository;
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markDone(UUID sessionId) {
+        sessionRepository.updateSummaryStatus(sessionId, SummaryStatus.DONE);
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markFailed(UUID sessionId) {
         try {
             sessionRepository.updateSummaryStatus(sessionId, SummaryStatus.FAILED);

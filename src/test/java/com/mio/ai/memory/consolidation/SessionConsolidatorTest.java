@@ -16,6 +16,7 @@ import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -34,6 +35,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.inOrder;
 
 class SessionConsolidatorTest {
 
@@ -43,6 +45,9 @@ class SessionConsolidatorTest {
     private BeliefEvidenceAccumulator evidenceAccumulator;
     private JdbcTemplate jdbcTemplate;
     private SessionRepository sessionRepository;
+    private TodoRecommendationService todoRecommendationService;
+    private SummaryStatusWriter summaryStatusWriter;
+    private ObjectProvider<SessionConsolidator> self;
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
@@ -51,11 +56,14 @@ class SessionConsolidatorTest {
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
         jdbcTemplate = mock(JdbcTemplate.class);
         sessionRepository = mock(SessionRepository.class);
+        todoRecommendationService = mock(TodoRecommendationService.class);
+        summaryStatusWriter = mock(SummaryStatusWriter.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
 
         @SuppressWarnings("unchecked")
-        ObjectProvider<SessionConsolidator> self = mock(ObjectProvider.class);
+        ObjectProvider<SessionConsolidator> selfProvider = mock(ObjectProvider.class);
+        self = selfProvider;
 
         return new SessionConsolidator(
                 sessionRepository,
@@ -71,9 +79,9 @@ class SessionConsolidatorTest {
                 jdbcTemplate,
                 new ObjectMapper(),
                 mock(OntologyValidator.class),
-                mock(TodoRecommendationService.class),
-                mock(SummaryStatusWriter.class),
-                self
+                todoRecommendationService,
+                summaryStatusWriter,
+                selfProvider
         );
     }
 
@@ -85,6 +93,53 @@ class SessionConsolidatorTest {
 
     private ExtractorResult.ExtractedThought thought(String beliefKind, String polarity) {
         return new ExtractorResult.ExtractedThought("자동적 사고", "self_blame", beliefKind, polarity, 0.7);
+    }
+
+    @Test
+    @DisplayName("세션 요약 DONE은 Todo 저장 완료 후에만 표시한다")
+    void onSessionEnded_marksDoneOnlyAfterTodoGeneration() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약"
+        );
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
+                .thenReturn(3);
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        InOrder inOrder = inOrder(proxy, todoRecommendationService, summaryStatusWriter);
+        inOrder.verify(proxy).consolidate(sessionId, userId, "mio", 2);
+        inOrder.verify(proxy).enrichMemory(input);
+        inOrder.verify(todoRecommendationService).generateForSession(eq(userId), eq(sessionId), any());
+        inOrder.verify(summaryStatusWriter).markDone(sessionId);
+        verify(sessionRepository, never()).updateSummaryStatus(sessionId, SummaryStatus.DONE);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+    }
+
+    @Test
+    @DisplayName("Todo를 만들지 못하면 빈 Todo 요약을 노출하지 않고 실패 상태로 전환한다")
+    void onSessionEnded_whenTodoGenerationCreatesNoTasks_marksFailed() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약"
+        );
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
+                .thenReturn(0);
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verify(summaryStatusWriter, never()).markDone(sessionId);
+        verify(summaryStatusWriter).markFailed(sessionId);
     }
 
     @Test

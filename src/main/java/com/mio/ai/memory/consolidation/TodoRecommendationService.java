@@ -66,7 +66,7 @@ public class TodoRecommendationService {
      * (호출부 {@code SessionConsolidator#onSessionEnded}는 다른 트랜잭션이 열려있지 않은
      *  지점에서 호출한다.)
      */
-    public void generateForSession(UUID userId, UUID sessionId, TodoGenerationInput input) {
+    public int generateForSession(UUID userId, UUID sessionId, TodoGenerationInput input) {
         List<String> disliked = loadDislikedPatterns(userId);
         Set<String> distortions = Set.copyOf(input.distortionCodes());
         String emotion = input.dominantEmotion();
@@ -76,34 +76,34 @@ public class TodoRecommendationService {
                 .toList();
         if (pool.isEmpty()) {
             log.info("[TodoRecommendation] no candidate templates for userId={}", userId);
-            return;
+            return 0;
         }
 
         Map<String, Integer> historyAffinity = loadHistoryAffinity(userId);
         List<BehaviorTemplate> selected = selectBalanced(pool, distortions, emotion, historyAffinity);
         if (selected.isEmpty()) {
-            return;
+            return 0;
         }
 
         // LLM 개인화는 트랜잭션 밖에서 수행 (블로킹 HTTP 호출 동안 커넥션 점유 방지).
         List<String> actionTexts = actionPersonalizer.personalize(
                 input.sessionSummary(), input.triggerTags(), selected);
 
-        persistTasks(userId, sessionId, selected, actionTexts);
+        return persistTasks(userId, sessionId, selected, actionTexts);
     }
 
     /**
      * 선택·개인화가 끝난 Todo를 저장한다. {@code saveAll}이 자체 트랜잭션으로 원자적으로 처리하므로
      * 별도 트랜잭션 경계를 두지 않는다(별도로 두면 같은 빈 self-invocation이라 어차피 적용되지 않음).
      */
-    private void persistTasks(UUID userId, UUID sessionId,
-                              List<BehaviorTemplate> selected, List<String> actionTexts) {
+    private int persistTasks(UUID userId, UUID sessionId,
+                             List<BehaviorTemplate> selected, List<String> actionTexts) {
         User user = userRepository.findById(userId).orElse(null);
         Session session = sessionRepository.findById(sessionId).orElse(null);
         if (user == null || session == null) {
             log.warn("[TodoRecommendation] persist skipped — user or session not found userId={} sessionId={}",
                     userId, sessionId);
-            return;
+            return 0;
         }
 
         List<BehaviorTask> tasks = new ArrayList<>(selected.size());
@@ -113,6 +113,7 @@ public class TodoRecommendationService {
         behaviorTaskRepository.saveAll(tasks);
         log.info("[TodoRecommendation] generated {} todos for userId={} sessionId={}",
                 tasks.size(), userId, sessionId);
+        return tasks.size();
     }
 
     /** 카테고리별로 세션 신호 스코어 최고점 후보 중 무작위 1건 선택. */
