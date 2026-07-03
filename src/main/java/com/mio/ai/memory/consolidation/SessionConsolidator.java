@@ -14,7 +14,6 @@ import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.session.domain.SessionCheckpoint;
 import com.mio.session.domain.SessionSummary;
-import com.mio.session.domain.SummaryStatus;
 import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
@@ -106,6 +105,7 @@ public class SessionConsolidator {
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // 진입점 자체에는 @Transactional을 두지 않는다. 1·2단계를 각각 self 프록시 + REQUIRES_NEW로
     // 호출해, 요약 트랜잭션이 먼저 커밋된 뒤 메모리 보강 트랜잭션이 독립적으로 실행되게 한다.
+    // summary_status=DONE은 사용자 응답에 필요한 Todo 저장까지 끝난 뒤 별도로 표시한다.
     // (진입점을 @Transactional로 두면 요약 tx가 커밋되지 않은 채 보강 tx가 suspend 상태로 겹쳐
     //  커넥션 동시 점유·가시성 문제가 생긴다.)
     @Async
@@ -114,7 +114,7 @@ public class SessionConsolidator {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         EnrichmentInput enrichInput;
         try {
-            // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화하고 DONE까지 커밋한다.
+            // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화한다.
             // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
             enrichInput = self.getObject().consolidate(
                     event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
@@ -138,20 +138,30 @@ public class SessionConsolidator {
 
             // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
             // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
+            int generatedTodoCount;
             try {
-                todoRecommendationService.generateForSession(
+                generatedTodoCount = todoRecommendationService.generateForSession(
                         enrichInput.userId(), enrichInput.sessionId(),
                         new TodoRecommendationService.TodoGenerationInput(
                                 enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
                                 enrichInput.triggerTags(), enrichInput.summaryText()));
             } catch (Exception e) {
                 log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
+                summaryStatusWriter.markFailed(event.sessionId());
+                return;
             }
+            if (generatedTodoCount <= 0) {
+                log.warn("SessionConsolidator: no todo generated; summary not exposed sessionId={}",
+                        event.sessionId());
+                summaryStatusWriter.markFailed(event.sessionId());
+                return;
+            }
+            summaryStatusWriter.markDone(event.sessionId());
         }
     }
 
     /**
-     * 1단계: 세션 요약을 생성·영속화하고 summary_status=DONE까지 커밋한다(독립 트랜잭션).
+     * 1단계: 세션 요약을 생성·영속화한다(독립 트랜잭션).
      * 메모리 보강에 필요한 입력을 반환하며, 영속화할 요약이 없으면(세션/유저 부재·메시지 없음)
      * 상태를 변경하지 않고 null을 반환한다. (요약 row 없이 DONE으로 표시되어 조회 시 404가 나는 것을 방지)
      */
@@ -223,9 +233,6 @@ public class SessionConsolidator {
                 .distinct()
                 .toList();
 
-        // 요약 row가 실제로 영속화된 성공 경로에서만 DONE으로 표시한다(이 트랜잭션 커밋 시 함께 반영).
-        sessionRepository.updateSummaryStatus(sessionId, SummaryStatus.DONE);
-
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
 
@@ -234,7 +241,7 @@ public class SessionConsolidator {
     }
 
     /**
-     * 2단계: 메모리 보강(cbt_patterns / emotional_states / thoughts·beliefs / todos)을
+     * 2단계: 메모리 보강(cbt_patterns / emotional_states / thoughts·beliefs)을
      * 요약과 분리된 별도 트랜잭션으로 실행한다. 이 단계의 실패는 요약 영속화에 영향을 주지 않는다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
