@@ -3,6 +3,7 @@ package com.mio.ai.profile;
 import com.mio.ai.AiCacheKeys;
 import com.mio.ai.llm.EmbeddingClient;
 import com.mio.ai.memory.composer.ContextComposer;
+import com.mio.ai.memory.ontology.OntologyRelationExpander;
 import com.mio.ai.memory.retrieval.FusionRanker;
 import com.mio.ai.memory.retrieval.LexicalRetriever;
 import com.mio.ai.memory.retrieval.MemoryRetrievalPlanner;
@@ -24,6 +25,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -56,6 +58,7 @@ public class ContextPreWarmer {
     private final StringRedisTemplate redisTemplate;
     private final JdbcTemplate jdbcTemplate;
     private final WorkingMemory workingMemory;
+    private final OntologyRelationExpander ontologyRelationExpander;
 
     private final Executor retrievalPool = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -68,7 +71,7 @@ public class ContextPreWarmer {
 
             // 2. 기본 컨텍스트만 캐시한다. 현재 발화 기반 검색은 각 대화 턴에서 수행한다.
             RetrievalPlan plan = RetrievalPlan.staticBase();
-            List<List<RetrievedItem>> results = retrieveParallel(sessionId, userId, plan, null, null);
+            List<List<RetrievedItem>> results = retrieveParallel(sessionId, userId, plan, null, null, Set.of());
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             String context = contextComposer.compose(ranked, plan.sensitivityCap(), false);
 
@@ -121,11 +124,20 @@ public class ContextPreWarmer {
      */
     public String buildContextSync(UUID sessionId, UUID userId, CombinedSignal combined,
                                    SafetyProfile profile, String queryText) {
+        return buildContextSync(sessionId, userId, combined, profile, queryText, null);
+    }
+
+    public String buildContextSync(UUID sessionId, UUID userId, CombinedSignal combined,
+                                   SafetyProfile profile, String queryText, String currentDistortionCode) {
         try {
             boolean hasHistory = checkHasHistory(userId);
             RetrievalPlan plan = memoryRetrievalPlanner.plan(combined, profile, userId, hasHistory);
             float[] queryEmbedding = embedIfNeeded(plan, queryText);
-            List<List<RetrievedItem>> results = retrieveParallel(sessionId, userId, plan, queryEmbedding, queryText);
+            Set<String> relatedDistortionCodes = plan.sources().contains(com.mio.ai.memory.retrieval.RetrievalSource.GRAPH_DISTORTION)
+                    ? ontologyRelationExpander.expandCooccurringCodes(currentDistortionCode)
+                    : Set.of();
+            List<List<RetrievedItem>> results = retrieveParallel(
+                    sessionId, userId, plan, queryEmbedding, queryText, relatedDistortionCodes);
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             boolean highRisk = combined.hardCrisis() || combined.riskCandidate();
             return contextComposer.compose(ranked, plan.sensitivityCap(), highRisk);
@@ -159,7 +171,8 @@ public class ContextPreWarmer {
     }
 
     private List<List<RetrievedItem>> retrieveParallel(UUID sessionId, UUID userId, RetrievalPlan plan,
-                                                         float[] queryEmbedding, String queryText) {
+                                                         float[] queryEmbedding, String queryText,
+                                                         Set<String> relatedDistortionCodes) {
         int k = plan.maxK();
         List<CompletableFuture<List<RetrievedItem>>> futures = new ArrayList<>();
 
@@ -191,6 +204,9 @@ public class ContextPreWarmer {
                         return Collections.<RetrievedItem>emptyList();
                     }
                 }, retrievalPool);
+                case GRAPH_DISTORTION    -> CompletableFuture.supplyAsync(
+                        () -> structuredRetriever.retrieveRelatedDistortionEpisodes(userId, relatedDistortionCodes),
+                        retrievalPool);
                 case GRAPH_INTERVENTION_FIT -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveInterventionFit(userId), retrievalPool);
                 case GRAPH_BELIEF_NEIGH  -> CompletableFuture.supplyAsync(

@@ -155,6 +155,50 @@ public class StructuredRetriever {
         }
     }
 
+    /**
+     * 시드 관계로 확장한 과거 패턴이다. 현재 턴의 왜곡 판정이나 세션 상태를 변경하지 않는다.
+     */
+    public List<RetrievedItem> retrieveRelatedDistortionEpisodes(UUID userId, Set<String> relatedCodes) {
+        if (relatedCodes == null || relatedCodes.isEmpty()) return Collections.emptyList();
+        try {
+            String[] codes = relatedCodes.stream().filter(code -> code != null && !code.isBlank())
+                    .toArray(String[]::new);
+            if (codes.length == 0) return Collections.emptyList();
+            return jdbcTemplate.query(
+                    con -> {
+                        var ps = con.prepareStatement(
+                                """
+                                SELECT ss.id::text,
+                                       'related pattern (unconfirmed): ' || ss.summary_text AS content,
+                                       0.45 AS score
+                                FROM thoughts t
+                                JOIN session_summaries ss ON ss.session_id = t.session_id
+                                WHERE t.user_id = ?
+                                  AND t.distortion_code = ANY (?)
+                                GROUP BY ss.id, ss.summary_text
+                                ORDER BY MAX(t.created_at) DESC
+                                LIMIT 3
+                                """
+                        );
+                        ps.setObject(1, userId);
+                        ps.setArray(2, con.createArrayOf("text", codes));
+                        return ps;
+                    },
+                    (rs, rowNum) -> new RetrievedItem(
+                            rs.getString("id"),
+                            RetrievalSource.GRAPH_DISTORTION,
+                            rs.getString("content"),
+                            "normal",
+                            rs.getDouble("score"),
+                            rowNum + 1
+                    )
+            );
+        } catch (Exception e) {
+            log.warn("StructuredRetriever.retrieveRelatedDistortionEpisodes failed for userId={}", userId, e);
+            return Collections.emptyList();
+        }
+    }
+
     public List<RetrievedItem> retrieveTodoHistory(UUID userId) {
         try {
             return jdbcTemplate.query(
