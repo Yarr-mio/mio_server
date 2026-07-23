@@ -2,6 +2,7 @@ package com.mio.ai.memory.consolidation;
 
 import org.junit.jupiter.api.Test;
 
+import java.text.Normalizer;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,5 +21,17 @@ class BeliefIdentityHasherTest {
 
         assertThat(normalized).isEqualTo(equivalent);
         assertThat(normalized).isNotEqualTo(otherUser);
+    }
+
+    @Test
+    void canonicalizesUnicodeAndCaseBeforeHashing() {
+        BeliefIdentityHasher hasher = new BeliefIdentityHasher("a-32-byte-or-longer-test-hmac-secret");
+        UUID userId = UUID.randomUUID();
+        String decomposed = Normalizer.normalize("CAFÉ", Normalizer.Form.NFD);
+
+        byte[] canonical = hasher.hash(userId, "café", BeliefIdentityHasher.CURRENT_VERSION);
+        byte[] visuallyEquivalent = hasher.hash(userId, decomposed, BeliefIdentityHasher.CURRENT_VERSION);
+
+        assertThat(visuallyEquivalent).isEqualTo(canonical);
     }
 }
