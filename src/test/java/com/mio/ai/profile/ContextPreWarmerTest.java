@@ -102,4 +102,28 @@ class ContextPreWarmerTest {
         verify(vectorRetriever, never()).retrieveEpisodes(any(), any(), any(Integer.class));
         verify(lexicalRetriever).retrieveByKeywords(userId, "회의가 걱정돼", 3);
     }
+
+    @Test
+    void limitsEmbeddingWaitAndContinuesWithLexicalRetrieval() throws Exception {
+        RetrievalPlan plan = new RetrievalPlan(
+                List.of(RetrievalSource.VECTOR_EPISODE, RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        RetrievedItem episode = new RetrievedItem("episode-3", RetrievalSource.LEXICAL_EPISODE,
+                "발표 전 긴장", "normal", 0.7, 1);
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(embeddingClient.embed("발표가 걱정돼")).thenAnswer(invocation -> {
+            Thread.sleep(1_000);
+            return new float[]{0.1f};
+        });
+        when(lexicalRetriever.retrieveByKeywords(userId, "발표가 걱정돼", 3)).thenReturn(List.of(episode));
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("lexical memory");
+
+        long startedAt = System.nanoTime();
+        String context = preWarmer.buildContextSync(sessionId, userId, combined, profile, "발표가 걱정돼");
+        long elapsedMs = (System.nanoTime() - startedAt) / 1_000_000;
+
+        assertThat(context).isEqualTo("lexical memory");
+        assertThat(elapsedMs).isLessThan(700);
+        verify(lexicalRetriever).retrieveByKeywords(userId, "발표가 걱정돼", 3);
+    }
 }
