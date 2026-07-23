@@ -175,7 +175,7 @@ public class WeeklyReflectionJob {
 
     private String generateText(String systemPrompt, String context) {
         try {
-            return llmClient.complete(LlmRequest.of("gpt-4o-mini", systemPrompt, context));
+            return llmClient.completeText(LlmRequest.of("gpt-4o-mini", systemPrompt, context));
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] LLM call failed: {}", e.getMessage());
             return null;
