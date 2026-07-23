@@ -3,6 +3,8 @@ package com.mio.ai.memory.ontology;
 import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.working.WorkingMemory;
+import com.mio.session.domain.SessionStatus;
+import com.mio.session.repository.SessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -15,6 +17,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class ReactiveOntologyActivatorTest {
@@ -24,6 +27,7 @@ class ReactiveOntologyActivatorTest {
     private final WorkingMemory workingMemory = mock(WorkingMemory.class);
     private final TurnOntologyExtractor turnOntologyExtractor = mock(TurnOntologyExtractor.class);
     private final OntologyValidator ontologyValidator = mock(OntologyValidator.class);
+    private final SessionRepository sessionRepository = mock(SessionRepository.class);
 
     private ReactiveOntologyActivator activator;
     private UUID userId;
@@ -32,9 +36,11 @@ class ReactiveOntologyActivatorTest {
     @BeforeEach
     void setUp() {
         activator = new ReactiveOntologyActivator(
-                distortionRepository, beliefRepository, workingMemory, turnOntologyExtractor, ontologyValidator);
+                distortionRepository, beliefRepository, workingMemory, turnOntologyExtractor, ontologyValidator,
+                sessionRepository);
         userId = UUID.randomUUID();
         sessionId = UUID.randomUUID();
+        when(sessionRepository.existsByIdAndStatus(sessionId, SessionStatus.ACTIVE)).thenReturn(true);
     }
 
     @Test
@@ -86,5 +92,34 @@ class ReactiveOntologyActivatorTest {
         verify(workingMemory, never()).addSessionTrigger(eq(sessionId), anyString());
         verify(workingMemory, never()).addActivatedBeliefId(eq(sessionId), anyString());
         verify(beliefRepository, never()).findByUser_IdAndStatus(userId, "active");
+    }
+
+    @Test
+    void doesNotActivateAmbiguousBeliefsThatShareKindAndPolarity() {
+        UserBelief first = mock(UserBelief.class);
+        UserBelief second = mock(UserBelief.class);
+        when(turnOntologyExtractor.extract("나는 아무것도 못하는 사람인 것 같아"))
+                .thenReturn(new TurnOntologySignal("overgeneralization", "core_self", "negative"));
+        when(ontologyValidator.isValidDistortionCode("overgeneralization")).thenReturn(true);
+        when(distortionRepository.findById("overgeneralization")).thenReturn(Optional.empty());
+        when(beliefRepository.findByUser_IdAndStatus(userId, "active")).thenReturn(List.of(first, second));
+        when(first.getBeliefKind()).thenReturn("core_self");
+        when(first.getPolarity()).thenReturn("negative");
+        when(second.getBeliefKind()).thenReturn("core_self");
+        when(second.getPolarity()).thenReturn("negative");
+
+        activator.activateBeliefs(userId, sessionId, "나는 아무것도 못하는 사람인 것 같아");
+
+        verify(workingMemory, never()).addActivatedBeliefId(eq(sessionId), anyString());
+    }
+
+    @Test
+    void skipsAsyncActivationWhenSessionHasAlreadyEnded() {
+        when(sessionRepository.existsByIdAndStatus(sessionId, SessionStatus.ACTIVE)).thenReturn(false);
+
+        activator.activateBeliefs(userId, sessionId, "발표에서 다들 나를 싫어하는 것 같아");
+
+        verify(turnOntologyExtractor, never()).extract(anyString());
+        verifyNoInteractions(beliefRepository, workingMemory);
     }
 }

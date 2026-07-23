@@ -8,6 +8,7 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.ListOperations;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -27,6 +28,7 @@ class WorkingMemoryTest {
     private ListOperations<String, String> listOps;
     private HashOperations<String, Object, Object> hashOps;
     private SetOperations<String, String> setOps;
+    private ValueOperations<String, String> valueOps;
     private WorkingMemory workingMemory;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -38,10 +40,12 @@ class WorkingMemoryTest {
         listOps = mock(ListOperations.class);
         hashOps = mock(HashOperations.class);
         setOps = mock(SetOperations.class);
+        valueOps = mock(ValueOperations.class);
 
         given(redisTemplate.opsForList()).willReturn(listOps);
         given(redisTemplate.opsForHash()).willReturn(hashOps);
         given(redisTemplate.opsForSet()).willReturn(setOps);
+        given(redisTemplate.opsForValue()).willReturn(valueOps);
 
         workingMemory = new WorkingMemory(redisTemplate, objectMapper);
     }
@@ -195,5 +199,17 @@ class WorkingMemoryTest {
 
         verify(setOps).add(contains(sessionId.toString()), eq("work_pressure"));
         verify(redisTemplate).expire(contains(sessionId.toString()), eq(Duration.ofMinutes(90)));
+    }
+
+    @Test
+    @DisplayName("tryAcquireOntologyActivation은 세션당 중복 LLM 호출을 막는다")
+    void tryAcquireOntologyActivation_uses_ttl_lock() {
+        UUID sessionId = UUID.randomUUID();
+        given(valueOps.setIfAbsent(anyString(), eq("1"), eq(Duration.ofSeconds(45)))).willReturn(true);
+
+        boolean acquired = workingMemory.tryAcquireOntologyActivation(sessionId);
+
+        assertThat(acquired).isTrue();
+        verify(valueOps).setIfAbsent(contains(sessionId.toString()), eq("1"), eq(Duration.ofSeconds(45)));
     }
 }
