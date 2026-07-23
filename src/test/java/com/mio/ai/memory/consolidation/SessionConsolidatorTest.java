@@ -40,6 +40,7 @@ import static org.mockito.Mockito.inOrder;
 class SessionConsolidatorTest {
 
     private MessageEncryptor messageEncryptor;
+    private BeliefIdentityHasher beliefIdentityHasher;
     private ThoughtRepository thoughtRepository;
     private UserBeliefRepository beliefRepository;
     private BeliefEvidenceAccumulator evidenceAccumulator;
@@ -51,6 +52,7 @@ class SessionConsolidatorTest {
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
+        beliefIdentityHasher = mock(BeliefIdentityHasher.class);
         thoughtRepository = mock(ThoughtRepository.class);
         beliefRepository = mock(UserBeliefRepository.class);
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
@@ -60,6 +62,7 @@ class SessionConsolidatorTest {
         summaryStatusWriter = mock(SummaryStatusWriter.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
+        when(beliefIdentityHasher.hash(any(), anyString(), any())).thenReturn(new byte[]{9});
 
         @SuppressWarnings("unchecked")
         ObjectProvider<SessionConsolidator> selfProvider = mock(ObjectProvider.class);
@@ -76,6 +79,7 @@ class SessionConsolidatorTest {
                 mock(ExtractorLlmClient.class),
                 mock(LlmClient.class),
                 messageEncryptor,
+                beliefIdentityHasher,
                 jdbcTemplate,
                 new ObjectMapper(),
                 mock(OntologyValidator.class),
@@ -203,6 +207,40 @@ class SessionConsolidatorTest {
         assertThat(captor.getValue().getBeliefKind()).isEqualTo("core_self");
         assertThat(captor.getValue().getPolarity()).isEqualTo("negative");
         verify(evidenceAccumulator).accumulate(any(), eq("support"), eq(sessionId), eq(null));
+    }
+
+    @Test
+    @DisplayName("동일한 종류와 극성이라도 다른 신념 식별자는 병합하지 않는다")
+    void persistThought_differentIdentityCreatesSeparateBelief() {
+        SessionConsolidator consolidator = newConsolidator();
+        User user = userWithId();
+        UUID sessionId = UUID.randomUUID();
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), any(), any(), any())).thenReturn(Optional.empty());
+        when(beliefRepository.save(any(UserBelief.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        ReflectionTestUtils.invokeMethod(consolidator, "persistThought", user, sessionId,
+                new ExtractorResult.ExtractedThought("나는 아무것도 못해", "self_blame", "core_self", "negative",
+                        0.7, "나는 능력이 부족하다", "support"));
+
+        verify(beliefRepository).save(any(UserBelief.class));
+        verify(evidenceAccumulator).accumulate(any(), eq(BeliefEvidenceKind.SUPPORT), eq(sessionId), any());
+    }
+
+    @Test
+    @DisplayName("반증 또는 재구성만 있는 새 신념은 만들지 않는다")
+    void persistThought_contradictionWithoutExistingIdentityDoesNotCreateBelief() {
+        SessionConsolidator consolidator = newConsolidator();
+        User user = userWithId();
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), any(), any(), any())).thenReturn(Optional.empty());
+
+        ReflectionTestUtils.invokeMethod(consolidator, "persistThought", user, UUID.randomUUID(),
+                new ExtractorResult.ExtractedThought("이번에는 해냈어", "self_blame", "core_self", "negative",
+                        0.7, "나는 능력이 부족하다", "contradict"));
+
+        verify(beliefRepository, never()).save(any(UserBelief.class));
+        verifyNoInteractions(evidenceAccumulator);
     }
 
     @Test
