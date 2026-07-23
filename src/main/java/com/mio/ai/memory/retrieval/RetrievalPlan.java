@@ -44,6 +44,7 @@ public record RetrievalPlan(
     public static RetrievalPlan cbtIntervention() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.GRAPH_BELIEF_NEIGH,
+                        RetrievalSource.GRAPH_TRIGGER,
                         RetrievalSource.GRAPH_INTERVENTION_FIT,
                         RetrievalSource.VECTOR_BELIEF),
                 3, 300, "sensitive"
