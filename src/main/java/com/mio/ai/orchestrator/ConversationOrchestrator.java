@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
+import com.mio.ai.memory.ontology.OntologyInterventionFilter;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -89,6 +90,7 @@ public class ConversationOrchestrator {
     private final OutputPreFilter outputPreFilter;
     private final OutputJudge outputJudge;
     private final PolicyEngine policyEngine;
+    private final OntologyInterventionFilter ontologyInterventionFilter;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
     private final CrisisFlowService crisisFlowService;
@@ -164,6 +166,8 @@ public class ConversationOrchestrator {
 
             // 6. Policy decision (10-step)
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
+            decision = decision.withInterventionHints(
+                    ontologyInterventionFilter.filter(decision.interventionHints(), combined, sessionDelta));
 
             // 7. Execute based on decision
             String assistantContent;

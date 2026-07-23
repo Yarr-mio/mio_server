@@ -16,4 +16,11 @@ public record PolicyDecision(
         String policyVersion,
         RiskLevel riskLevel
 ) {
+
+    public PolicyDecision withInterventionHints(InterventionHints hints) {
+        return new PolicyDecision(
+                decisionId, action, generationMode, deliveryMode, securityLevel,
+                allowGeneration, allowStreaming, requireOutputGuard, hints, policyVersion, riskLevel
+        );
+    }
 }
