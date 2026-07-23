@@ -6,6 +6,7 @@ import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.memory.ontology.OntologyInterventionFilter;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
+import com.mio.ai.memory.ontology.ReactiveOntologyActivationDispatcher;
 import com.mio.ai.memory.ontology.ReactiveOntologyEligibility;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
@@ -94,6 +95,7 @@ public class ConversationOrchestrator {
     private final PolicyEngine policyEngine;
     private final OntologyInterventionFilter ontologyInterventionFilter;
     private final ReactiveOntologyActivator reactiveOntologyActivator;
+    private final ReactiveOntologyActivationDispatcher reactiveOntologyActivationDispatcher;
     private final ReactiveOntologyEligibility reactiveOntologyEligibility;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
@@ -180,7 +182,7 @@ public class ConversationOrchestrator {
 
             // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
             if (reactiveOntologyEligibility.allowsBeliefActivation(userSignal, combined, decision)) {
-                reactiveOntologyActivator.activateBeliefs(userId, sessionId, normalized);
+                reactiveOntologyActivationDispatcher.activateBeliefs(userId, sessionId, normalized);
             }
 
             // 7. Execute based on decision
