@@ -26,6 +26,17 @@ public class AiConfig {
         return Executors.newVirtualThreadPerTaskExecutor();
     }
 
+    @Bean(name = "ontologyActivationExecutor")
+    public Executor ontologyActivationExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(20);
+        executor.setThreadNamePrefix("ontology-activation-");
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "aiDecisionLoggerExecutor")
     public Executor aiDecisionLoggerExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

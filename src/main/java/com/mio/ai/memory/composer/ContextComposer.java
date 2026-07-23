@@ -62,7 +62,10 @@ public class ContextComposer {
                                 grouped.getOrDefault(RetrievalSource.LEXICAL_EPISODE, List.of()).stream())
                         .toList());
         appendSection(sb, "Belief Context",
-                grouped.get(RetrievalSource.VECTOR_BELIEF));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.VECTOR_BELIEF, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.GRAPH_BELIEF_NEIGH, List.of()).stream())
+                        .toList());
         appendSection(sb, "Recent Activities",
                 grouped.get(RetrievalSource.SQL_TODO_HISTORY));
 

@@ -194,7 +194,16 @@ public class ContextPreWarmer {
                 case GRAPH_INTERVENTION_FIT -> CompletableFuture.supplyAsync(
                         () -> structuredRetriever.retrieveInterventionFit(userId), retrievalPool);
                 case GRAPH_BELIEF_NEIGH  -> CompletableFuture.supplyAsync(
-                        () -> structuredRetriever.retrieveBeliefNeighbors(userId), retrievalPool);
+                        () -> {
+                            try {
+                                return structuredRetriever.retrieveBeliefNeighbors(
+                                        userId, workingMemory.getSessionDelta(sessionId).activatedBeliefIds());
+                            } catch (Exception e) {
+                                log.warn("ContextPreWarmer: GRAPH_BELIEF_NEIGH activation fetch failed for sessionId={}",
+                                        sessionId, e);
+                                return Collections.<RetrievedItem>emptyList();
+                            }
+                        }, retrievalPool);
                 default                  -> CompletableFuture.completedFuture(List.of());
             };
             futures.add(future);
