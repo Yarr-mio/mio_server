@@ -38,7 +38,7 @@ public class LexicalRetriever {
                     """,
                     (rs, rowNum) -> new RetrievedItem(
                             rs.getString("id"),
-                            RetrievalSource.VECTOR_EPISODE,
+                            RetrievalSource.LEXICAL_EPISODE,
                             rs.getString("content"),
                             "normal",
                             rs.getDouble("score"),

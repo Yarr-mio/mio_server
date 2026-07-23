@@ -156,10 +156,10 @@ public class ConversationOrchestrator {
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
-            boolean memoryCacheHit = cachedMemory != null;
-            String memoryContext = memoryCacheHit
-                    ? cachedMemory
-                    : contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
+            String liveMemory = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile, normalized);
+            boolean memoryCacheFallbackUsed = (liveMemory == null || liveMemory.isBlank())
+                    && cachedMemory != null && !cachedMemory.isBlank();
+            String memoryContext = memoryCacheFallbackUsed ? cachedMemory : liveMemory;
             String checkpointSummary = contextPreWarmer.getCachedCheckpoint(sessionId);
 
             // 6. Policy decision (10-step)
@@ -387,7 +387,7 @@ public class ConversationOrchestrator {
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
-                    profile.source(), safetyProfileCacheHit, memoryCacheHit);
+                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed);
 
             emitter.complete();
 

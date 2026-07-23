@@ -20,7 +20,7 @@ import java.util.stream.Stream;
 
 @Component
 @Slf4j
-public class OpenAiLlmClient implements LlmClient {
+public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
     private static final String CHAT_URL = "https://api.openai.com/v1/chat/completions";
     private static final String EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
