@@ -43,7 +43,7 @@ public class OutputJudge {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent);
-            String responseJson = llmClient.complete(request);
+            String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {
             log.warn("OutputJudge failed, defaulting to REPLACE: {}", e.getMessage());

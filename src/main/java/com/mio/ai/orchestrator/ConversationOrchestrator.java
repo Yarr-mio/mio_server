@@ -191,7 +191,7 @@ public class ConversationOrchestrator {
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
-                        user.getPreferredCharacterId(), checkpointSummary);
+                        session.getCharacterId(), checkpointSummary);
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;

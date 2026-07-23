@@ -41,7 +41,7 @@ public class ReportNarrativeService {
                                     List<DistortionDto> distortionTop3) {
         String userMessage = buildUserMessage(periodLabel, checkinCount, avgEmotionScore, distortionTop3);
         try {
-            String response = llmClient.complete(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
+            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
             return parseResponse(response);
         } catch (Exception e) {
             log.warn("ReportNarrative generation failed: period={} error={}", periodLabel, e.getClass().getSimpleName());
