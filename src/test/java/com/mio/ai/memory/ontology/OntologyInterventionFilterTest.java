@@ -34,6 +34,18 @@ class OntologyInterventionFilterTest {
     }
 
     @Test
+    void excludesInterventionMarkedUnsafeForHighCrisis() {
+        InterventionDef evidenceGathering = definition("evidence_gathering", "{\"high_crisis\": true}");
+        when(repository.findAllById(List.of("evidence_gathering"))).thenReturn(List.of(evidenceGathering));
+
+        InterventionHints result = filter.filter(
+                new InterventionHints(List.of("evidence_gathering"), List.of(), null),
+                combined(true, false, false, false), sessionDelta(0));
+
+        assertThat(result.suggestedCodes()).isEmpty();
+    }
+
+    @Test
     void excludesInterventionAtItsOntologySessionLimit() {
         InterventionDef socratic = definition("socratic_questioning", "{\"session_limit\": 2}");
         when(repository.findAllById(List.of("socratic_questioning"))).thenReturn(List.of(socratic));
