@@ -97,17 +97,19 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           ENV_FILE: ${{ secrets.ENV_FILE }}
+          APP_BELIEF_IDENTITY_HMAC_KEY: ${{ secrets.APP_BELIEF_IDENTITY_HMAC_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_ACTOR: ${{ github.actor }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENV_FILE,GHCR_TOKEN,GHCR_ACTOR
+          envs: ENV_FILE,APP_BELIEF_IDENTITY_HMAC_KEY,GHCR_TOKEN,GHCR_ACTOR
           script: |
             cd ~/mio
 
-            printf '%s' "$ENV_FILE" > .env
+            printf '%s\nAPP_BELIEF_IDENTITY_HMAC_KEY=%s\n' \
+              "$ENV_FILE" "$APP_BELIEF_IDENTITY_HMAC_KEY" > .env
 
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
 

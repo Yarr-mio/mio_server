@@ -20,7 +20,7 @@ class CbtMetadataClassifierTest {
     @DisplayName("LLM 응답이 markdown json fence로 감싸져도 파싱한다")
     void classify_stripsMarkdownJsonFence() {
         LlmClient llmClient = mock(LlmClient.class);
-        when(llmClient.complete(any(LlmRequest.class))).thenReturn("""
+        when(llmClient.completeJson(any(LlmRequest.class))).thenReturn("""
                 ```json
                 {
                   "cbt_intervention_state": "completed",
@@ -53,7 +53,7 @@ class CbtMetadataClassifierTest {
     @DisplayName("이미 completed 상태인 후속 턴에서는 감정점수 target 생성을 다시 요구하지 않는다")
     void classify_completedPreviousState_suppressesDuplicateEmotionScoreTarget() {
         LlmClient llmClient = mock(LlmClient.class);
-        when(llmClient.complete(any(LlmRequest.class))).thenReturn("""
+        when(llmClient.completeJson(any(LlmRequest.class))).thenReturn("""
                 {
                   "cbt_intervention_state": "completed",
                   "completion_reason": "user_reframed_thought",

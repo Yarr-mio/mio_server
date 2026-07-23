@@ -36,6 +36,12 @@ public class UserBelief {
 
     private String polarity;
 
+    @Column(name = "belief_identity_hash")
+    private byte[] beliefIdentityHash;
+
+    @Column(name = "belief_identity_version")
+    private Short beliefIdentityVersion;
+
     @Column(name = "support_count", nullable = false)
     private int supportCount = 0;
 
@@ -65,12 +71,15 @@ public class UserBelief {
 
     @Builder
     private UserBelief(User user, byte[] beliefTextCiphertext, String beliefTextDekId,
-                       String beliefKind, String polarity) {
+                       String beliefKind, String polarity, byte[] beliefIdentityHash,
+                       Short beliefIdentityVersion) {
         this.user = user;
         this.beliefTextCiphertext = beliefTextCiphertext;
         this.beliefTextDekId = beliefTextDekId;
         this.beliefKind = beliefKind;
         this.polarity = polarity;
+        this.beliefIdentityHash = beliefIdentityHash;
+        this.beliefIdentityVersion = beliefIdentityVersion;
     }
 
     @PrePersist

@@ -14,12 +14,17 @@ public interface LlmClient {
      */
     long stream(LlmRequest request, Consumer<String> chunkHandler);
 
+    /** Sends a non-streaming request for a natural-language response. */
+    String completeText(LlmRequest request);
+
+    /** Sends a non-streaming request that must return a structured JSON object. */
+    String completeJson(LlmRequest request);
+
     /**
-     * Sends a non-streaming request and returns the full response content.
-     * Used for Judge calls (InputJudge, OutputJudge) that require structured JSON.
-     *
-     * @param request the LLM request
-     * @return the full response content string
+     * Legacy structured-response bridge. New call sites must select their output mode explicitly.
      */
-    String complete(LlmRequest request);
+    @Deprecated(forRemoval = false)
+    default String complete(LlmRequest request) {
+        return completeJson(request);
+    }
 }

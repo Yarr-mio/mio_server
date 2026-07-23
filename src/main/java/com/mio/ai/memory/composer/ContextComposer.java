@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
 /**
@@ -50,15 +51,24 @@ public class ContextComposer {
         appendSection(sb, "Recent Risk Context",
                 grouped.get(RetrievalSource.SQL_RECENT_RISK));
         appendSection(sb, "Past Similar Situations",
-                grouped.get(RetrievalSource.GRAPH_TRIGGER));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.GRAPH_TRIGGER, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.GRAPH_DISTORTION, List.of()).stream())
+                        .toList());
         appendSection(sb, "Active Patterns",
                 grouped.get(RetrievalSource.SQL_PROFILE));
         appendSection(sb, "Helpful Approaches",
                 grouped.get(RetrievalSource.GRAPH_INTERVENTION_FIT));
         appendSection(sb, "Recent Episodes",
-                grouped.get(RetrievalSource.VECTOR_EPISODE));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.VECTOR_EPISODE, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.LEXICAL_EPISODE, List.of()).stream())
+                        .toList());
         appendSection(sb, "Belief Context",
-                grouped.get(RetrievalSource.VECTOR_BELIEF));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.VECTOR_BELIEF, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.GRAPH_BELIEF_NEIGH, List.of()).stream())
+                        .toList());
         appendSection(sb, "Recent Activities",
                 grouped.get(RetrievalSource.SQL_TODO_HISTORY));
 

@@ -15,6 +15,7 @@ public record RetrievalPlan(
     public static RetrievalPlan clearLow() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.VECTOR_EPISODE,
+                        RetrievalSource.LEXICAL_EPISODE,
                         RetrievalSource.SQL_PROFILE,
                         RetrievalSource.SQL_RHYTHM),
                 3, 200, "normal"
@@ -24,6 +25,7 @@ public record RetrievalPlan(
     public static RetrievalPlan medium() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.GRAPH_TRIGGER,
+                        RetrievalSource.GRAPH_DISTORTION,
                         RetrievalSource.GRAPH_INTERVENTION_FIT,
                         RetrievalSource.VECTOR_BELIEF,
                         RetrievalSource.SQL_TODO_HISTORY),
@@ -43,6 +45,8 @@ public record RetrievalPlan(
     public static RetrievalPlan cbtIntervention() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.GRAPH_BELIEF_NEIGH,
+                        RetrievalSource.GRAPH_TRIGGER,
+                        RetrievalSource.GRAPH_DISTORTION,
                         RetrievalSource.GRAPH_INTERVENTION_FIT,
                         RetrievalSource.VECTOR_BELIEF),
                 3, 300, "sensitive"
@@ -52,8 +56,17 @@ public record RetrievalPlan(
     public static RetrievalPlan newUser() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.SQL_PROFILE,
-                        RetrievalSource.VECTOR_EPISODE),
+                        RetrievalSource.VECTOR_EPISODE,
+                        RetrievalSource.LEXICAL_EPISODE),
                 2, 150, "normal"
+        );
+    }
+
+    /** Session-start cache must not contain a query-dependent memory result. */
+    public static RetrievalPlan staticBase() {
+        return new RetrievalPlan(
+                List.of(RetrievalSource.SQL_PROFILE, RetrievalSource.SQL_RHYTHM),
+                3, 200, "normal"
         );
     }
 }

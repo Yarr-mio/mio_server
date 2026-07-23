@@ -30,6 +30,10 @@ public class BeliefEvidence {
     @Column(name = "message_id")
     private UUID messageId;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "thought_id")
+    private Thought thought;
+
     @Column(name = "evidence_kind", nullable = false)
     private String evidenceKind;
 
@@ -40,11 +44,12 @@ public class BeliefEvidence {
     private OffsetDateTime createdAt;
 
     @Builder
-    private BeliefEvidence(UserBelief belief, UUID sessionId, UUID messageId,
+    private BeliefEvidence(UserBelief belief, UUID sessionId, UUID messageId, Thought thought,
                            String evidenceKind, double weight) {
         this.belief = belief;
         this.sessionId = sessionId;
         this.messageId = messageId;
+        this.thought = thought;
         this.evidenceKind = evidenceKind;
         this.weight = weight;
     }

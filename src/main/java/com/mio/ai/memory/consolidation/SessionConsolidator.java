@@ -87,6 +87,7 @@ public class SessionConsolidator {
     private final ExtractorLlmClient extractorLlmClient;
     private final LlmClient llmClient;
     private final MessageEncryptor messageEncryptor;
+    private final BeliefIdentityHasher beliefIdentityHasher;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final OntologyValidator ontologyValidator;
@@ -480,7 +481,10 @@ public class SessionConsolidator {
                 .distortionCode(extracted.distortionCode())
                 .confidence(extracted.confidence())
                 .build();
-        thoughtRepository.save(thought);
+        Thought savedThought = thoughtRepository.save(thought);
+        if (savedThought == null) {
+            savedThought = thought;
+        }
 
         // UserBelief 연결 (new belief로 추가 또는 existing에 evidence 추가)
         // ExtractorLLM이 문자열 "null"·시드 밖 환각값을 반환할 수 있으므로 DB CHECK 허용값으로 검증한다.
@@ -491,38 +495,52 @@ public class SessionConsolidator {
             beliefKind = null;
         }
         if (beliefKind != null) {
-            addBeliefEvidence(user, sessionId, extracted, beliefKind);
+            addBeliefEvidence(user, sessionId, extracted, beliefKind, savedThought);
         }
     }
 
     private void addBeliefEvidence(User user, UUID sessionId,
-                                   ExtractorResult.ExtractedThought extracted, String beliefKind) {
+                                   ExtractorResult.ExtractedThought extracted, String beliefKind, Thought thought) {
         // polarity도 DB CHECK(IN positive/negative/neutral) 대상 — 허용값 밖이면 null(컬럼 nullable)로 정규화.
         String polarity = VALID_POLARITIES.contains(extracted.polarity()) ? extracted.polarity() : null;
+        BeliefEvidenceKind evidenceKind = BeliefEvidenceKind.from(extracted.evidenceKind()).orElse(null);
+        String identity = extracted.beliefIdentity();
+        if (polarity == null || evidenceKind == null || !isValidBeliefIdentity(identity)) {
+            return;
+        }
 
-        List<UserBelief> existing = beliefRepository.findByUser_IdAndStatus(user.getId(), "active");
-        // 동일 beliefKind + polarity의 기존 신념에 support/contradict 증거 추가
-        // 없으면 새 belief 생성
-        // polarity가 둘 다 null이어도 동일 신념으로 매칭한다(중복 belief 생성 방지).
-        UserBelief belief = existing.stream()
-                .filter(b -> b.getBeliefKind().equals(beliefKind)
-                        && java.util.Objects.equals(b.getPolarity(), polarity))
-                .findFirst()
-                .orElseGet(() -> {
-                    byte[] enc = messageEncryptor.encrypt(
-                            extracted.thoughtText().getBytes(StandardCharsets.UTF_8));
-                    UserBelief newBelief = UserBelief.builder()
-                            .user(user)
-                            .beliefTextCiphertext(enc)
-                            .beliefTextDekId(messageEncryptor.dekId())
-                            .beliefKind(beliefKind)
-                            .polarity(polarity)
-                            .build();
-                    return beliefRepository.save(newBelief);
-                });
+        byte[] identityHash = beliefIdentityHasher.hash(
+                user.getId(), identity, BeliefIdentityHasher.CURRENT_VERSION);
+        UserBelief belief = beliefRepository
+                .findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                        user.getId(), "active", BeliefIdentityHasher.CURRENT_VERSION, identityHash)
+                .orElse(null);
 
-        String evidenceKind = "negative".equals(polarity) ? "support" : "contradict";
-        evidenceAccumulator.accumulate(belief, evidenceKind, sessionId, null);
+        // 새 노드는 명시적으로 지지된 신념만 생성한다. 반증·재구성은 기존 노드에만 누적한다.
+        if (belief == null && evidenceKind != BeliefEvidenceKind.SUPPORT) {
+            return;
+        }
+        if (belief == null) {
+            byte[] encryptedIdentity = messageEncryptor.encrypt(identity.getBytes(StandardCharsets.UTF_8));
+            // 고유 부분 인덱스와 동일한 conflict target을 사용한다. 경합 시 예외/rollback 없이
+            // 이미 생성된 행을 아래의 정확한 식별자 조회로 연결한다.
+            beliefRepository.insertActiveSemanticBeliefIfAbsent(
+                    user.getId(), encryptedIdentity, messageEncryptor.dekId(), beliefKind, polarity,
+                    identityHash, BeliefIdentityHasher.CURRENT_VERSION);
+            belief = beliefRepository
+                    .findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                            user.getId(), "active", BeliefIdentityHasher.CURRENT_VERSION, identityHash)
+                    .orElseThrow(() -> new IllegalStateException("Semantic belief insert was not visible"));
+        }
+
+        evidenceAccumulator.accumulate(belief, evidenceKind, sessionId, thought);
+    }
+
+    private boolean isValidBeliefIdentity(String identity) {
+        return identity != null
+                && !identity.isBlank()
+                && !"null".equalsIgnoreCase(identity)
+                && identity.trim().length() <= 240;
     }
 
     // ── OntologyValidator 필터 ────────────────────────────────────

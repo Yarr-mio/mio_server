@@ -38,7 +38,7 @@ public class CheckinAiResponseGenerator {
     public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay) {
         try {
             String userMessage = buildPrompt(emotionType, conditionScore, timeOfDay);
-            String response = llmClient.complete(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
+            String response = llmClient.completeText(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
 
             if (response == null || response.isBlank()) {
                 log.debug("[CheckinAiResponseGenerator] no response for checkinId={}", checkinId);

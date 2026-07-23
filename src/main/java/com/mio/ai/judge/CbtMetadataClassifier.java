@@ -65,7 +65,7 @@ public class CbtMetadataClassifier {
                     assistantResponse,
                     userSignal,
                     socraticQuestionsUsed));
-            String responseJson = llmClient.complete(request);
+            String responseJson = llmClient.completeJson(request);
             return parse(responseJson, CbtInterventionState.fromWireValue(previousState), userSignal);
         } catch (Exception e) {
             log.warn("CBT metadata classifier failed, defaulting to none: {}", e.getMessage());

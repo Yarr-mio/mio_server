@@ -65,7 +65,7 @@ public class InputJudge {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt);
-            String responseJson = llmClient.complete(request);
+            String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {
             log.warn("InputJudge failed, using fallback CLEAR_LOW: {}", e.getMessage());

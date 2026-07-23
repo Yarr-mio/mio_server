@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.sql.Array;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -154,6 +155,50 @@ public class StructuredRetriever {
         }
     }
 
+    /**
+     * 시드 관계로 확장한 과거 패턴이다. 현재 턴의 왜곡 판정이나 세션 상태를 변경하지 않는다.
+     */
+    public List<RetrievedItem> retrieveRelatedDistortionEpisodes(UUID userId, Set<String> relatedCodes) {
+        if (relatedCodes == null || relatedCodes.isEmpty()) return Collections.emptyList();
+        try {
+            String[] codes = relatedCodes.stream().filter(code -> code != null && !code.isBlank())
+                    .toArray(String[]::new);
+            if (codes.length == 0) return Collections.emptyList();
+            return jdbcTemplate.query(
+                    con -> {
+                        var ps = con.prepareStatement(
+                                """
+                                SELECT ss.id::text,
+                                       'related pattern (unconfirmed): ' || ss.summary_text AS content,
+                                       0.45 AS score
+                                FROM thoughts t
+                                JOIN session_summaries ss ON ss.session_id = t.session_id
+                                WHERE t.user_id = ?
+                                  AND t.distortion_code = ANY (?)
+                                GROUP BY ss.id, ss.summary_text
+                                ORDER BY MAX(t.created_at) DESC
+                                LIMIT 3
+                                """
+                        );
+                        ps.setObject(1, userId);
+                        ps.setArray(2, con.createArrayOf("text", codes));
+                        return ps;
+                    },
+                    (rs, rowNum) -> new RetrievedItem(
+                            rs.getString("id"),
+                            RetrievalSource.GRAPH_DISTORTION,
+                            rs.getString("content"),
+                            "normal",
+                            rs.getDouble("score"),
+                            rowNum + 1
+                    )
+            );
+        } catch (Exception e) {
+            log.warn("StructuredRetriever.retrieveRelatedDistortionEpisodes failed for userId={}", userId, e);
+            return Collections.emptyList();
+        }
+    }
+
     public List<RetrievedItem> retrieveTodoHistory(UUID userId) {
         try {
             return jdbcTemplate.query(
@@ -215,8 +260,47 @@ public class StructuredRetriever {
     }
 
     // belief_text는 AES-256 암호화 컬럼이므로 메타데이터 컬럼만 사용해 인접 신념 구성
-    public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId) {
+    public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId, Set<String> activatedBeliefIds) {
         try {
+            List<UUID> beliefIds = toUuids(activatedBeliefIds);
+            if (activatedBeliefIds != null && !activatedBeliefIds.isEmpty() && beliefIds.isEmpty()) {
+                return Collections.emptyList();
+            }
+            if (!beliefIds.isEmpty()) {
+                return jdbcTemplate.query(
+                        con -> {
+                            var ps = con.prepareStatement(
+                                    """
+                                    SELECT b.id::text,
+                                           b.belief_kind
+                                             || ' [' || COALESCE(b.polarity, 'neutral') || ']'
+                                             || ' conf:' || ROUND(b.confidence::numeric, 2)
+                                             || ' support:' || COALESCE(b.support_count, 0)
+                                             || ' contradict:' || COALESCE(b.contradict_count, 0) AS content,
+                                           b.confidence AS score
+                                    FROM user_beliefs b
+                                    WHERE b.user_id = ?
+                                      AND b.status = 'active'
+                                      AND b.id = ANY (?)
+                                    ORDER BY b.last_activated_at DESC, b.confidence DESC
+                                    LIMIT 5
+                                    """
+                            );
+                            ps.setObject(1, userId);
+                            Array pgArray = con.createArrayOf("uuid", beliefIds.toArray(UUID[]::new));
+                            ps.setArray(2, pgArray);
+                            return ps;
+                        },
+                        (rs, rowNum) -> new RetrievedItem(
+                                rs.getString("id"),
+                                RetrievalSource.GRAPH_BELIEF_NEIGH,
+                                rs.getString("content"),
+                                "sensitive",
+                                rs.getDouble("score"),
+                                rowNum + 1
+                        )
+                );
+            }
             return jdbcTemplate.query(
                     """
                     SELECT b.id::text,
@@ -246,6 +330,27 @@ public class StructuredRetriever {
         } catch (Exception e) {
             log.warn("StructuredRetriever.retrieveBeliefNeighbors failed for userId={}", userId, e);
             return Collections.emptyList();
+        }
+    }
+
+    private List<UUID> toUuids(Set<String> activatedBeliefIds) {
+        if (activatedBeliefIds == null || activatedBeliefIds.isEmpty()) {
+            return List.of();
+        }
+        return activatedBeliefIds.stream()
+                .map(this::toUuid)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    private UUID toUuid(String value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 }

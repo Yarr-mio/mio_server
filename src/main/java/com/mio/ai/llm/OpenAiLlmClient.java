@@ -20,7 +20,7 @@ import java.util.stream.Stream;
 
 @Component
 @Slf4j
-public class OpenAiLlmClient implements LlmClient {
+public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
     private static final String CHAT_URL = "https://api.openai.com/v1/chat/completions";
     private static final String EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
@@ -142,9 +142,18 @@ public class OpenAiLlmClient implements LlmClient {
     }
 
     @Override
-    public String complete(LlmRequest request) {
+    public String completeText(LlmRequest request) {
+        return complete(request, false);
+    }
+
+    @Override
+    public String completeJson(LlmRequest request) {
+        return complete(request, true);
+    }
+
+    private String complete(LlmRequest request, boolean jsonResponse) {
         try {
-            String requestBody = buildNonStreamingRequestBody(request);
+            String requestBody = buildNonStreamingRequestBody(request, jsonResponse);
 
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create(CHAT_URL))
@@ -175,7 +184,7 @@ public class OpenAiLlmClient implements LlmClient {
         }
     }
 
-    private String buildNonStreamingRequestBody(LlmRequest request) throws Exception {
+    private String buildNonStreamingRequestBody(LlmRequest request, boolean jsonResponse) throws Exception {
         List<Map<String, String>> messages = request.messages().stream()
                 .map(m -> Map.of("role", m.role(), "content", m.content()))
                 .toList();
@@ -184,7 +193,9 @@ public class OpenAiLlmClient implements LlmClient {
         body.put("model", request.model());
         body.put("messages", messages);
         body.put("stream", false);
-        body.put("response_format", Map.of("type", "json_object"));
+        if (jsonResponse) {
+            body.put("response_format", Map.of("type", "json_object"));
+        }
 
         return objectMapper.writeValueAsString(body);
     }

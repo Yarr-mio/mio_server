@@ -4,6 +4,7 @@ import com.mio.ai.memory.episodic.BeliefEvidence;
 import com.mio.ai.memory.episodic.BeliefEvidenceRepository;
 import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
+import com.mio.ai.memory.episodic.Thought;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -24,20 +25,21 @@ public class BeliefEvidenceAccumulator {
     private final BeliefEvidenceRepository evidenceRepository;
 
     @Transactional
-    public void accumulate(UserBelief belief, String evidenceKind, UUID sessionId, UUID messageId) {
+    public void accumulate(UserBelief belief, BeliefEvidenceKind evidenceKind, UUID sessionId, Thought thought) {
         BeliefEvidence evidence = BeliefEvidence.builder()
                 .belief(belief)
                 .sessionId(sessionId)
-                .messageId(messageId)
-                .evidenceKind(evidenceKind)
+                .messageId(thought == null ? null : thought.getMessageId())
+                .thought(thought)
+                .evidenceKind(evidenceKind.name().toLowerCase())
                 .weight(1.0)
                 .build();
         evidenceRepository.save(evidence);
 
         switch (evidenceKind) {
-            case "support"    -> belief.addSupport(1.0);
-            case "contradict" -> belief.addContradict(1.0);
-            default -> log.debug("BeliefEvidenceAccumulator: skipped kind={}", evidenceKind);
+            case SUPPORT -> belief.addSupport(1.0);
+            case CONTRADICT -> belief.addContradict(1.0);
+            case REFRAME -> log.debug("BeliefEvidenceAccumulator: skipped confidence update for reframe");
         }
         beliefRepository.save(belief);
 

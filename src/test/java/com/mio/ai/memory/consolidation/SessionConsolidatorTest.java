@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.anyShort;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -40,6 +41,7 @@ import static org.mockito.Mockito.inOrder;
 class SessionConsolidatorTest {
 
     private MessageEncryptor messageEncryptor;
+    private BeliefIdentityHasher beliefIdentityHasher;
     private ThoughtRepository thoughtRepository;
     private UserBeliefRepository beliefRepository;
     private BeliefEvidenceAccumulator evidenceAccumulator;
@@ -51,6 +53,7 @@ class SessionConsolidatorTest {
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
+        beliefIdentityHasher = mock(BeliefIdentityHasher.class);
         thoughtRepository = mock(ThoughtRepository.class);
         beliefRepository = mock(UserBeliefRepository.class);
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
@@ -60,6 +63,7 @@ class SessionConsolidatorTest {
         summaryStatusWriter = mock(SummaryStatusWriter.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
+        when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
 
         @SuppressWarnings("unchecked")
         ObjectProvider<SessionConsolidator> selfProvider = mock(ObjectProvider.class);
@@ -76,6 +80,7 @@ class SessionConsolidatorTest {
                 mock(ExtractorLlmClient.class),
                 mock(LlmClient.class),
                 messageEncryptor,
+                beliefIdentityHasher,
                 jdbcTemplate,
                 new ObjectMapper(),
                 mock(OntologyValidator.class),
@@ -192,17 +197,76 @@ class SessionConsolidatorTest {
         SessionConsolidator consolidator = newConsolidator();
         User user = userWithId();
         UUID sessionId = UUID.randomUUID();
-        when(beliefRepository.findByUser_IdAndStatus(any(), eq("active"))).thenReturn(List.of());
-        when(beliefRepository.save(any(UserBelief.class))).thenAnswer(inv -> inv.getArgument(0));
+        UserBelief createdBelief = mock(UserBelief.class);
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), eq("active"), anyShort(), any()))
+                .thenReturn(Optional.empty(), Optional.of(createdBelief));
 
         ReflectionTestUtils.invokeMethod(
-                consolidator, "persistThought", user, sessionId, thought("core_self", "negative"));
+                consolidator, "persistThought", user, sessionId,
+                new ExtractorResult.ExtractedThought("자동적 사고", "self_blame", "core_self", "negative",
+                        0.7, "나는 충분하지 않다", "support"));
 
-        ArgumentCaptor<UserBelief> captor = ArgumentCaptor.forClass(UserBelief.class);
-        verify(beliefRepository).save(captor.capture());
-        assertThat(captor.getValue().getBeliefKind()).isEqualTo("core_self");
-        assertThat(captor.getValue().getPolarity()).isEqualTo("negative");
-        verify(evidenceAccumulator).accumulate(any(), eq("support"), eq(sessionId), eq(null));
+        verify(beliefRepository).insertActiveSemanticBeliefIfAbsent(
+                eq(user.getId()), any(), eq("app-key-v1"), eq("core_self"), eq("negative"), any(), anyShort());
+        verify(evidenceAccumulator).accumulate(
+                eq(createdBelief), eq(BeliefEvidenceKind.SUPPORT), eq(sessionId), any());
+    }
+
+    @Test
+    @DisplayName("동일한 종류와 극성이라도 다른 신념 식별자는 병합하지 않는다")
+    void persistThought_differentIdentityCreatesSeparateBelief() {
+        SessionConsolidator consolidator = newConsolidator();
+        User user = userWithId();
+        UUID sessionId = UUID.randomUUID();
+        UserBelief createdBelief = mock(UserBelief.class);
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), eq("active"), anyShort(), any()))
+                .thenReturn(Optional.empty(), Optional.of(createdBelief));
+
+        ReflectionTestUtils.invokeMethod(consolidator, "persistThought", user, sessionId,
+                new ExtractorResult.ExtractedThought("나는 아무것도 못해", "self_blame", "core_self", "negative",
+                        0.7, "나는 능력이 부족하다", "support"));
+
+        verify(beliefRepository).insertActiveSemanticBeliefIfAbsent(
+                eq(user.getId()), any(), eq("app-key-v1"), eq("core_self"), eq("negative"), any(), anyShort());
+        verify(evidenceAccumulator).accumulate(
+                eq(createdBelief), eq(BeliefEvidenceKind.SUPPORT), eq(sessionId), any());
+    }
+
+    @Test
+    @DisplayName("반증 또는 재구성만 있는 새 신념은 만들지 않는다")
+    void persistThought_contradictionWithoutExistingIdentityDoesNotCreateBelief() {
+        SessionConsolidator consolidator = newConsolidator();
+        User user = userWithId();
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), eq("active"), anyShort(), any())).thenReturn(Optional.empty());
+
+        ReflectionTestUtils.invokeMethod(consolidator, "persistThought", user, UUID.randomUUID(),
+                new ExtractorResult.ExtractedThought("이번에는 해냈어", "self_blame", "core_self", "negative",
+                        0.7, "나는 능력이 부족하다", "contradict"));
+
+        verify(beliefRepository, never()).save(any(UserBelief.class));
+        verifyNoInteractions(evidenceAccumulator);
+    }
+
+    @Test
+    @DisplayName("동일 식별자의 동시 생성 충돌은 기존 신념을 다시 찾아 증거를 연결한다")
+    void persistThought_identityCreationRace_reusesExistingBelief() {
+        SessionConsolidator consolidator = newConsolidator();
+        User user = userWithId();
+        UserBelief existingBelief = mock(UserBelief.class);
+        UUID sessionId = UUID.randomUUID();
+        when(beliefRepository.findByUser_IdAndStatusAndBeliefIdentityVersionAndBeliefIdentityHash(
+                any(), eq("active"), anyShort(), any()))
+                .thenReturn(Optional.empty(), Optional.of(existingBelief));
+
+        ReflectionTestUtils.invokeMethod(consolidator, "persistThought", user, sessionId,
+                new ExtractorResult.ExtractedThought("자동적 사고", "self_blame", "core_self", "negative",
+                        0.7, "나는 능력이 부족하다", "support"));
+
+        verify(evidenceAccumulator).accumulate(
+                eq(existingBelief), eq(BeliefEvidenceKind.SUPPORT), eq(sessionId), any());
     }
 
     @Test
@@ -220,18 +284,15 @@ class SessionConsolidatorTest {
     }
 
     @Test
-    @DisplayName("허용값 밖 polarity는 null로 정규화되어 DB CHECK 위반을 막는다")
-    void persistThought_invalidPolarity_normalizedToNull() {
+    @DisplayName("허용값 밖 polarity는 thought만 저장하고 신념 연결은 만들지 않는다")
+    void persistThought_invalidPolarity_skipsBeliefConnection() {
         SessionConsolidator consolidator = newConsolidator();
         User user = userWithId();
-        when(beliefRepository.findByUser_IdAndStatus(any(), eq("active"))).thenReturn(List.of());
-        when(beliefRepository.save(any(UserBelief.class))).thenAnswer(inv -> inv.getArgument(0));
 
         ReflectionTestUtils.invokeMethod(
                 consolidator, "persistThought", user, UUID.randomUUID(), thought("core_self", "null"));
 
-        ArgumentCaptor<UserBelief> captor = ArgumentCaptor.forClass(UserBelief.class);
-        verify(beliefRepository).save(captor.capture());
-        assertThat(captor.getValue().getPolarity()).isNull();
+        verify(thoughtRepository).save(any());
+        verifyNoInteractions(beliefRepository, evidenceAccumulator);
     }
 }

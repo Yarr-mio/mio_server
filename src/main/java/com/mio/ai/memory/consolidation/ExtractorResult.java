@@ -17,8 +17,15 @@ public record ExtractorResult(
             String distortionCode,
             String beliefKind,
             String polarity,
-            double confidence
-    ) {}
+            double confidence,
+            String beliefIdentity,
+            String evidenceKind
+    ) {
+        public ExtractedThought(String thoughtText, String distortionCode, String beliefKind,
+                                String polarity, double confidence) {
+            this(thoughtText, distortionCode, beliefKind, polarity, confidence, null, null);
+        }
+    }
 
     public static ExtractorResult empty() {
         return new ExtractorResult(List.of(), null, List.of(), "regular", null);
