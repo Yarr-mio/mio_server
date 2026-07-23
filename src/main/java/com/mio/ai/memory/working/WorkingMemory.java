@@ -36,6 +36,7 @@ public class WorkingMemory {
     private static final String WORKING_KEY   = "session:%s:working";
     private static final String BELIEFS_KEY   = "session:%s:beliefs";
     private static final String TRIGGERS_KEY  = "session:%s:triggers";
+    private static final String ONTOLOGY_ACTIVATION_KEY = "session:%s:ontology_activation";
 
     private static final String FIELD_SOCRATIC_COUNT    = "socratic_count";
     private static final String FIELD_CBT_STATE         = "cbt_intervention_state";
@@ -43,6 +44,7 @@ public class WorkingMemory {
     private static final String FIELD_DISTORTION_PREFIX = "distortion:";
 
     private static final Duration SESSION_TTL = Duration.ofMinutes(90);
+    private static final Duration ONTOLOGY_ACTIVATION_TTL = Duration.ofSeconds(45);
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
@@ -135,6 +137,17 @@ public class WorkingMemory {
         redisTemplate.expire(k, SESSION_TTL);
     }
 
+    /** 같은 세션에서 진행 중이거나 막 끝난 온톨로지 LLM 호출을 중복 억제한다. */
+    public boolean tryAcquireOntologyActivation(UUID sessionId) {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(
+                    ontologyActivationKey(sessionId), "1", ONTOLOGY_ACTIVATION_TTL));
+        } catch (Exception e) {
+            log.warn("WorkingMemory.tryAcquireOntologyActivation failed for sessionId={} — skipping", sessionId, e);
+            return false;
+        }
+    }
+
     // ── 전체 조회 ────────────────────────────────────────────────
 
     public SessionDelta getSessionDelta(UUID sessionId) {
@@ -181,7 +194,8 @@ public class WorkingMemory {
                     messagesKey(sessionId),
                     workingKey(sessionId),
                     beliefsKey(sessionId),
-                    triggersKey(sessionId)
+                    triggersKey(sessionId),
+                    ontologyActivationKey(sessionId)
             ));
         } catch (Exception e) {
             log.warn("WorkingMemory.clear failed for sessionId={} — TTL will expire keys", sessionId, e);
@@ -194,6 +208,7 @@ public class WorkingMemory {
     private String workingKey(UUID sessionId)   { return WORKING_KEY.formatted(sessionId); }
     private String beliefsKey(UUID sessionId)   { return BELIEFS_KEY.formatted(sessionId); }
     private String triggersKey(UUID sessionId)  { return TRIGGERS_KEY.formatted(sessionId); }
+    private String ontologyActivationKey(UUID sessionId) { return ONTOLOGY_ACTIVATION_KEY.formatted(sessionId); }
 
     // ── 직렬화 ───────────────────────────────────────────────────
 

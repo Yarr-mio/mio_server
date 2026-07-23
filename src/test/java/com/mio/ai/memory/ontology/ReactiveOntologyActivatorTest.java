@@ -41,6 +41,7 @@ class ReactiveOntologyActivatorTest {
         userId = UUID.randomUUID();
         sessionId = UUID.randomUUID();
         when(sessionRepository.existsByIdAndStatus(sessionId, SessionStatus.ACTIVE)).thenReturn(true);
+        when(workingMemory.tryAcquireOntologyActivation(sessionId)).thenReturn(true);
     }
 
     @Test
@@ -56,8 +57,7 @@ class ReactiveOntologyActivatorTest {
     }
 
     @Test
-    void activatesExistingBeliefAndSeedTriggerFromValidatedStructuredExtraction() {
-        CbtDistortionDef distortion = mock(CbtDistortionDef.class);
+    void activatesExistingBeliefFromValidatedStructuredExtraction() {
         UserBelief matchingBelief = mock(UserBelief.class);
         UserBelief otherBelief = mock(UserBelief.class);
         UUID matchingBeliefId = UUID.randomUUID();
@@ -65,8 +65,6 @@ class ReactiveOntologyActivatorTest {
         when(turnOntologyExtractor.extract("발표에서 다들 나를 싫어하는 것 같아"))
                 .thenReturn(new TurnOntologySignal("mind_reading", "core_other", "negative"));
         when(ontologyValidator.isValidDistortionCode("mind_reading")).thenReturn(true);
-        when(distortion.getTypicalTriggers()).thenReturn(List.of("발표", "사회적 상황"));
-        when(distortionRepository.findById("mind_reading")).thenReturn(Optional.of(distortion));
         when(beliefRepository.findByUser_IdAndStatus(userId, "active"))
                 .thenReturn(List.of(matchingBelief, otherBelief));
         when(matchingBelief.getId()).thenReturn(matchingBeliefId);
@@ -77,7 +75,6 @@ class ReactiveOntologyActivatorTest {
 
         activator.activateBeliefs(userId, sessionId, "발표에서 다들 나를 싫어하는 것 같아");
 
-        verify(workingMemory).addSessionTrigger(sessionId, "발표");
         verify(workingMemory).addActivatedBeliefId(sessionId, matchingBeliefId.toString());
     }
 

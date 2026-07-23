@@ -178,14 +178,14 @@ class WorkingMemoryTest {
     }
 
     @Test
-    @DisplayName("clear는 4개 키를 모두 삭제한다")
-    void clear_deletes_all_four_keys() {
+    @DisplayName("clear는 5개 키를 모두 삭제한다")
+    void clear_deletes_all_five_keys() {
         UUID sessionId = UUID.randomUUID();
 
         workingMemory.clear(sessionId);
 
         verify(redisTemplate).delete(argThat((List<String> keys) ->
-                keys.size() == 4 && keys.stream().allMatch(k -> k.contains(sessionId.toString()))
+                keys.size() == 5 && keys.stream().allMatch(k -> k.contains(sessionId.toString()))
         ));
     }
 

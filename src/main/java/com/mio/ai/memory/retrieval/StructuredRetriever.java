@@ -219,6 +219,9 @@ public class StructuredRetriever {
     public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId, Set<String> activatedBeliefIds) {
         try {
             List<UUID> beliefIds = toUuids(activatedBeliefIds);
+            if (activatedBeliefIds != null && !activatedBeliefIds.isEmpty() && beliefIds.isEmpty()) {
+                return Collections.emptyList();
+            }
             if (!beliefIds.isEmpty()) {
                 return jdbcTemplate.query(
                         con -> {
@@ -297,6 +300,9 @@ public class StructuredRetriever {
     }
 
     private UUID toUuid(String value) {
+        if (value == null) {
+            return null;
+        }
         try {
             return UUID.fromString(value);
         } catch (IllegalArgumentException e) {

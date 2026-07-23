@@ -6,6 +6,7 @@ import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.memory.ontology.OntologyInterventionFilter;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
+import com.mio.ai.memory.ontology.ReactiveOntologyEligibility;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -93,6 +94,7 @@ public class ConversationOrchestrator {
     private final PolicyEngine policyEngine;
     private final OntologyInterventionFilter ontologyInterventionFilter;
     private final ReactiveOntologyActivator reactiveOntologyActivator;
+    private final ReactiveOntologyEligibility reactiveOntologyEligibility;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
     private final CrisisFlowService crisisFlowService;
@@ -147,11 +149,9 @@ public class ConversationOrchestrator {
                             userSignal.biasType()));
             CombinedSignal combined = signalCombiner.combine(securityAssessment, l1Result, moderation, profile);
 
-            // 현재 발화가 시드 트리거를 명시할 때만 즉시 활성화해 같은 턴의 GRAPH_TRIGGER에 반영한다.
-            reactiveOntologyActivator.activateVerifiedTriggers(sessionId, normalized, userSignal.biasType());
-            // 신념 활성화는 응답 지연을 막기 위해 비동기로 실행하며, 위기 발화에는 추가 LLM 호출을 하지 않는다.
-            if (!combined.hardCrisis()) {
-                reactiveOntologyActivator.activateBeliefs(userId, sessionId, normalized);
+            // 안전한 결정론 신호만 같은 턴의 GRAPH_TRIGGER에 반영한다.
+            if (reactiveOntologyEligibility.allowsTriggerActivation(userSignal, combined)) {
+                reactiveOntologyActivator.activateVerifiedTriggers(sessionId, normalized, userSignal.biasType());
             }
 
             // 4. InputJudge (conditional)
@@ -177,6 +177,11 @@ public class ConversationOrchestrator {
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
             decision = decision.withInterventionHints(
                     ontologyInterventionFilter.filter(decision.interventionHints(), combined, sessionDelta));
+
+            // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
+            if (reactiveOntologyEligibility.allowsBeliefActivation(userSignal, combined, decision)) {
+                reactiveOntologyActivator.activateBeliefs(userId, sessionId, normalized);
+            }
 
             // 7. Execute based on decision
             String assistantContent;

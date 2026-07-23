@@ -53,6 +53,8 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
 
     boolean existsByUser_IdAndStatus(UUID userId, SessionStatus status);
 
+    boolean existsByIdAndStatus(UUID id, SessionStatus status);
+
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
     void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);

@@ -2,6 +2,8 @@ package com.mio.ai.memory.ontology;
 
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.working.WorkingMemory;
+import com.mio.session.domain.SessionStatus;
+import com.mio.session.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
@@ -30,6 +32,7 @@ public class ReactiveOntologyActivator {
     private final WorkingMemory workingMemory;
     private final TurnOntologyExtractor turnOntologyExtractor;
     private final OntologyValidator ontologyValidator;
+    private final SessionRepository sessionRepository;
 
     /**
      * 규칙 기반으로 이미 감지된 왜곡에서만 같은 발화에 명시적으로 등장한 시드 트리거를 활성화한다.
@@ -62,23 +65,28 @@ public class ReactiveOntologyActivator {
             return;
         }
         try {
+            if (!isSessionActive(sessionId) || !workingMemory.tryAcquireOntologyActivation(sessionId)) {
+                return;
+            }
             TurnOntologySignal signal = turnOntologyExtractor.extract(normalizedMessage);
-            if (!ontologyValidator.isValidDistortionCode(signal.distortionCode())) {
+            if (!isSessionActive(sessionId) || !ontologyValidator.isValidDistortionCode(signal.distortionCode())) {
                 return;
             }
 
-            activateVerifiedTriggers(sessionId, normalizedMessage, signal.distortionCode());
             if (!VALID_BELIEF_KINDS.contains(signal.beliefKind()) || !VALID_POLARITIES.contains(signal.polarity())) {
                 return;
             }
 
-            beliefRepository.findByUser_IdAndStatus(userId, "active").stream()
+            List<String> activatedBeliefIds = beliefRepository.findByUser_IdAndStatus(userId, "active").stream()
                     .filter(belief -> signal.beliefKind().equals(belief.getBeliefKind()))
                     .filter(belief -> signal.polarity().equals(belief.getPolarity()))
                     .map(belief -> belief.getId())
                     .filter(Objects::nonNull)
                     .map(UUID::toString)
-                    .forEach(beliefId -> workingMemory.addActivatedBeliefId(sessionId, beliefId));
+                    .toList();
+            if (activatedBeliefIds.size() == 1 && isSessionActive(sessionId)) {
+                workingMemory.addActivatedBeliefId(sessionId, activatedBeliefIds.getFirst());
+            }
         } catch (Exception e) {
             log.warn("ReactiveOntologyActivator: belief activation skipped for sessionId={}", sessionId, e);
         }
@@ -90,5 +98,9 @@ public class ReactiveOntologyActivator {
 
     private String compact(String value) {
         return value.replaceAll("\\s+", "").trim();
+    }
+
+    private boolean isSessionActive(UUID sessionId) {
+        return sessionRepository.existsByIdAndStatus(sessionId, SessionStatus.ACTIVE);
     }
 }
