@@ -10,6 +10,7 @@ import com.mio.ai.memory.retrieval.RetrievalSource;
 import com.mio.ai.memory.retrieval.RetrievedItem;
 import com.mio.ai.memory.retrieval.StructuredRetriever;
 import com.mio.ai.memory.retrieval.VectorRetriever;
+import com.mio.ai.memory.ontology.OntologyRelationExpander;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.safety.CombinedSignal;
@@ -45,6 +46,7 @@ class ContextPreWarmerTest {
     private final StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
     private final JdbcTemplate jdbcTemplate = mock(JdbcTemplate.class);
     private final WorkingMemory workingMemory = mock(WorkingMemory.class);
+    private final OntologyRelationExpander ontologyRelationExpander = mock(OntologyRelationExpander.class);
 
     private ContextPreWarmer preWarmer;
     private UUID sessionId;
@@ -56,7 +58,7 @@ class ContextPreWarmerTest {
     void setUp() {
         preWarmer = new ContextPreWarmer(structuredRetriever, vectorRetriever, lexicalRetriever, embeddingClient,
                 fusionRanker, contextComposer, planner, safetyProfileBuilder, checkpointRepository,
-                redisTemplate, jdbcTemplate, workingMemory);
+                redisTemplate, jdbcTemplate, workingMemory, ontologyRelationExpander);
         sessionId = UUID.randomUUID();
         userId = UUID.randomUUID();
         combined = mock(CombinedSignal.class);
@@ -152,6 +154,7 @@ class ContextPreWarmerTest {
         RetrievedItem related = new RetrievedItem("episode-1", RetrievalSource.GRAPH_DISTORTION,
                 "related pattern (unconfirmed): 과거 업무 압박", "normal", 0.45, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(ontologyRelationExpander.expandCooccurringCodes("catastrophizing")).thenReturn(Set.of("mind_reading"));
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(related));
         when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("related memory");
 

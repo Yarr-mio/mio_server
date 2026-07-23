@@ -15,4 +15,10 @@ class RetrievalPlanTest {
                 RetrievalSource.GRAPH_TRIGGER
         );
     }
+
+    @Test
+    void clearLowPlanDoesNotCreateOntologyRelationCandidates() {
+        assertThat(RetrievalPlan.clearLow().sources())
+                .doesNotContain(RetrievalSource.GRAPH_DISTORTION);
+    }
 }

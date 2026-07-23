@@ -51,7 +51,10 @@ public class ContextComposer {
         appendSection(sb, "Recent Risk Context",
                 grouped.get(RetrievalSource.SQL_RECENT_RISK));
         appendSection(sb, "Past Similar Situations",
-                grouped.get(RetrievalSource.GRAPH_TRIGGER));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.GRAPH_TRIGGER, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.GRAPH_DISTORTION, List.of()).stream())
+                        .toList());
         appendSection(sb, "Active Patterns",
                 grouped.get(RetrievalSource.SQL_PROFILE));
         appendSection(sb, "Helpful Approaches",

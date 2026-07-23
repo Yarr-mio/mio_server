@@ -25,6 +25,7 @@ public record RetrievalPlan(
     public static RetrievalPlan medium() {
         return new RetrievalPlan(
                 List.of(RetrievalSource.GRAPH_TRIGGER,
+                        RetrievalSource.GRAPH_DISTORTION,
                         RetrievalSource.GRAPH_INTERVENTION_FIT,
                         RetrievalSource.VECTOR_BELIEF,
                         RetrievalSource.SQL_TODO_HISTORY),
@@ -45,6 +46,7 @@ public record RetrievalPlan(
         return new RetrievalPlan(
                 List.of(RetrievalSource.GRAPH_BELIEF_NEIGH,
                         RetrievalSource.GRAPH_TRIGGER,
+                        RetrievalSource.GRAPH_DISTORTION,
                         RetrievalSource.GRAPH_INTERVENTION_FIT,
                         RetrievalSource.VECTOR_BELIEF),
                 3, 300, "sensitive"

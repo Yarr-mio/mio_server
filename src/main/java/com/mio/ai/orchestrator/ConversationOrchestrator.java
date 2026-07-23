@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.memory.ontology.OntologyInterventionFilter;
+import com.mio.ai.memory.ontology.OntologyRelationExpander;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivationDispatcher;
 import com.mio.ai.memory.ontology.ReactiveOntologyEligibility;
@@ -94,6 +95,7 @@ public class ConversationOrchestrator {
     private final OutputJudge outputJudge;
     private final PolicyEngine policyEngine;
     private final OntologyInterventionFilter ontologyInterventionFilter;
+    private final OntologyRelationExpander ontologyRelationExpander;
     private final ReactiveOntologyActivator reactiveOntologyActivator;
     private final ReactiveOntologyActivationDispatcher reactiveOntologyActivationDispatcher;
     private final ReactiveOntologyEligibility reactiveOntologyEligibility;
@@ -169,7 +171,8 @@ public class ConversationOrchestrator {
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
-            String liveMemory = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile, normalized);
+            String liveMemory = contextPreWarmer.buildContextSync(
+                    sessionId, userId, combined, profile, normalized, userSignal.biasType());
             boolean memoryCacheFallbackUsed = (liveMemory == null || liveMemory.isBlank())
                     && cachedMemory != null && !cachedMemory.isBlank();
             String memoryContext = memoryCacheFallbackUsed ? cachedMemory : liveMemory;
@@ -179,6 +182,11 @@ public class ConversationOrchestrator {
             PolicyDecision decision = policyEngine.decide(combined, judgeResult, profile, sessionDelta);
             decision = decision.withInterventionHints(
                     ontologyInterventionFilter.filter(decision.interventionHints(), combined, sessionDelta));
+            decision = decision.withInterventionHints(
+                    ontologyInterventionFilter.filter(
+                            ontologyRelationExpander.rerankApprovedHints(
+                                    decision.interventionHints(), userSignal.biasType()),
+                            combined, sessionDelta));
 
             // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
             if (reactiveOntologyEligibility.allowsBeliefActivation(userSignal, combined, decision)) {
