@@ -145,4 +145,20 @@ class ContextPreWarmerTest {
         assertThat(context).isEqualTo("belief memory");
         verify(structuredRetriever).retrieveBeliefNeighbors(userId, Set.of(beliefId.toString()));
     }
+
+    @Test
+    void retrievesPastEpisodesForVerifiedCooccurringPatternsWithoutTreatingThemAsCurrent() {
+        RetrievalPlan plan = new RetrievalPlan(List.of(RetrievalSource.GRAPH_DISTORTION), 3, 200, "normal");
+        RetrievedItem related = new RetrievedItem("episode-1", RetrievalSource.GRAPH_DISTORTION,
+                "related pattern (unconfirmed): 과거 업무 압박", "normal", 0.45, 1);
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(related));
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("related memory");
+
+        String context = preWarmer.buildContextSync(
+                sessionId, userId, combined, profile, "회의가 걱정돼", "catastrophizing");
+
+        assertThat(context).isEqualTo("related memory");
+        verify(structuredRetriever).retrieveRelatedDistortionEpisodes(userId, Set.of("mind_reading"));
+    }
 }
