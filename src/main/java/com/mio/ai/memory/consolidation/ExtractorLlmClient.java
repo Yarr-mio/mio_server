@@ -32,6 +32,8 @@ public class ExtractorLlmClient {
                   "distortionCode": "overgeneralization|catastrophizing|mind_reading|all_or_nothing|self_blame|emotional_reasoning 중 하나, 없으면 JSON null",
                   "beliefKind": "core_self|core_other|core_world|intermediate_rule|compensatory_strategy 중 하나, 없으면 JSON null",
                   "polarity": "positive|negative|neutral 중 하나, 불명확하면 JSON null",
+                  "beliefIdentity": "PII·상황·고유명사 없이 일반화한 짧은 신념 문장, 없으면 JSON null",
+                  "evidenceKind": "support|contradict|reframe 중 하나, 없으면 JSON null",
                   "confidence": 0.0~1.0
                 }
               ],
@@ -77,6 +79,9 @@ public class ExtractorLlmClient {
             - distortionCode, beliefKind, polarity, dominantEmotion은 해당하는 값이 없으면
               반드시 문자열 "null"이 아니라 JSON null로 설정하세요. (올바른 예: "beliefKind": null)
             - 위 목록(시드)에 없는 값은 임의로 만들어내지 말고 JSON null로 두세요.
+            - beliefIdentity는 개인정보·사건 세부사항 없이 신념 자체만 일반화해 작성하세요.
+            - evidenceKind는 현재 사고가 해당 신념을 지지하면 support, 반증하면 contradict,
+              새로운 관점이면 reframe이며 불명확하면 JSON null입니다.
             - triggerTags는 구체적인 상황 키워드로 2~4개를 추출합니다.
             - emotionScore: 세션 종료 시점의 사용자 감정 상태를 0(매우 부정)~100(매우 긍정)으로 수치화합니다.
             """;
