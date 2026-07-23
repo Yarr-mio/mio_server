@@ -2,6 +2,7 @@ package com.mio.ai.memory.retrieval;
 
 public enum RetrievalSource {
     VECTOR_EPISODE,        // pgvector: session_summaries.episode_emb
+    LEXICAL_EPISODE,       // PostgreSQL FTS: session_summaries.summary_text
     VECTOR_BELIEF,         // pgvector: user_beliefs (belief embedding)
     GRAPH_TRIGGER,         // GIN: session_summaries.trigger_tags
     GRAPH_INTERVENTION_FIT,// intervention_outcomes + behavior_tasks

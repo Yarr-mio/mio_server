@@ -157,9 +157,8 @@ public class ConversationOrchestrator {
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
             boolean memoryCacheHit = cachedMemory != null;
-            String memoryContext = memoryCacheHit
-                    ? cachedMemory
-                    : contextPreWarmer.buildContextSync(sessionId, userId, combined, profile);
+            String liveMemory = contextPreWarmer.buildContextSync(sessionId, userId, combined, profile, normalized);
+            String memoryContext = liveMemory != null && !liveMemory.isBlank() ? liveMemory : cachedMemory;
             String checkpointSummary = contextPreWarmer.getCachedCheckpoint(sessionId);
 
             // 6. Policy decision (10-step)

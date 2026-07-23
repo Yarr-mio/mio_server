@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 import java.util.stream.Collectors;
 
 /**
@@ -56,7 +57,10 @@ public class ContextComposer {
         appendSection(sb, "Helpful Approaches",
                 grouped.get(RetrievalSource.GRAPH_INTERVENTION_FIT));
         appendSection(sb, "Recent Episodes",
-                grouped.get(RetrievalSource.VECTOR_EPISODE));
+                Stream.concat(
+                                grouped.getOrDefault(RetrievalSource.VECTOR_EPISODE, List.of()).stream(),
+                                grouped.getOrDefault(RetrievalSource.LEXICAL_EPISODE, List.of()).stream())
+                        .toList());
         appendSection(sb, "Belief Context",
                 grouped.get(RetrievalSource.VECTOR_BELIEF));
         appendSection(sb, "Recent Activities",
