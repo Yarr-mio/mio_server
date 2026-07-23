@@ -28,6 +28,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * POST /v1/sessions 직후 비동기 context + safety profile 사전 빌드 (§12.4.1).
@@ -41,6 +42,7 @@ public class ContextPreWarmer {
     private static final String CONTEXT_CACHE_KEY = "session:%s:context_cache";
     private static final Duration CONTEXT_TTL = Duration.ofMinutes(5);
     private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
+    private static final long MAX_EMBEDDING_WAIT_MS = 250;
 
     private final StructuredRetriever structuredRetriever;
     private final VectorRetriever vectorRetriever;
@@ -140,12 +142,20 @@ public class ContextPreWarmer {
                 || queryText == null || queryText.isBlank()) {
             return null;
         }
+        CompletableFuture<float[]> embeddingFuture = CompletableFuture.supplyAsync(
+                () -> embeddingClient.embed(queryText), retrievalPool);
         try {
-            return embeddingClient.embed(queryText);
+            long timeoutMs = Math.min(plan.budgetMs(), MAX_EMBEDDING_WAIT_MS);
+            return embeddingFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            embeddingFuture.cancel(true);
+            log.warn("ContextPreWarmer: embedding interrupted; continuing without vector retrieval");
         } catch (Exception e) {
+            embeddingFuture.cancel(true);
             log.warn("ContextPreWarmer: embedding failed; continuing without vector retrieval", e);
-            return null;
         }
+        return null;
     }
 
     private List<List<RetrievedItem>> retrieveParallel(UUID sessionId, UUID userId, RetrievalPlan plan,
