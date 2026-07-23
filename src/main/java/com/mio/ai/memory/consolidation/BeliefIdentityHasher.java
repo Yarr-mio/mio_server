@@ -6,6 +6,8 @@ import org.springframework.stereotype.Component;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
+import java.util.Locale;
 import java.util.UUID;
 
 /** 평문 신념 식별 문구를 저장하지 않고 사용자 범위 HMAC으로 동일 노드를 찾는다. */
@@ -37,6 +39,8 @@ public class BeliefIdentityHasher {
     }
 
     public String normalize(String value) {
-        return value.trim().replaceAll("\\s+", " ");
+        return Normalizer.normalize(value.trim(), Normalizer.Form.NFC)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("\\s+", " ");
     }
 }
