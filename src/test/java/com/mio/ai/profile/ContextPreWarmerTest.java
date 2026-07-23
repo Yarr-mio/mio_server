@@ -10,6 +10,7 @@ import com.mio.ai.memory.retrieval.RetrievalSource;
 import com.mio.ai.memory.retrieval.RetrievedItem;
 import com.mio.ai.memory.retrieval.StructuredRetriever;
 import com.mio.ai.memory.retrieval.VectorRetriever;
+import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.session.repository.SessionCheckpointRepository;
@@ -19,6 +20,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -125,5 +127,22 @@ class ContextPreWarmerTest {
         assertThat(context).isEqualTo("lexical memory");
         assertThat(elapsedMs).isLessThan(700);
         verify(lexicalRetriever).retrieveByKeywords(userId, "발표가 걱정돼", 3);
+    }
+
+    @Test
+    void retrievesOnlyActivatedBeliefNeighborsForCurrentSession() {
+        UUID beliefId = UUID.randomUUID();
+        RetrievalPlan plan = new RetrievalPlan(List.of(RetrievalSource.GRAPH_BELIEF_NEIGH), 3, 200, "normal");
+        SessionDelta delta = new SessionDelta(0, "none", java.util.Map.of(), 0,
+                Set.of(beliefId.toString()), Set.of());
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(workingMemory.getSessionDelta(sessionId)).thenReturn(delta);
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("belief memory");
+
+        String context = preWarmer.buildContextSync(sessionId, userId, combined, profile, "회의가 걱정돼");
+
+        assertThat(context).isEqualTo("belief memory");
+        verify(structuredRetriever).retrieveBeliefNeighbors(userId, Set.of(beliefId.toString()));
     }
 }
