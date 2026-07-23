@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.sql.Array;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -215,8 +216,44 @@ public class StructuredRetriever {
     }
 
     // belief_text는 AES-256 암호화 컬럼이므로 메타데이터 컬럼만 사용해 인접 신념 구성
-    public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId) {
+    public List<RetrievedItem> retrieveBeliefNeighbors(UUID userId, Set<String> activatedBeliefIds) {
         try {
+            List<UUID> beliefIds = toUuids(activatedBeliefIds);
+            if (!beliefIds.isEmpty()) {
+                return jdbcTemplate.query(
+                        con -> {
+                            var ps = con.prepareStatement(
+                                    """
+                                    SELECT b.id::text,
+                                           b.belief_kind
+                                             || ' [' || COALESCE(b.polarity, 'neutral') || ']'
+                                             || ' conf:' || ROUND(b.confidence::numeric, 2)
+                                             || ' support:' || COALESCE(b.support_count, 0)
+                                             || ' contradict:' || COALESCE(b.contradict_count, 0) AS content,
+                                           b.confidence AS score
+                                    FROM user_beliefs b
+                                    WHERE b.user_id = ?
+                                      AND b.status = 'active'
+                                      AND b.id = ANY (?)
+                                    ORDER BY b.last_activated_at DESC, b.confidence DESC
+                                    LIMIT 5
+                                    """
+                            );
+                            ps.setObject(1, userId);
+                            Array pgArray = con.createArrayOf("uuid", beliefIds.toArray(UUID[]::new));
+                            ps.setArray(2, pgArray);
+                            return ps;
+                        },
+                        (rs, rowNum) -> new RetrievedItem(
+                                rs.getString("id"),
+                                RetrievalSource.GRAPH_BELIEF_NEIGH,
+                                rs.getString("content"),
+                                "sensitive",
+                                rs.getDouble("score"),
+                                rowNum + 1
+                        )
+                );
+            }
             return jdbcTemplate.query(
                     """
                     SELECT b.id::text,
@@ -246,6 +283,24 @@ public class StructuredRetriever {
         } catch (Exception e) {
             log.warn("StructuredRetriever.retrieveBeliefNeighbors failed for userId={}", userId, e);
             return Collections.emptyList();
+        }
+    }
+
+    private List<UUID> toUuids(Set<String> activatedBeliefIds) {
+        if (activatedBeliefIds == null || activatedBeliefIds.isEmpty()) {
+            return List.of();
+        }
+        return activatedBeliefIds.stream()
+                .map(this::toUuid)
+                .filter(java.util.Objects::nonNull)
+                .toList();
+    }
+
+    private UUID toUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
         }
     }
 }

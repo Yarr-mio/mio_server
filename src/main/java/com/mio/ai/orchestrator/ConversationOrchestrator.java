@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.memory.ontology.OntologyInterventionFilter;
+import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -91,6 +92,7 @@ public class ConversationOrchestrator {
     private final OutputJudge outputJudge;
     private final PolicyEngine policyEngine;
     private final OntologyInterventionFilter ontologyInterventionFilter;
+    private final ReactiveOntologyActivator reactiveOntologyActivator;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
     private final CrisisFlowService crisisFlowService;
@@ -144,6 +146,13 @@ public class ConversationOrchestrator {
                             userSignal.emotionScore(),
                             userSignal.biasType()));
             CombinedSignal combined = signalCombiner.combine(securityAssessment, l1Result, moderation, profile);
+
+            // 현재 발화가 시드 트리거를 명시할 때만 즉시 활성화해 같은 턴의 GRAPH_TRIGGER에 반영한다.
+            reactiveOntologyActivator.activateVerifiedTriggers(sessionId, normalized, userSignal.biasType());
+            // 신념 활성화는 응답 지연을 막기 위해 비동기로 실행하며, 위기 발화에는 추가 LLM 호출을 하지 않는다.
+            if (!combined.hardCrisis()) {
+                reactiveOntologyActivator.activateBeliefs(userId, sessionId, normalized);
+            }
 
             // 4. InputJudge (conditional)
             InputJudgeResult judgeResult = null;
