@@ -57,20 +57,34 @@ public class SafetyL1 {
 
         List<String> signals = new ArrayList<>();
         boolean hardCrisis = false;
+        boolean hardCrisisUnverified = false;
         boolean riskCandidate = false;
         boolean emotionSpike = false;
         boolean repetitiveNegative = false;
         boolean dependencyHint = false;
 
-        for (String keyword : HARD_CRISIS_KEYWORDS) {
-            if (msg.contains(keyword)) {
+        // 매칭된 키워드를 모두 모은다. 맥락 마커는 각 키워드 주변에서만 유효하므로
+        // 첫 매칭에서 멈추면 뒤쪽 위기 절을 놓친다 (이슈 #255).
+        List<String> matchedCrisisKeywords = HARD_CRISIS_KEYWORDS.stream()
+                .filter(msg::contains)
+                .sorted()
+                .toList();
+
+        if (!matchedCrisisKeywords.isEmpty()) {
+            matchedCrisisKeywords.forEach(keyword -> signals.add("crisis_keyword:" + keyword));
+            // 3인칭·인용·부정·과거 회복 맥락이면 확정하지 않고 InputJudge 검증으로 넘긴다.
+            // riskCandidate를 함께 세워 Judge 호출을 보장한다 — 강등하되 무시하지 않는다.
+            String contextMarker = CrisisContextMarkers.detect(msg, matchedCrisisKeywords);
+            if (contextMarker != null) {
+                hardCrisisUnverified = true;
+                riskCandidate = true;
+                signals.add("crisis_context_marker:" + contextMarker);
+            } else {
                 hardCrisis = true;
-                signals.add("crisis_keyword:" + keyword);
-                break;
             }
         }
 
-        if (!hardCrisis) {
+        if (!hardCrisis && !hardCrisisUnverified) {
             for (String keyword : RISK_KEYWORDS) {
                 if (msg.contains(keyword)) {
                     riskCandidate = true;
@@ -124,11 +138,12 @@ public class SafetyL1 {
         }
 
         double confidence = hardCrisis ? 0.9
+                : (hardCrisisUnverified ? 0.75
                 : (riskCandidate ? 0.6
-                : (emotionSpike || repetitiveNegative || dependencyHint ? 0.45 : 0.0));
+                : (emotionSpike || repetitiveNegative || dependencyHint ? 0.45 : 0.0)));
 
         return new SafetyL1Result(
-                hardCrisis, riskCandidate, emotionSpike,
+                hardCrisis, hardCrisisUnverified, riskCandidate, emotionSpike,
                 repetitiveNegative, dependencyHint, moderationFlagged,
                 signals, confidence
         );

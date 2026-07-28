@@ -65,8 +65,21 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// 실 LLM API를 호출하는 테스트는 과금이 발생하므로 기본 실행에서 제외한다.
+// 포함하려면: ./gradlew test -PllmTests
+val runLlmTests = project.hasProperty("llmTests")
+
 tasks.withType<Test> {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (!runLlmTests) {
+            excludeTags("llm-integration")
+        }
+    }
+
+    // 스케일 테스트 표본 수 조정: ./gradlew test -PllmTests -PllmScaleSample=1000
+    project.findProperty("llmScaleSample")?.let {
+        systemProperty("llm.scale.sample", it.toString())
+    }
 
     val envFile = rootProject.file(".env")
     if (envFile.exists()) {

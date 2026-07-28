@@ -97,8 +97,13 @@ public class InputJudge {
         SecurityVerdict security = new SecurityVerdict(secLevel, attackTypes, requireOutputSecGuard);
 
         JsonNode riskNode = root.path("risk");
-        RiskLevel riskLevel = parseRiskLevel(
-                riskNode.hasNonNull("risk_level") ? riskNode.path("risk_level").asText() : "CLEAR_LOW");
+        // risk_level 이 없으면 "위험 없음"이 아니라 "판정하지 못함"이다. 기본값 CLEAR_LOW 로 채우면
+        // 잘린 응답이 그대로 저위험 판정이 되어, 강등된 위기를 해제하는 신호로 쓰인다
+        // (PolicyEngine.crisisClearedByJudge). 판정 실패로 처리해 fail-closed 를 유지한다.
+        if (!riskNode.hasNonNull("risk_level")) {
+            throw new IllegalStateException("InputJudge 응답에 risk.risk_level 이 없다");
+        }
+        RiskLevel riskLevel = parseRiskLevel(riskNode.path("risk_level").asText());
         List<String> riskTypes = new ArrayList<>();
         riskNode.path("risk_types").forEach(n -> riskTypes.add(n.asText()));
         GenerationMode genMode = parseGenerationMode(riskNode.path("recommended_generation_mode").asText("NORMAL"));
@@ -120,12 +125,15 @@ public class InputJudge {
         }
     }
 
+    /**
+     * 알 수 없는 값을 CLEAR_LOW 로 떨어뜨리지 않는다. 그렇게 하면 모델이 스키마를 벗어난 값을
+     * 반환했을 때 "판정 불가"가 "위험 없음"으로 둔갑해 위기 해제 신호가 된다.
+     */
     private RiskLevel parseRiskLevel(String value) {
         try {
             return RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown RiskLevel from LLM: {}, defaulting to CLEAR_LOW", value);
-            return RiskLevel.CLEAR_LOW;
+            throw new IllegalStateException("InputJudge 가 알 수 없는 RiskLevel 을 반환했다: " + value, e);
         }
     }
 

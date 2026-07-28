@@ -21,6 +21,7 @@ public class SafetySignalCombiner {
         return new CombinedSignal(
                 security.level(),
                 l1.hardCrisis(),
+                l1.hardCrisisUnverified(),
                 l1.riskCandidate(),
                 l1.emotionSpike(),
                 l1.repetitiveNegative(),
@@ -48,6 +49,12 @@ public class SafetySignalCombiner {
 
         if (l1.hardCrisis()) return false;
         if (security.level() == SecurityLevel.ATTACK) return false;
+
+        // 0. 맥락 마커로 강등된 위기 후보는 반드시 Judge 검증을 거친다 (이슈 #255).
+        // riskCandidate로도 걸리지만, 강등의 전제 조건이므로 명시적으로 둔다.
+        if (l1.hardCrisisUnverified()) {
+            return true;
+        }
 
         // §10.2 발동 조건
         // 1. riskCandidate (hardCrisis 아닌 위기 후보) — SafetyL1의 RISK_KEYWORDS 매칭 시

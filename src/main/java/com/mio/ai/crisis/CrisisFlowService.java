@@ -49,7 +49,10 @@ public class CrisisFlowService {
             Integer emotionScore) {
 
         int severity = determineSeverity(l1Result, originalMessage);
-        String triggerType = l1Result.hardCrisis() ? "keyword" : "moderation";
+        // 강등된 위기(hardCrisisUnverified)도 키워드 매칭이 발단이다. hardCrisis 만 보면
+        // 검증을 거쳐 확정된 위기가 전부 moderation 으로 잘못 기록된다.
+        String triggerType =
+                (l1Result.hardCrisis() || l1Result.hardCrisisUnverified()) ? "keyword" : "moderation";
         String fixedResponse = getFixedResponse(severity);
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
@@ -78,7 +81,16 @@ public class CrisisFlowService {
     private int determineSeverity(SafetyL1Result l1Result, String originalMessage) {
         // L1 hardCrisis 키워드가 매칭된 경우 severity 3 보장
         // (SEVERITY_3_KEYWORDS에 없는 HARD_CRISIS_KEYWORDS 항목도 포함)
-        if (l1Result.hardCrisis()) {
+        //
+        // 맥락 마커로 강등된 위기(hardCrisisUnverified)도 같이 본다. 강등된 발화가 여기까지
+        // 왔다는 것은 PolicyEngine이 검증 결과로 위기를 확정했거나 판정이 실패해 fail-closed로
+        // 위기를 유지했다는 뜻이다. 그런데 강등 시 hardCrisis는 false이므로 이 조건이 없으면
+        // 아래 SEVERITY_3_KEYWORDS 스캔으로 떨어지는데, 그 목록에는 "죽고싶어" 같은
+        // HARD_CRISIS_KEYWORDS 항목 상당수가 없어 severity 1로 판정된다.
+        // severity 1은 핫라인 리소스를 붙이지 않으므로(buildCrisisEvent) 위기 사용자에게
+        // 상담 전화가 노출되지 않고, 잘못된 severity가 crisis_events에 남아
+        // SafetyProfile의 14일 riskPrior까지 오염시킨다.
+        if (l1Result.hardCrisis() || l1Result.hardCrisisUnverified()) {
             return 3;
         }
         if (originalMessage == null) {
