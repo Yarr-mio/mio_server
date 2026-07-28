@@ -16,6 +16,11 @@ import java.util.stream.Collectors;
 @Tag("llm-integration")
 class ExtractorLlmScaleTest {
 
+    /** 기본 표본 수 — 전량(950건) 실행은 과금이 크므로 계층 표본만 돌린다. */
+    private static final int DEFAULT_SAMPLE = 150;
+    /** 표본 재현성을 위한 고정 시드. */
+    private static final long SAMPLE_SEED = 20250728L;
+
     private static ExtractorLlmClient extractor;
 
     record Case(String id, String summary, String expected, String cat) {}
@@ -34,10 +39,12 @@ class ExtractorLlmScaleTest {
 
     @Test
     @Timeout(value = 25, unit = TimeUnit.MINUTES)
-    @DisplayName("~1000 시나리오 병렬 배치 분류 검증")
+    @DisplayName("계층 표본 분류 검증 (기본 150건, -PllmScaleSample 로 조정)")
     void validate_scale() throws Exception {
-        List<Case> cases = buildAll();
-        System.out.printf("%n총 시나리오: %d건 실행 시작 (병렬 3)%n", cases.size());
+        List<Case> all = buildAll();
+        List<Case> cases = StratifiedSampler.sample(all, Case::cat, sampleSize(all.size()), SAMPLE_SEED);
+        System.out.printf("%n총 시나리오: %d건 중 %d건 계층 표본 실행 시작 (병렬 3)%n",
+                all.size(), cases.size());
 
         ExecutorService pool = Executors.newFixedThreadPool(3);
         List<Result> results = new ArrayList<>(cases.size());
@@ -73,6 +80,27 @@ class ExtractorLlmScaleTest {
         Assertions.assertThat(rate)
                 .as("pass rate >= 95%% (actual: %.1f%%)", rate * 100)
                 .isGreaterThanOrEqualTo(0.95);
+    }
+
+    /**
+     * 실행 표본 수. 기본 150건 — 실 LLM 호출 비용을 억제하기 위한 값이다.
+     * 전량 실행: ./gradlew test --tests "*ExtractorLlmScaleTest" -PllmTests -PllmScaleSample=1000
+     */
+    private int sampleSize(int total) {
+        String raw = System.getProperty("llm.scale.sample");
+        if (raw == null || raw.isBlank()) {
+            return Math.min(DEFAULT_SAMPLE, total);
+        }
+        try {
+            int requested = Integer.parseInt(raw.trim());
+            if (requested <= 0) {
+                throw new IllegalArgumentException(
+                        "llm.scale.sample 은 1 이상이어야 한다: " + raw);
+            }
+            return Math.min(requested, total);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("llm.scale.sample 파싱 실패: " + raw, e);
+        }
     }
 
     private Result runCase(Case c) {
