@@ -49,7 +49,10 @@ public class CrisisFlowService {
             Integer emotionScore) {
 
         int severity = determineSeverity(l1Result, originalMessage);
-        String triggerType = l1Result.hardCrisis() ? "keyword" : "moderation";
+        // 강등된 위기(hardCrisisUnverified)도 키워드 매칭이 발단이다. hardCrisis 만 보면
+        // 검증을 거쳐 확정된 위기가 전부 moderation 으로 잘못 기록된다.
+        String triggerType =
+                (l1Result.hardCrisis() || l1Result.hardCrisisUnverified()) ? "keyword" : "moderation";
         String fixedResponse = getFixedResponse(severity);
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);

@@ -1,6 +1,7 @@
 package com.mio.ai.crisis;
 
 import com.mio.ai.safety.SafetyL1Result;
+import com.mio.crisis.domain.CrisisEvent;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.user.domain.User;
@@ -125,6 +126,12 @@ class CrisisFlowServiceTest {
         assertThat(crisisEvent.resources().hotlines())
                 .extracting(SseEventDto.CrisisEvent.Hotline::number)
                 .contains("109", "1577-0199");
+
+        // 강등된 위기도 발단은 키워드 매칭이다. hardCrisis 만 보면 검증을 거쳐 확정된 위기가
+        // 전부 moderation 으로 기록되어 crisis_events 의 발단 분석이 어긋난다.
+        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
+        verify(crisisEventRepository).save(persisted.capture());
+        assertThat(persisted.getValue().getTriggerType()).isEqualTo("keyword");
     }
 
     private Set<ResponseBodyEmitter.DataWithMediaType> extractData(SseEmitter.SseEventBuilder builder) {
