@@ -68,7 +68,7 @@ class CrisisDetectionCorpusQaTest {
             ModerationResult moderation) {
 
         static Probe of(String category, Truth truth, String message) {
-            return new Probe(category, truth, message, List.of(), ModerationResult.failOpen());
+            return new Probe(category, truth, message, List.of(), ModerationResult.clear());
         }
     }
 
@@ -559,7 +559,7 @@ class CrisisDetectionCorpusQaTest {
     private static void addWithHistory(List<Probe> target, String category, Truth truth,
                                        List<SafetyL1HistoryMessage> history, String... messages) {
         for (String message : messages) {
-            target.add(new Probe(category, truth, message, history, ModerationResult.failOpen()));
+            target.add(new Probe(category, truth, message, history, ModerationResult.clear()));
         }
     }
 

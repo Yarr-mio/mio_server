@@ -65,6 +65,7 @@ class AiDecisionLoggerTest {
                 "default",
                 false,
                 false,
+                false,
                 decision.crisisTrigger()
         );
 
@@ -116,6 +117,7 @@ class AiDecisionLoggerTest {
                 null,
                 null,
                 "default",
+                false,
                 false,
                 false,
                 decision.crisisTrigger()
@@ -172,6 +174,7 @@ class AiDecisionLoggerTest {
                 "default",
                 false,
                 false,
+                false,
                 CrisisTrigger.OUTPUT_GUARD
         );
 
@@ -185,5 +188,95 @@ class AiDecisionLoggerTest {
         assertThat(captor.getValue().getAction())
                 .as("PolicyEngine 이 내린 결정 자체는 그대로 남는다")
                 .isEqualTo("GENERATE");
+    }
+
+    /**
+     * 이슈 #263 / #261 — 안전 신호를 확인하지 못한 턴을 사후에 식별할 수 있어야 한다.
+     *
+     * <p>{@code l0_flagged=false} 만으로는 "안전 판정"과 "판정을 못 받아옴"이 구분되지 않고,
+     * 프로파일도 마찬가지로 근거 없이 만들어졌는지가 드러나지 않는다. 두 상태 모두
+     * 안전 계층이 실질적으로 빠진 채 처리된 턴이므로 트레이스에 남는다.
+     */
+    @Test
+    @DisplayName("L0 미판정과 프로파일 degraded 상태를 트레이스에 남긴다")
+    void logPersistsUnresolvedSafetySignals() {
+        PolicyDecision decision = generateDecision("pd_degraded");
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                ModerationResult.failOpen(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                false,
+                null,
+                null,
+                "default",
+                false,
+                false,
+                true,
+                null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .contains("\"l0_flagged\":false")
+                .contains("\"l0_resolved\":false")
+                .contains("\"safety_profile_degraded\":true");
+    }
+
+    @Test
+    @DisplayName("정상 판정 턴은 l0_resolved=true로 남는다")
+    void logMarksResolvedModeration() {
+        PolicyDecision decision = generateDecision("pd_ok");
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                ModerationResult.clear(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                false,
+                null,
+                null,
+                "default",
+                false,
+                false,
+                false,
+                null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .contains("\"l0_resolved\":true")
+                .contains("\"safety_profile_degraded\":false");
+    }
+
+    private PolicyDecision generateDecision(String decisionId) {
+        return new PolicyDecision(
+                decisionId,
+                DecisionAction.GENERATE,
+                GenerationMode.NORMAL,
+                DeliveryMode.SPECULATIVE,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                false,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.CLEAR_LOW
+        );
     }
 }
