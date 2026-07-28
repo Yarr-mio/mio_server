@@ -149,6 +149,11 @@ public class AiDecisionLogger {
         trace.put("output_judge_action", outputJudgeResult != null
                 ? outputJudgeResult.action().name() : null);
         trace.put("crisis_flow_triggered", crisisFlowTriggered);
+        // 위기 진입 경로. 이게 없으면 "왜 위기로 갔는지"를 사후에 알 수 없고, 특히 자해 질의가
+        // 거절이 아니라 위기로 라우팅됐는지 확인할 방법이 없다. 조작 시도 쪽은 action 이
+        // SECURITY_REFUSAL 로 남으므로 별도 필드가 필요 없다 (이슈 #260).
+        trace.put("crisis_trigger", decision.crisisTrigger() != null
+                ? decision.crisisTrigger().name() : null);
         trace.put("total_pipeline_ms", totalMs);
 
         return trace;

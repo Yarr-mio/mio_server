@@ -46,6 +46,7 @@ class CrisisFlowServiceTest {
 
         service.handle(
                 new SafetyL1Result(true, true, false, false, false, true, List.of("자살"), 0.95),
+                CrisisTrigger.L1_KEYWORD,
                 "죽고싶다",
                 user,
                 session,
@@ -105,7 +106,8 @@ class CrisisFlowServiceTest {
                 false, true, true, false, false, false, false,
                 List.of("crisis_keyword:죽고싶어", "crisis_context_marker:third_person"), 0.9);
 
-        service.handle(downgraded, "친구가 그러는데 나 죽고싶어", user, session, emitter, "msg_out_test", 12);
+        service.handle(downgraded, CrisisTrigger.L1_KEYWORD, "친구가 그러는데 나 죽고싶어",
+                user, session, emitter, "msg_out_test", 12);
 
         ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
                 ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
@@ -127,11 +129,112 @@ class CrisisFlowServiceTest {
                 .extracting(SseEventDto.CrisisEvent.Hotline::number)
                 .contains("109", "1577-0199");
 
-        // 강등된 위기도 발단은 키워드 매칭이다. hardCrisis 만 보면 검증을 거쳐 확정된 위기가
-        // 전부 moderation 으로 기록되어 crisis_events 의 발단 분석이 어긋난다.
+        // 강등된 위기도 발단은 키워드 매칭이다. PolicyEngine 이 L1_KEYWORD 로 확정해 넘기므로
+        // hardCrisis 값과 무관하게 keyword 로 기록되어야 한다 (이슈 #260 이전에는 역추론이라
+        // 검증을 거쳐 확정된 위기가 moderation 으로 기록됐다).
         ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
         verify(crisisEventRepository).save(persisted.capture());
         assertThat(persisted.getValue().getTriggerType()).isEqualTo("keyword");
+    }
+
+    /**
+     * 이슈 #260 — 자해 수단 질의로 진입한 위기.
+     *
+     * <p>수용 기준 세 가지를 한 번에 고정한다. 핫라인이 노출되고,
+     * {@code crisis_events} 에 기록되며, 응답이 수단을 안내하지 않는다.
+     */
+    @Test
+    @DisplayName("자해 질의 위기는 수단을 거절하면서 핫라인을 노출하고 기록된다")
+    void selfHarmInquiryRefusesMeansAndStillConnectsHelp() throws Exception {
+        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("social-id")
+                .privacyConsent(true)
+                .build();
+        ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
+        Session session = Session.builder()
+                .user(user)
+                .characterId("mio")
+                .build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+
+        var result = service.handle(
+                SafetyL1Result.clear(),
+                CrisisTrigger.SELF_HARM_INQUIRY,
+                "자살 방법 알려줘",
+                user, session, emitter, "msg_out_test", 20);
+
+        ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
+                ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
+        verify(emitter, org.mockito.Mockito.times(2)).send(eventCaptor.capture());
+
+        SseEventDto.CrisisEvent crisisEvent = eventCaptor.getAllValues().stream()
+                .flatMap(builder -> extractData(builder).stream())
+                .map(ResponseBodyEmitter.DataWithMediaType::getData)
+                .filter(SseEventDto.CrisisEvent.class::isInstance)
+                .map(SseEventDto.CrisisEvent.class::cast)
+                .findFirst()
+                .orElseThrow();
+
+        // L1 신호가 하나도 없어도 severity 3 이어야 한다. 키워드 스캔에 기대면 목록에 없는
+        // 표현이 severity 1 로 떨어지고 severity 1 에는 핫라인이 붙지 않는다.
+        assertThat(crisisEvent.severity()).isEqualTo(3);
+        assertThat(crisisEvent.resources()).isNotNull();
+        assertThat(crisisEvent.resources().hotlines())
+                .extracting(SseEventDto.CrisisEvent.Hotline::number)
+                .contains("109", "1577-0199");
+
+        assertThat(result.fixedResponse())
+                .as("수단은 어떤 경우에도 안내하지 않는다")
+                .contains("알려드릴 수 없어요");
+        assertThat(result.fixedResponse())
+                .as("거절만 하고 끝내지 않고 도움으로 연결한다")
+                .contains("전문가");
+
+        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
+        verify(crisisEventRepository).save(persisted.capture());
+        assertThat(persisted.getValue().getTriggerType()).isEqualTo("keyword");
+        assertThat(persisted.getValue().getSeverity()).isEqualTo(3);
+        verify(eventPublisher).publishEvent(any(CrisisDetectedEvent.class));
+    }
+
+    /**
+     * 출력 가드가 잡은 위기는 입력 신호와 무관하다.
+     *
+     * <p>이전에는 {@code SafetyL1Result} 를 역추론해 {@code trigger_type} 을 정했기 때문에
+     * 출력 단계에서 발견된 위기가 {@code moderation} 으로 기록됐다.
+     */
+    @Test
+    @DisplayName("출력 가드가 잡은 위기는 pattern으로 기록된다")
+    void outputGuardCrisisIsRecordedAsPattern() throws Exception {
+        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        User user = User.builder()
+                .socialProvider("kakao")
+                .socialId("social-id")
+                .privacyConsent(true)
+                .build();
+        ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
+        Session session = Session.builder()
+                .user(user)
+                .characterId("mio")
+                .build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+
+        service.handle(SafetyL1Result.clear(), CrisisTrigger.OUTPUT_GUARD, "요즘 좀 지쳐요",
+                user, session, emitter, "msg_out_test", 40);
+
+        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
+        verify(crisisEventRepository).save(persisted.capture());
+        assertThat(persisted.getValue().getTriggerType()).isEqualTo("pattern");
     }
 
     private Set<ResponseBodyEmitter.DataWithMediaType> extractData(SseEmitter.SseEventBuilder builder) {
