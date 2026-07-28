@@ -198,6 +198,9 @@ public class ConversationOrchestrator {
             String assistantContent;
             long llmTtftMs = 0;
             boolean crisisFlowTriggered = false;
+            // 실제로 위기 플로우를 발동시킨 경로. PolicyDecision 이 아니라 실행 결과를 따라간다 —
+            // 출력 가드가 승격시킨 위기는 decision.action() 이 GENERATE 라 결정에 경로가 없다.
+            CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
             OutputJudgeResult judgeActionResult = null;
 
@@ -210,8 +213,9 @@ public class ConversationOrchestrator {
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
+                appliedCrisisTrigger = resolveCrisisTrigger(decision);
                 CrisisFlowService.CrisisHandleResult crisisResult =
-                        crisisFlowService.handle(l1Result, resolveCrisisTrigger(decision), userMessage,
+                        crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
 
@@ -245,6 +249,7 @@ public class ConversationOrchestrator {
                                     outboundMsgId, userSignal.emotionScore());
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
+                                appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
                             }
                         }
                     }
@@ -329,7 +334,10 @@ public class ConversationOrchestrator {
                                 judgeActionResult.action());
 
                         boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
-                        if (isCrisis) crisisFlowTriggered = true;
+                        if (isCrisis) {
+                            crisisFlowTriggered = true;
+                            appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
+                        }
 
                         if (isCrisis) {
                             // Bug 5 fix: invoke crisis flow — crisis + done SSE issued inside handle()
@@ -416,7 +424,8 @@ public class ConversationOrchestrator {
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
-                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed);
+                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
+                    appliedCrisisTrigger);
 
             emitter.complete();
 

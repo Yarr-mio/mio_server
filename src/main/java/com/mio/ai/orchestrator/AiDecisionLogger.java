@@ -2,6 +2,7 @@ package com.mio.ai.orchestrator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.domain.AiPolicyDecision;
 import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
@@ -47,14 +48,16 @@ public class AiDecisionLogger {
             OutputJudgeResult outputJudgeResult,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
-            boolean memoryCacheHit) {
+            boolean memoryCacheHit,
+            CrisisTrigger appliedCrisisTrigger) {
 
         try {
             Map<String, Object> trace = buildTrace(
                     moderation, l1Result, llmTtftMs, totalPipelineMs,
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
-                    l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit);
+                    l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
+                    appliedCrisisTrigger);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -94,7 +97,7 @@ public class AiDecisionLogger {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
-                "default", false, false);
+                "default", false, false, decision.crisisTrigger());
     }
 
     private Map<String, Object> buildTrace(
@@ -109,7 +112,8 @@ public class AiDecisionLogger {
             OutputJudgeResult outputJudgeResult,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
-            boolean memoryCacheHit) {
+            boolean memoryCacheHit,
+            CrisisTrigger appliedCrisisTrigger) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -152,8 +156,12 @@ public class AiDecisionLogger {
         // 위기 진입 경로. 이게 없으면 "왜 위기로 갔는지"를 사후에 알 수 없고, 특히 자해 질의가
         // 거절이 아니라 위기로 라우팅됐는지 확인할 방법이 없다. 조작 시도 쪽은 action 이
         // SECURITY_REFUSAL 로 남으므로 별도 필드가 필요 없다 (이슈 #260).
-        trace.put("crisis_trigger", decision.crisisTrigger() != null
-                ? decision.crisisTrigger().name() : null);
+        //
+        // PolicyDecision 이 아니라 실제로 적용된 경로를 기록한다. 출력 가드가 승격시킨 위기는
+        // decision.action() 이 GENERATE 라 결정에 경로가 없고, decision 만 보면 위기로 갔는데도
+        // crisis_trigger 가 null 로 남는다.
+        trace.put("crisis_trigger", appliedCrisisTrigger != null
+                ? appliedCrisisTrigger.name() : null);
         trace.put("total_pipeline_ms", totalMs);
 
         return trace;
