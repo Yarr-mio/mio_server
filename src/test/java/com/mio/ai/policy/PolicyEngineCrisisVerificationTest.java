@@ -1,11 +1,13 @@
 package com.mio.ai.policy;
 
+import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.SafetyL1Result;
+import com.mio.ai.security.AttackKind;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -135,15 +137,61 @@ class PolicyEngineCrisisVerificationTest {
     }
 
     @Test
-    @DisplayName("보안 ATTACK은 검증 대기보다 우선한다")
-    void attackTakesPrecedence() {
+    @DisplayName("모델 조작 ATTACK은 검증 대기보다 우선한다")
+    void manipulationAttackTakesPrecedence() {
         SafetyL1Result l1 = new SafetyL1Result(
                 false, true, true, false, false, false, false, List.of(), 0.6);
         CombinedSignal combined = new CombinedSignal(
-                SecurityLevel.ATTACK, false, true, true, false, false, false, false, false, l1, 0.6);
+                SecurityLevel.ATTACK, AttackKind.MANIPULATION,
+                false, true, true, false, false, false, false, false, l1, 0.6);
 
         var decision = policyEngine.decide(combined, null, null, null);
 
         assertThat(decision.action()).isEqualTo(DecisionAction.SECURITY_REFUSAL);
+        assertThat(decision.crisisTrigger()).isNull();
+    }
+
+    /**
+     * 자해 질의는 등급상 ATTACK 이지만 거절이 아니라 위기 플로우로 간다 (이슈 #260).
+     *
+     * <p>이전에는 ATTACK 검사가 무조건 먼저라 "자살 방법 알려줘"가 고정 거절 응답으로 처리되고
+     * 핫라인·{@code crisis_events}·crisis SSE 가 전부 발생하지 않았다.
+     */
+    @Test
+    @DisplayName("자해 질의 ATTACK은 거절 대신 위기 플로우로 라우팅된다")
+    void selfHarmInquiryAttackRoutesToCrisisFlow() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                true, false, false, false, false, false, List.of("crisis_keyword:자살"), 0.9);
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.ATTACK, AttackKind.SELF_HARM_INQUIRY,
+                true, false, false, false, false, false, false, false, l1, 0.9);
+
+        var decision = policyEngine.decide(combined, null, null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+        assertThat(decision.crisisTrigger()).isEqualTo(CrisisTrigger.SELF_HARM_INQUIRY);
+        assertThat(decision.allowGeneration())
+                .as("수단 정보가 응답에 섞이지 않도록 본문 생성은 계속 차단되어야 한다")
+                .isFalse();
+    }
+
+    /**
+     * L1 이 위기 키워드를 하나도 잡지 못한 자해 질의도 위기로 가야 한다.
+     *
+     * <p>보안 판정만으로 라우팅이 결정되므로 L1 신호에 의존하지 않는다는 것을 고정한다.
+     */
+    @Test
+    @DisplayName("L1 신호가 없어도 자해 질의만으로 위기 플로우에 진입한다")
+    void selfHarmInquiryRoutesToCrisisWithoutL1Signal() {
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.ATTACK, AttackKind.SELF_HARM_INQUIRY,
+                false, false, false, false, false, false, false, false,
+                SafetyL1Result.clear(), 0.0);
+
+        var decision = policyEngine.decide(combined, null, null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.crisisTrigger()).isEqualTo(CrisisTrigger.SELF_HARM_INQUIRY);
     }
 }

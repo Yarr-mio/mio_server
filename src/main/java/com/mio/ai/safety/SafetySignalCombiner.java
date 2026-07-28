@@ -20,6 +20,7 @@ public class SafetySignalCombiner {
 
         return new CombinedSignal(
                 security.level(),
+                security.attackKind(),
                 l1.hardCrisis(),
                 l1.hardCrisisUnverified(),
                 l1.riskCandidate(),
@@ -48,6 +49,8 @@ public class SafetySignalCombiner {
             SafetyProfile profile) {
 
         if (l1.hardCrisis()) return false;
+        // ATTACK 은 성격과 무관하게 Judge 를 생략한다. 조작 시도는 거절로, 자해 질의는 위기
+        // 플로우로 확정되며(이슈 #260) 둘 다 판정 결과가 분기를 바꾸지 않기 때문이다.
         if (security.level() == SecurityLevel.ATTACK) return false;
 
         // 0. 맥락 마커로 강등된 위기 후보는 반드시 Judge 검증을 거친다 (이슈 #255).

@@ -39,8 +39,19 @@ public class CrisisFlowService {
     private static final String SEVERITY_3_RESPONSE =
             "지금 이 마음이 정말 많이 무거우신 것 같아요. 당신의 안전이 가장 중요해요. 지금 바로 전문가와 이야기할 수 있는 곳을 알려드릴게요.";
 
+    /**
+     * 자해·자살 수단을 물었을 때의 응답 (이슈 #260).
+     *
+     * <p>거절과 도움 연결은 배타적이지 않다. 수단은 어떤 경우에도 안내하지 않으면서,
+     * 그 질문을 하게 만든 상태에는 응답한다.
+     */
+    private static final String SELF_HARM_INQUIRY_RESPONSE =
+            "구체적인 방법은 알려드릴 수 없어요. 그렇지만 그런 걸 찾아보게 될 만큼 지금 많이 힘드신 것 같아요. "
+                    + "그 마음을 혼자 감당하지 않으셔도 돼요. 지금 바로 전문가와 이야기할 수 있는 곳을 알려드릴게요.";
+
     public CrisisHandleResult handle(
             SafetyL1Result l1Result,
+            CrisisTrigger trigger,
             String originalMessage,
             User user,
             Session session,
@@ -48,12 +59,9 @@ public class CrisisFlowService {
             String outboundMsgId,
             Integer emotionScore) {
 
-        int severity = determineSeverity(l1Result, originalMessage);
-        // 강등된 위기(hardCrisisUnverified)도 키워드 매칭이 발단이다. hardCrisis 만 보면
-        // 검증을 거쳐 확정된 위기가 전부 moderation 으로 잘못 기록된다.
-        String triggerType =
-                (l1Result.hardCrisis() || l1Result.hardCrisisUnverified()) ? "keyword" : "moderation";
-        String fixedResponse = getFixedResponse(severity);
+        int severity = determineSeverity(l1Result, trigger, originalMessage);
+        String triggerType = trigger.persistedType();
+        String fixedResponse = getFixedResponse(severity, trigger);
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
 
@@ -78,7 +86,14 @@ public class CrisisFlowService {
         return new CrisisHandleResult(fixedResponse, severity);
     }
 
-    private int determineSeverity(SafetyL1Result l1Result, String originalMessage) {
+    private int determineSeverity(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
+        // 자해·자살 수단 질의는 severity 3 으로 고정한다 (이슈 #260).
+        // 계획·수단의 구체성은 임상적으로 단순 사고 표현보다 높은 위험 지표이며, 아래 키워드 스캔에
+        // 의존하면 목록에 없는 표현이 severity 1 로 떨어져 핫라인이 붙지 않는다.
+        if (trigger == CrisisTrigger.SELF_HARM_INQUIRY) {
+            return 3;
+        }
+
         // L1 hardCrisis 키워드가 매칭된 경우 severity 3 보장
         // (SEVERITY_3_KEYWORDS에 없는 HARD_CRISIS_KEYWORDS 항목도 포함)
         //
@@ -107,7 +122,10 @@ public class CrisisFlowService {
         return 1;
     }
 
-    private String getFixedResponse(int severity) {
+    private String getFixedResponse(int severity, CrisisTrigger trigger) {
+        if (trigger.requiresMeansRefusal()) {
+            return SELF_HARM_INQUIRY_RESPONSE;
+        }
         return switch (severity) {
             case 3 -> SEVERITY_3_RESPONSE;
             case 2 -> SEVERITY_2_RESPONSE;

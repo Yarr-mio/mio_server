@@ -1,5 +1,6 @@
 package com.mio.ai.policy;
 
+import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.memory.working.SessionDelta;
@@ -28,8 +29,15 @@ public class PolicyEngine {
 
         String decisionId = "pd_" + decisionSuffix();
 
-        // 1. Security ATTACK
+        // 1. Security ATTACK — 성격에 따라 갈린다 (이슈 #260).
+        //
+        // 자해·자살 수단 질의는 등급상 ATTACK 이지만 거절이 아니라 위기 플로우로 보낸다.
+        // 검사 순서를 통째로 뒤로 미루지는 않는다 — 그러면 진짜 인젝션이 위기 키워드를 끼워 넣어
+        // 보안 필터를 우회할 수 있다. 성격이 다른 입력만 분기시킨다.
         if (combined.securityLevel() == SecurityLevel.ATTACK) {
+            if (combined.selfHarmInquiry()) {
+                return crisisFlow(decisionId, combined, CrisisTrigger.SELF_HARM_INQUIRY);
+            }
             return build(decisionId, DecisionAction.SECURITY_REFUSAL,
                     GenerationMode.CRISIS, DeliveryMode.SECURITY_REFUSAL,
                     combined.securityLevel(), false, false, false,
@@ -38,19 +46,13 @@ public class PolicyEngine {
 
         // 2. L0 self-harm/intent + L1 hardCrisis
         if (combined.hardCrisis()) {
-            return build(decisionId, DecisionAction.CRISIS_FLOW,
-                    GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
-                    combined.securityLevel(), false, false, false,
-                    InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+            return crisisFlow(decisionId, combined, CrisisTrigger.L1_KEYWORD);
         }
 
         // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
         // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
         if (combined.hardCrisisUnverified() && !crisisClearedByJudge(judgeResult)) {
-            return build(decisionId, DecisionAction.CRISIS_FLOW,
-                    GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
-                    combined.securityLevel(), false, false, false,
-                    InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+            return crisisFlow(decisionId, combined, CrisisTrigger.L1_KEYWORD);
         }
 
         // 3. Security SUSPICIOUS → GUARDED + OutputGuard 활성
@@ -63,10 +65,7 @@ public class PolicyEngine {
 
         // 4. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
         if (combined.l0Flagged() && combined.l1Result().moderationFlagged()) {
-            return build(decisionId, DecisionAction.CRISIS_FLOW,
-                    GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
-                    combined.securityLevel(), false, false, false,
-                    InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+            return crisisFlow(decisionId, combined, CrisisTrigger.MODERATION);
         }
 
         // 5. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
@@ -86,10 +85,7 @@ public class PolicyEngine {
             // 다른 판정원이 붙었을 때 이 값이 아래 분기에 걸리지 않고 CLEAR_LOW 기본값으로
             // 조용히 떨어지는 것을 막는다.
             if (riskLevel == RiskLevel.HARD_CRISIS) {
-                return build(decisionId, DecisionAction.CRISIS_FLOW,
-                        GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
-                        combined.securityLevel(), false, false, false,
-                        InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+                return crisisFlow(decisionId, combined, CrisisTrigger.INPUT_JUDGE);
             }
 
             // 6. HIGH → GUARDED + BUFFER
@@ -158,6 +154,19 @@ public class PolicyEngine {
         }
         RiskLevel riskLevel = judgeResult.risk().riskLevel();
         return riskLevel == RiskLevel.CLEAR_LOW || riskLevel == RiskLevel.LOW;
+    }
+
+    /**
+     * 위기 플로우 결정. 진입 경로만 다르고 나머지 값은 모두 같으므로 한 곳에 모은다.
+     * 경로를 결정에 실어 보내면 {@code CrisisFlowService} 가 신호를 역추론할 필요가 없다 (이슈 #260).
+     */
+    private PolicyDecision crisisFlow(String decisionId, CombinedSignal combined, CrisisTrigger trigger) {
+        return new PolicyDecision(
+                decisionId, DecisionAction.CRISIS_FLOW,
+                GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
+                combined.securityLevel(), false, false, false,
+                InterventionHints.empty(), POLICY_VERSION, RiskLevel.HARD_CRISIS, trigger
+        );
     }
 
     private GenerationMode resolveSupportiveMode() {

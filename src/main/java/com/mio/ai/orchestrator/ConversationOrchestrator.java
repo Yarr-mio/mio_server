@@ -3,6 +3,7 @@ package com.mio.ai.orchestrator;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisFlowService;
+import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
 import com.mio.ai.memory.ontology.OntologyInterventionFilter;
 import com.mio.ai.memory.ontology.OntologyRelationExpander;
@@ -197,6 +198,9 @@ public class ConversationOrchestrator {
             String assistantContent;
             long llmTtftMs = 0;
             boolean crisisFlowTriggered = false;
+            // 실제로 위기 플로우를 발동시킨 경로. PolicyDecision 이 아니라 실행 결과를 따라간다 —
+            // 출력 가드가 승격시킨 위기는 decision.action() 이 GENERATE 라 결정에 경로가 없다.
+            CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
             OutputJudgeResult judgeActionResult = null;
 
@@ -209,9 +213,10 @@ public class ConversationOrchestrator {
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
+                appliedCrisisTrigger = resolveCrisisTrigger(decision);
                 CrisisFlowService.CrisisHandleResult crisisResult =
-                        crisisFlowService.handle(l1Result, userMessage, user, session, emitter, outboundMsgId,
-                                userSignal.emotionScore());
+                        crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
+                                user, session, emitter, outboundMsgId, userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
 
             } else if (decision.action() == DecisionAction.GENERATE) {
@@ -244,6 +249,7 @@ public class ConversationOrchestrator {
                                     outboundMsgId, userSignal.emotionScore());
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
+                                appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
                             }
                         }
                     }
@@ -328,13 +334,16 @@ public class ConversationOrchestrator {
                                 judgeActionResult.action());
 
                         boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
-                        if (isCrisis) crisisFlowTriggered = true;
+                        if (isCrisis) {
+                            crisisFlowTriggered = true;
+                            appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
+                        }
 
                         if (isCrisis) {
                             // Bug 5 fix: invoke crisis flow — crisis + done SSE issued inside handle()
                             CrisisFlowService.CrisisHandleResult crisisResult =
-                                    crisisFlowService.handle(l1Result, userMessage, user, session, emitter,
-                                            outboundMsgId, userSignal.emotionScore());
+                                    crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
+                                            user, session, emitter, outboundMsgId, userSignal.emotionScore());
                             assistantContent = crisisResult != null ? crisisResult.fixedResponse()
                                     : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
                         } else {
@@ -415,7 +424,8 @@ public class ConversationOrchestrator {
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
-                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed);
+                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
+                    appliedCrisisTrigger);
 
             emitter.complete();
 
@@ -423,6 +433,21 @@ public class ConversationOrchestrator {
             log.error("Conversation orchestration failed for session {}", sessionId, e);
             emitter.completeWithError(e);
         }
+    }
+
+    /**
+     * PolicyEngine 이 실어 보낸 위기 진입 경로를 꺼낸다.
+     *
+     * <p>{@code null} 은 {@code CRISIS_FLOW} 결정에 경로가 빠졌다는 뜻이라 정상 상태가 아니다.
+     * 여기서 예외를 던지면 위기 사용자의 응답이 통째로 실패하므로, 가장 흔한 경로인
+     * {@code L1_KEYWORD} 로 이어가되 로그를 남긴다.
+     */
+    private CrisisTrigger resolveCrisisTrigger(PolicyDecision decision) {
+        if (decision.crisisTrigger() != null) {
+            return decision.crisisTrigger();
+        }
+        log.warn("CRISIS_FLOW decision without crisisTrigger: decisionId={}", decision.decisionId());
+        return CrisisTrigger.L1_KEYWORD;
     }
 
     private String resolveOutputJudgeAction(
@@ -442,8 +467,8 @@ public class ConversationOrchestrator {
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 CrisisFlowService.CrisisHandleResult cr =
-                        crisisFlowService.handle(l1Result, originalUserMessage, user, session, emitter, outboundMsgId,
-                                emotionScore);
+                        crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
+                                user, session, emitter, outboundMsgId, emotionScore);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };
