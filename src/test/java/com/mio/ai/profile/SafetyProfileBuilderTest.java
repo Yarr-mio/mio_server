@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -168,6 +169,85 @@ class SafetyProfileBuilderTest {
                 .counters().stream()
                 .mapToDouble(io.micrometer.core.instrument.Counter::count)
                 .sum();
+    }
+
+    /**
+     * 첫 세션에서 위기를 겪은 사용자는 아직 belief 도 cbt_pattern 도 없다 — 둘 다 세션
+     * 컨솔리데이션이 끝나야 생기기 때문이다. 그런데 "근거 없음" 조기 반환이 위기 이력을 보지
+     * 않으면 그 사용자가 buildDefault 로 떨어져 force_judge·민감 임계값·riskPrior 를 전부 잃는다.
+     *
+     * <p>조회 실패가 아니라 정상 조회인데도 보호가 사라지는 경로라 degraded 로도 잡히지 않는다.
+     */
+    @Test
+    @DisplayName("belief·pattern이 없어도 위기 이력이 있으면 보호를 유지한다")
+    void crisisHistoryAlonePreventsDefaultFallback() {
+        when(jdbcTemplate.queryForList(contains("user_beliefs"), any(UUID.class)))
+                .thenReturn(List.of());
+        when(jdbcTemplate.queryForList(contains("cbt_patterns"), any(UUID.class)))
+                .thenReturn(List.of());
+        stubCrisisQuery(3);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.hasForceJudge())
+                .as("최근 severity 3 위기를 겪은 사용자가 default 로 떨어지면 안 된다")
+                .isTrue();
+        assertThat(profile.recentCrisisSeverityMax()).isEqualTo(3);
+        assertThat(profile.riskPriorScore()).isCloseTo(0.9, within(1e-9));
+        assertThat(profile.emotionDropThreshold()).isEqualTo(25.0);
+        assertThat(profile.degraded())
+                .as("조회는 전부 성공했으므로 degraded 가 아니다")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("근거가 실제로 하나도 없으면 default로 떨어진다")
+    void noEvidenceAtAllFallsBackToDefault() {
+        when(jdbcTemplate.queryForList(contains("user_beliefs"), any(UUID.class)))
+                .thenReturn(List.of());
+        when(jdbcTemplate.queryForList(contains("cbt_patterns"), any(UUID.class)))
+                .thenReturn(List.of());
+        stubCrisisQuery(0);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.hasForceJudge()).isFalse();
+        assertThat(profile.emotionDropThreshold()).isEqualTo(30.0);
+        assertThat(profile.degraded()).isFalse();
+    }
+
+    /**
+     * belief 조회 실패도 "신념 없음"과 같은 값(빈 목록)이 되어 조기 반환 조건을 만족시킨다.
+     * 위기 이력 조회와 같은 결함 계열이다.
+     */
+    @Test
+    @DisplayName("belief 조회 실패로 비어 보이는 경우도 degraded로 처리한다")
+    void unresolvedBeliefQueryIsDegraded() {
+        when(jdbcTemplate.queryForList(contains("user_beliefs"), any(UUID.class)))
+                .thenThrow(new RuntimeException("connection reset"));
+        when(jdbcTemplate.queryForList(contains("cbt_patterns"), any(UUID.class)))
+                .thenReturn(List.of());
+        stubCrisisQuery(0);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.degraded())
+                .as("조회 실패로 비어 보이는 것과 실제로 비어 있는 것은 다르다")
+                .isTrue();
+        assertThat(profile.hasForceJudge()).isTrue();
+    }
+
+    @Test
+    @DisplayName("cbt_pattern 조회 실패도 degraded로 처리한다")
+    void unresolvedPatternQueryIsDegraded() {
+        when(jdbcTemplate.queryForList(contains("cbt_patterns"), any(UUID.class)))
+                .thenThrow(new RuntimeException("connection reset"));
+        stubCrisisQuery(0);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.degraded()).isTrue();
+        assertThat(profile.hasForceJudge()).isTrue();
     }
 
     @Test

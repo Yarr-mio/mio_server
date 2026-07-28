@@ -215,13 +215,33 @@ public class SafetyProfileBuilder {
             var sessionMeta   = sessionMF.join();
 
             int crisisMax = crisisHistory.maxSeverity();
-            // 위기 이력을 확인하지 못한 상태. 위험 없음이 아니라 "모름"이므로 보수적으로 간다.
-            boolean degraded = !crisisHistory.resolved();
 
-            // 데이터 없으면 default. 단 위기 이력 조회가 실패했다면 그 사실이 사라지면 안 된다.
-            if (!beliefs.hasData() && patterns.topDistortionCodes().isEmpty()) {
-                recordBuildOutcome(degraded);
-                return degraded ? buildDegraded(userId) : buildDefault(userId);
+            // 위험도 산정에 쓰이는 근거를 하나라도 확인하지 못한 상태.
+            // 위험 없음이 아니라 "모름"이므로 보수적으로 간다.
+            //
+            // outcomes·sessionMeta는 제외한다. 개입 힌트 품질과 personalized 라벨에만 영향을 주고
+            // 위험 게이팅(riskPrior·force_judge·임계값)에는 들어가지 않는다.
+            boolean degraded = !crisisHistory.resolved()
+                    || !beliefs.resolved()
+                    || !patterns.resolved();
+
+            // 근거가 없으면 default. 단 "없음"을 확인한 경우여야 한다.
+            //
+            // 조회 실패로 비어 보이는 것과 실제로 비어 있는 것을 구분하지 않으면, 여기서
+            // 프로파일이 통째로 default가 되어 아래 riskPrior·force_judge 계산이 아예 실행되지
+            // 않는다. crisisMax도 함께 본다 — 첫 세션에서 위기를 겪은 사용자는 아직 belief도
+            // cbt_pattern도 없어서(컨솔리데이션 전) 이 분기에 걸리는데, 그 사용자가 정확히
+            // 이 PR이 보호하려는 대상이다.
+            boolean noEvidence = !beliefs.hasData()
+                    && patterns.topDistortionCodes().isEmpty()
+                    && crisisMax == 0;
+            if (!degraded && noEvidence) {
+                recordBuildOutcome(false);
+                return buildDefault(userId);
+            }
+            if (degraded && noEvidence) {
+                recordBuildOutcome(true);
+                return buildDegraded(userId);
             }
 
             // personalized 전환 조건: 7일 이상 사용 OR 10세션 이상
@@ -280,10 +300,12 @@ public class SafetyProfileBuilder {
             int negCount = (int) rows.stream()
                     .filter(r -> "negative".equals(r.get("polarity"))).count();
             String coping = negCount > 2 ? "avoidance" : null;
-            return new BeliefSummary(negCount, coping, !rows.isEmpty());
+            return new BeliefSummary(negCount, coping, !rows.isEmpty(), true);
         } catch (Exception e) {
             log.warn("queryActiveBeliefs failed", e);
-            return new BeliefSummary(0, null, false);
+            // hasData=false 는 "신념이 없다"와 같은 값이라 조회 실패와 구분되지 않는다.
+            // resolved 로 그 차이를 남긴다 (이슈 #261).
+            return BeliefSummary.unresolved();
         }
     }
 
@@ -325,10 +347,10 @@ public class SafetyProfileBuilder {
                     .map(r -> (String) r.get("pattern_type"))
                     .toList();
             List<String> triggers = codes.stream().limit(2).toList();
-            return new PatternSummary(codes, triggers);
+            return new PatternSummary(codes, triggers, true);
         } catch (Exception e) {
             log.warn("queryCbtPatterns failed", e);
-            return new PatternSummary(List.of(), List.of());
+            return PatternSummary.unresolved();
         }
     }
 
@@ -419,8 +441,20 @@ public class SafetyProfileBuilder {
         }
     }
 
-    private record BeliefSummary(int negativeCount, String copingStyle, boolean hasData) {}
-    private record PatternSummary(List<String> topDistortionCodes, List<String> triggerKinds) {}
+    /** @param resolved 조회에 성공했는지. {@code false} 면 {@code hasData} 는 판정값이 아니다. */
+    private record BeliefSummary(int negativeCount, String copingStyle, boolean hasData, boolean resolved) {
+        static BeliefSummary unresolved() {
+            return new BeliefSummary(0, null, false, false);
+        }
+    }
+
+    /** @param resolved 조회에 성공했는지. {@code false} 면 빈 목록은 판정값이 아니다. */
+    private record PatternSummary(
+            List<String> topDistortionCodes, List<String> triggerKinds, boolean resolved) {
+        static PatternSummary unresolved() {
+            return new PatternSummary(List.of(), List.of(), false);
+        }
+    }
     private record OutcomeSummary(List<String> effectiveKinds, List<String> ineffectiveKinds) {}
     private record SessionMeta(int totalSessions, int daysSinceFirst) {}
 }

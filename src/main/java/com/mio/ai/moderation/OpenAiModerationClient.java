@@ -64,6 +64,12 @@ public class OpenAiModerationClient {
             }
 
             ModerationResult result = parseResponse(response.body());
+            if (result == null) {
+                // HTTP 200 이어도 스키마가 온전하지 않으면 판정을 받은 게 아니다.
+                // 이걸 resolved 로 집계하면 불완전한 응답이 다시 "안전 판정"과 같아진다 (이슈 #263).
+                log.warn("Moderation API returned malformed 200 response, fail-open");
+                return failOpen("malformed_response");
+            }
             meterRegistry.counter(MODERATION_METRIC, "outcome", "resolved").increment();
             return result;
         } catch (Exception e) {
@@ -77,18 +83,36 @@ public class OpenAiModerationClient {
         return ModerationResult.failOpen();
     }
 
+    /**
+     * @return 스키마가 온전하지 않으면 {@code null} — 호출부가 fail-open 으로 처리한다.
+     *         기본값으로 메워 반환하면 {@code flagged=false}·빈 카테고리가 되어 정상 안전 판정과
+     *         구별되지 않는다. self-harm 카테고리가 통째로 빠진 응답이 "자해 신호 없음"이 되는 것이
+     *         정확히 이 이슈가 막으려는 상태다 (이슈 #263).
+     */
     private ModerationResult parseResponse(String body) throws Exception {
         JsonNode root = objectMapper.readTree(body);
-        JsonNode result = root.path("results").get(0);
+        JsonNode results = root.path("results");
+        if (!results.isArray() || results.isEmpty()) {
+            return null;
+        }
+
+        JsonNode result = results.get(0);
+        JsonNode categoriesNode = result.path("categories");
+        JsonNode scoresNode = result.path("category_scores");
+        if (!result.path("flagged").isBoolean()
+                || !categoriesNode.isObject() || categoriesNode.isEmpty()
+                || !scoresNode.isObject() || scoresNode.isEmpty()) {
+            return null;
+        }
 
         boolean flagged = result.path("flagged").asBoolean(false);
 
         Map<String, Boolean> categories = new HashMap<>();
-        result.path("categories").fields()
+        categoriesNode.fields()
                 .forEachRemaining(e -> categories.put(e.getKey(), e.getValue().asBoolean(false)));
 
         Map<String, Double> scores = new HashMap<>();
-        result.path("category_scores").fields()
+        scoresNode.fields()
                 .forEachRemaining(e -> scores.put(e.getKey(), e.getValue().asDouble(0.0)));
 
         return new ModerationResult(flagged, categories, scores);
