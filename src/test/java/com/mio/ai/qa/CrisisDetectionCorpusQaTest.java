@@ -14,7 +14,7 @@ import com.mio.ai.safety.UserMessageSignal;
 import com.mio.ai.safety.UserMessageSignalAnalyzer;
 import com.mio.ai.security.SecurityAssessment;
 import com.mio.ai.security.SecurityLevel;
-import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -84,7 +84,7 @@ class CrisisDetectionCorpusQaTest {
 
     private List<Evaluated> evaluated;
 
-    @BeforeEach
+    @BeforeAll
     void setUp() {
         normalizer = new InputNormalizer();
         securityFilter = new SecurityRuleFilter();
@@ -260,10 +260,13 @@ class CrisisDetectionCorpusQaTest {
     void falseNegativesDoNotRegress() {
         List<Evaluated> missed = withGrade(Grade.FN);
 
+        // 실측 기준선으로 조여 둔다. 상한을 FN 프로브 총수 근처(31)로 두면 룰이 아무것도 새로
+        // 잡지 못해도 통과해 래칫이 작동하지 않는다. 개선은 #258, 여기서는 악화만 막는다.
         assertThat(missed)
                 .as("자모 우회·완곡어·계획 언급·간접 절망은 사전 등록어가 없어 잡히지 않는다."
-                        + " 이 수치를 낮추는 것은 별도 이슈다.%n  %s", describe(missed))
-                .hasSizeLessThanOrEqualTo(31);
+                        + " 이 수치를 낮추는 것은 #258 이며, 여기서는 기준선 악화를 막는다.%n  %s",
+                        describe(missed))
+                .hasSizeLessThanOrEqualTo(28);
     }
 
     // ── 상세 리포트 ────────────────────────────────────────────────

@@ -17,7 +17,7 @@ class StratifiedSamplerTest {
 
     private static final long SEED = 20250728L;
 
-    /** ExtractorLlmScaleTest 의 실제 카테고리 분포 (총 950건). */
+    /** ExtractorLlmScaleTest 의 실제 카테고리 분포 (총 1,000건). */
     private static final Map<String, Integer> SCALE_DISTRIBUTION = new LinkedHashMap<>(Map.of());
 
     static {
@@ -26,7 +26,7 @@ class StratifiedSamplerTest {
         SCALE_DISTRIBUTION.put("normal_cbt_success", 200);
         SCALE_DISTRIBUTION.put("hard_cbt_partial", 200);
         SCALE_DISTRIBUTION.put("hard_ambiguous", 100);
-        SCALE_DISTRIBUTION.put("boundary_edge", 50);
+        SCALE_DISTRIBUTION.put("boundary_edge", 100);
         SCALE_DISTRIBUTION.put("real_failures", 50);
     }
 
@@ -89,8 +89,8 @@ class StratifiedSamplerTest {
     void sample_sizeAtOrAbovePopulation_returnsAll() {
         List<Item> all = population(SCALE_DISTRIBUTION);
 
-        assertThat(StratifiedSampler.sample(all, Item::cat, 950, SEED)).hasSize(950);
-        assertThat(StratifiedSampler.sample(all, Item::cat, 5000, SEED)).hasSize(950);
+        assertThat(StratifiedSampler.sample(all, Item::cat, 1000, SEED)).hasSize(1000);
+        assertThat(StratifiedSampler.sample(all, Item::cat, 5000, SEED)).hasSize(1000);
     }
 
     @Test

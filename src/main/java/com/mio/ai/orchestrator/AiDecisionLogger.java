@@ -25,6 +25,7 @@ import java.util.UUID;
 public class AiDecisionLogger {
 
     private static final String SCHEMA_VERSION = "v2.4";
+    private static final String CRISIS_MARKER_PREFIX = "crisis_context_marker:";
     private static final String PROMPT_VERSION = "phase2";
 
     private final AiPolicyDecisionRepository repository;
@@ -113,6 +114,13 @@ public class AiDecisionLogger {
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
         l1Flags.put("crisis_unverified", l1Result.hardCrisisUnverified());
+        // 어떤 맥락 마커가 강등을 유발했는지 남긴다. 마커 종류만 기록하므로 발화 원문은 포함되지 않는다.
+        // 이게 없으면 어느 마커가 오탐·미탐을 만드는지 사후 분석하려면 재현밖에 방법이 없다.
+        l1Result.signals().stream()
+                .filter(signal -> signal.startsWith(CRISIS_MARKER_PREFIX))
+                .map(signal -> signal.substring(CRISIS_MARKER_PREFIX.length()))
+                .findFirst()
+                .ifPresent(marker -> l1Flags.put("crisis_context_marker", marker));
         l1Flags.put("risk_candidate", l1Result.riskCandidate());
         l1Flags.put("emotion_spike", l1Result.emotionSpike());
         l1Flags.put("repetitive_negative", l1Result.repetitiveNegative());

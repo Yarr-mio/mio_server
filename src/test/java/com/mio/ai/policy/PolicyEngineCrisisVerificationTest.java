@@ -76,12 +76,48 @@ class PolicyEngineCrisisVerificationTest {
     }
 
     @Test
-    @DisplayName("InputJudge가 MEDIUM으로 판정하면 SUPPORTIVE 생성으로 내려간다")
-    void judgeClearsToMedium() {
-        var decision = policyEngine.decide(unverified(), judged(RiskLevel.MEDIUM), null, null);
+    @DisplayName("InputJudge가 CLEAR_LOW로 판정하면 일반 생성으로 내려간다")
+    void judgeClearsToClearLow() {
+        var decision = policyEngine.decide(unverified(), judged(RiskLevel.CLEAR_LOW), null, null);
 
         assertThat(decision.action()).isEqualTo(DecisionAction.GENERATE);
-        assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+    }
+
+    @Test
+    @DisplayName("InputJudge가 MEDIUM으로 판정하면 위기를 유지한다 — 해제는 명시적 저위험 판정만")
+    void judgeMediumKeepsCrisis() {
+        var decision = policyEngine.decide(unverified(), judged(RiskLevel.MEDIUM), null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+    }
+
+    /**
+     * InputJudge 프롬프트가 모델에게 제시하는 risk_level 최댓값은 HIGH다(HARD_CRISIS는 선택지에 없다).
+     * 따라서 실제 운영에서 강등된 위기가 만날 수 있는 가장 높은 판정이 HIGH이며,
+     * 이 값이 위기를 해제하면 검증 게이트가 사실상 무효가 된다.
+     */
+    @Test
+    @DisplayName("InputJudge가 HIGH로 판정하면 위기를 유지한다 — 게이트 무효화 방지")
+    void judgeHighKeepsCrisis() {
+        var decision = policyEngine.decide(unverified(), judged(RiskLevel.HIGH), null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+    }
+
+    @Test
+    @DisplayName("강등되지 않은 발화에 Judge가 HARD_CRISIS를 주면 위기 플로우로 올린다")
+    void judgeHardCrisisEscalatesPlainMessage() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, false, true, false, false, false, false, List.of(), 0.5);
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, false, true, false, false, false, false, false, l1, 0.5);
+
+        var decision = policyEngine.decide(combined, judged(RiskLevel.HARD_CRISIS), null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
     }
 
     @Test

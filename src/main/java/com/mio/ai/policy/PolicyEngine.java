@@ -81,6 +81,17 @@ public class PolicyEngine {
         if (judgeResult != null) {
             RiskLevel riskLevel = judgeResult.risk().riskLevel();
 
+            // 5b. Judge가 위기로 판정 → CRISIS_FLOW.
+            // 현재 InputJudge 프롬프트는 HARD_CRISIS를 선택지로 제시하지 않지만, 스키마가 확장되거나
+            // 다른 판정원이 붙었을 때 이 값이 아래 분기에 걸리지 않고 CLEAR_LOW 기본값으로
+            // 조용히 떨어지는 것을 막는다.
+            if (riskLevel == RiskLevel.HARD_CRISIS) {
+                return build(decisionId, DecisionAction.CRISIS_FLOW,
+                        GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
+                        combined.securityLevel(), false, false, false,
+                        InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+            }
+
             // 6. HIGH → GUARDED + BUFFER
             if (riskLevel == RiskLevel.HIGH) {
                 return build(decisionId, DecisionAction.GENERATE,
@@ -132,13 +143,21 @@ public class PolicyEngine {
     }
 
     /**
-     * 강등된 위기 후보를 해제해도 되는지 판단한다. 판정 부재·호출 실패·HARD_CRISIS 확인은
-     * 모두 위기 유지로 처리한다(fail-closed).
+     * 강등된 위기 후보를 해제해도 되는지 판단한다.
+     *
+     * <p><b>명시적 해제 신호를 요구한다.</b> "HARD_CRISIS가 아니면 해제"로 두면 안 되는데,
+     * {@code InputJudge}의 응답 스키마가 모델에게 제시하는 값이 {@code CLEAR_LOW|LOW|MEDIUM|HIGH}
+     * 뿐이고 파싱 실패 시 {@code CLEAR_LOW}로 떨어지기 때문이다. 그 조건이면 성공한 모든 판정이
+     * 위기를 해제해 게이트가 사실상 무효가 된다. 그래서 위험 없음 쪽으로 명확히 판정된
+     * {@code CLEAR_LOW}·{@code LOW}만 해제하고, {@code MEDIUM} 이상과 판정 부재·호출 실패는
+     * 모두 위기로 유지한다(fail-closed).
      */
     private boolean crisisClearedByJudge(InputJudgeResult judgeResult) {
-        return judgeResult != null
-                && !judgeResult.failed()
-                && judgeResult.risk().riskLevel() != RiskLevel.HARD_CRISIS;
+        if (judgeResult == null || judgeResult.failed()) {
+            return false;
+        }
+        RiskLevel riskLevel = judgeResult.risk().riskLevel();
+        return riskLevel == RiskLevel.CLEAR_LOW || riskLevel == RiskLevel.LOW;
     }
 
     private GenerationMode resolveSupportiveMode() {

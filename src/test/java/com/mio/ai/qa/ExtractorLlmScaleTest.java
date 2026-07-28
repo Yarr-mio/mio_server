@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
 @Tag("llm-integration")
 class ExtractorLlmScaleTest {
 
-    /** 기본 표본 수 — 전량(950건) 실행은 과금이 크므로 계층 표본만 돌린다. */
+    /** 기본 표본 수 — 전량(1,000건) 실행은 과금이 크므로 계층 표본만 돌린다. */
     private static final int DEFAULT_SAMPLE = 150;
     /** 표본 재현성을 위한 고정 시드. */
     private static final long SAMPLE_SEED = 20250728L;

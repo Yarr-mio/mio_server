@@ -129,6 +129,46 @@ class SafetyL1ContextMarkerTest {
         void weakRecoveryAloneDoesNotDowngrade() {
             assertConfirmedCrisis("지금은 정말 죽고싶어요");
         }
+
+        /**
+         * 마커 검출이 메시지 전체를 훑으면 앞 절의 무관한 3인칭 서술이 뒤 절의 1인칭 위기 진술을
+         * 강등시킨다. 마커는 위기 키워드 근처에서만 유효해야 한다.
+         */
+        @ParameterizedTest(name = "먼 거리 마커: {0}")
+        @ValueSource(strings = {
+                "엄마가 오늘 늦는다고 해서 집에 혼자 있는데 나 진짜 죽고싶어",
+                "친구가 어제 이사한다고 했는데 그건 그렇고 나 요즘 죽고싶어",
+                "뉴스에서 경제 기사를 봤는데 그것과 별개로 저는 정말 죽고싶어요"
+        })
+        void distantMarkerDoesNotDowngrade(String message) {
+            assertConfirmedCrisis(message);
+        }
+
+        /**
+         * "절대"는 부정어가 아니라 강조어라서 절망을 강화하는 쪽으로도 쓰인다.
+         * 부정 마커로 등록하면 강조된 위기 진술이 강등된다.
+         */
+        @ParameterizedTest(name = "강조어 오인: {0}")
+        @ValueSource(strings = {
+                "이제 절대 못 버티겠어 그냥 죽고싶다",
+                "진짜 절대 못 견디겠어요 죽고싶어요"
+        })
+        void intensifierIsNotNegation(String message) {
+            assertConfirmedCrisis(message);
+        }
+
+        /**
+         * "예전엔 X 지금은 Y" 구문은 악화 서술에도 그대로 쓰인다.
+         * 시점 대조어만으로 회복을 판정하면 진행 중인 위기를 과거 회복담으로 오인한다.
+         */
+        @ParameterizedTest(name = "시점 대조 ≠ 회복: {0}")
+        @ValueSource(strings = {
+                "예전엔 좋았는데 지금은 진짜 죽고싶어",
+                "옛날에는 버틸만했는데 이제는 죽고싶어요"
+        })
+        void temporalContrastWithoutRecoveryStaysCrisis(String message) {
+            assertConfirmedCrisis(message);
+        }
     }
 
     @Nested
