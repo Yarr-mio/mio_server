@@ -22,14 +22,19 @@ import java.util.regex.Pattern;
 final class CrisisContextMarkers {
 
     /**
-     * 위기 키워드 앞뒤로 마커를 인정할 문자 수. 공백이 제거된 문자열 기준이다.
+     * 절 경계. 이 지점을 넘어선 마커는 위기 진술과 다른 절에 있는 것으로 본다.
      *
-     * <p>3인칭 주어("친구가~")는 키워드 앞에, 인용 어미("~다고 했")는 키워드 뒤에 붙으므로 양방향으로 본다.
-     * 창을 넓히면 무관한 절의 마커가 새어 들어와 진짜 위기를 놓치고(FN), 좁히면 맥락 발화가 즉시
-     * 위기로 확정된다(FP). 코퍼스 기준으로 조정한 값이다.
+     * <p>문자 수 창으로 자르면 한국어에서 주어가 생략된 위기 진술을 보호하지 못한다.
+     * "오늘 친구가 전화해서 화가 났는데 진짜 죽고싶다"는 위기 절에 주어가 없어 1인칭 예외가 걸리지
+     * 않는데, 앞 절의 "친구가"가 문자 수 안에 들어와 3인칭으로 강등된다. 연결어미로 절을 나누면
+     * 그 오염이 사라진다.
      */
-    private static final int WINDOW_BEFORE = 14;
-    private static final int WINDOW_AFTER = 12;
+    private static final Pattern CLAUSE_BOUNDARY = Pattern.compile(
+            // 연결어미
+            "는데|은데|지만|해서|라서|아서|어서|니까|면서|다가"
+                    // 종결어미 — 구두점 없이 이어 붙인 문장을 나눈다
+                    + "|어요|아요|에요|예요|네요|세요|고요|군요|니다"
+                    + "|[.!?,;·]");
 
     /** 위기 발화의 주체가 사용자 본인이 아님을 시사 */
     private static final Set<String> THIRD_PERSON = Set.of(
@@ -131,11 +136,9 @@ final class CrisisContextMarkers {
         return detected;
     }
 
-    /** 키워드 주변 창 안에서만 마커를 찾는다. */
+    /** 키워드가 속한 절 안에서만 마커를 찾는다. */
     private static String markerNear(String compactMessage, int keywordAt, int keywordLength) {
-        int from = Math.max(0, keywordAt - WINDOW_BEFORE);
-        int to = Math.min(compactMessage.length(), keywordAt + keywordLength + WINDOW_AFTER);
-        String window = compactMessage.substring(from, to);
+        String window = clauseAround(compactMessage, keywordAt, keywordAt + keywordLength);
 
         if (containsAny(window, NEGATION)) {
             return NEGATION_MARKER;
@@ -147,6 +150,26 @@ final class CrisisContextMarkers {
             return QUOTATION_MARKER;
         }
         return null;
+    }
+
+    /**
+     * 키워드를 포함하는 절을 잘라낸다. 키워드 시작 직전의 마지막 절 경계부터 키워드 끝 이후의 첫 절
+     * 경계까지다. 키워드가 경계와 겹치는 경우("죽고싶어서")에도 키워드 전체가 남도록 자른다.
+     */
+    private static String clauseAround(String compactMessage, int keywordFrom, int keywordTo) {
+        int start = 0;
+        int end = compactMessage.length();
+
+        java.util.regex.Matcher matcher = CLAUSE_BOUNDARY.matcher(compactMessage);
+        while (matcher.find()) {
+            if (matcher.end() <= keywordFrom) {
+                start = matcher.end();
+            } else if (matcher.start() >= keywordTo) {
+                end = matcher.start();
+                break;
+            }
+        }
+        return compactMessage.substring(start, end);
     }
 
     private static boolean containsAny(String window, Set<String> markers) {

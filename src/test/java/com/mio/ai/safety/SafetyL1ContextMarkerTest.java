@@ -132,15 +132,31 @@ class SafetyL1ContextMarkerTest {
 
         /**
          * 마커 검출이 메시지 전체를 훑으면 앞 절의 무관한 3인칭 서술이 뒤 절의 1인칭 위기 진술을
-         * 강등시킨다. 마커는 위기 키워드 근처에서만 유효해야 한다.
+         * 강등시킨다. 마커는 위기 진술과 같은 절에 있을 때만 유효해야 한다.
          */
-        @ParameterizedTest(name = "먼 거리 마커: {0}")
+        @ParameterizedTest(name = "다른 절의 마커: {0}")
         @ValueSource(strings = {
                 "엄마가 오늘 늦는다고 해서 집에 혼자 있는데 나 진짜 죽고싶어",
                 "친구가 어제 이사한다고 했는데 그건 그렇고 나 요즘 죽고싶어",
                 "뉴스에서 경제 기사를 봤는데 그것과 별개로 저는 정말 죽고싶어요"
         })
-        void distantMarkerDoesNotDowngrade(String message) {
+        void markerInAnotherClauseDoesNotDowngrade(String message) {
+            assertConfirmedCrisis(message);
+        }
+
+        /**
+         * 위 케이스들은 모두 1인칭 주어를 포함하므로 1인칭 예외만으로도 통과한다.
+         * 한국어는 주어 생략이 일상적이라, 절 스코프가 실제로 동작하는지는 <b>주어 없는</b>
+         * 위기 진술로 확인해야 한다. 이 케이스가 강등되면 남은 방어선은 InputJudge 판정 하나뿐이다.
+         */
+        @ParameterizedTest(name = "주어 생략 + 다른 절의 마커: {0}")
+        @ValueSource(strings = {
+                "오늘 친구가 전화해서 화가 났는데 진짜 죽고싶다",
+                "뉴스에서 경제 기사를 봤는데 그것과 별개로 정말 죽고싶어요",
+                "동생이 시험 떨어졌다고 하더라고요 그건 그렇고 요즘 죽고싶어요",
+                "영화 봤는데 재미없었어요 그냥 죽고싶다"
+        })
+        void implicitSubjectCrisisSurvivesDistantMarker(String message) {
             assertConfirmedCrisis(message);
         }
 
