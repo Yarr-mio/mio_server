@@ -112,6 +112,7 @@ public class AiDecisionLogger {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
+        l1Flags.put("crisis_unverified", l1Result.hardCrisisUnverified());
         l1Flags.put("risk_candidate", l1Result.riskCandidate());
         l1Flags.put("emotion_spike", l1Result.emotionSpike());
         l1Flags.put("repetitive_negative", l1Result.repetitiveNegative());

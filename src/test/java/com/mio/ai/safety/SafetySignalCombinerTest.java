@@ -14,6 +14,33 @@ class SafetySignalCombinerTest {
     private final SafetySignalCombiner combiner = new SafetySignalCombiner();
 
     @Test
+    @DisplayName("맥락 마커로 강등된 위기 후보는 반드시 InputJudge를 거친다")
+    void unverifiedHardCrisisRequiresJudge() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false,
+                true,
+                true,
+                false,
+                false,
+                false,
+                false,
+                List.of("crisis_keyword:죽고싶다", "crisis_context_marker:third_person"),
+                0.75
+        );
+
+        CombinedSignal combined = combiner.combine(
+                SecurityAssessment.clean(),
+                l1,
+                ModerationResult.failOpen(),
+                null
+        );
+
+        assertThat(combined.hardCrisis()).isFalse();
+        assertThat(combined.hardCrisisUnverified()).isTrue();
+        assertThat(combined.requiresJudge()).isTrue();
+    }
+
+    @Test
     @DisplayName("반복 부정 신호 단독도 InputJudge 발동 조건이다")
     void repetitiveNegativeRequiresJudge() {
         SafetyL1Result l1 = new SafetyL1Result(

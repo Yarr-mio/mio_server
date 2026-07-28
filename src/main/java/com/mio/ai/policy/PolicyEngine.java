@@ -44,6 +44,15 @@ public class PolicyEngine {
                     InterventionHints.empty(), RiskLevel.HARD_CRISIS);
         }
 
+        // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
+        // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
+        if (combined.hardCrisisUnverified() && !crisisClearedByJudge(judgeResult)) {
+            return build(decisionId, DecisionAction.CRISIS_FLOW,
+                    GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
+                    combined.securityLevel(), false, false, false,
+                    InterventionHints.empty(), RiskLevel.HARD_CRISIS);
+        }
+
         // 3. Security SUSPICIOUS → GUARDED + OutputGuard 활성
         if (combined.securityLevel() == SecurityLevel.SUSPICIOUS) {
             return build(decisionId, DecisionAction.GENERATE,
@@ -120,6 +129,16 @@ public class PolicyEngine {
     /** Phase 1 호환 — profile/judge 없이 호출 가능 */
     public PolicyDecision decide(CombinedSignal combined) {
         return decide(combined, null, null, null);
+    }
+
+    /**
+     * 강등된 위기 후보를 해제해도 되는지 판단한다. 판정 부재·호출 실패·HARD_CRISIS 확인은
+     * 모두 위기 유지로 처리한다(fail-closed).
+     */
+    private boolean crisisClearedByJudge(InputJudgeResult judgeResult) {
+        return judgeResult != null
+                && !judgeResult.failed()
+                && judgeResult.risk().riskLevel() != RiskLevel.HARD_CRISIS;
     }
 
     private GenerationMode resolveSupportiveMode() {
