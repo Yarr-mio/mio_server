@@ -31,7 +31,7 @@ class SafetySignalCombinerTest {
         CombinedSignal combined = combiner.combine(
                 SecurityAssessment.clean(),
                 l1,
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null
         );
 
@@ -57,7 +57,7 @@ class SafetySignalCombinerTest {
         CombinedSignal combined = combiner.combine(
                 SecurityAssessment.clean(),
                 l1,
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null
         );
 
@@ -81,7 +81,7 @@ class SafetySignalCombinerTest {
         CombinedSignal combined = combiner.combine(
                 SecurityAssessment.clean(),
                 l1,
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null
         );
 
@@ -105,7 +105,7 @@ class SafetySignalCombinerTest {
         CombinedSignal combined = combiner.combine(
                 SecurityAssessment.clean(),
                 l1,
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null
         );
 

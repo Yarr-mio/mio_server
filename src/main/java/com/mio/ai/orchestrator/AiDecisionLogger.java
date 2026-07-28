@@ -49,6 +49,7 @@ public class AiDecisionLogger {
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
             boolean memoryCacheHit,
+            boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger) {
 
         try {
@@ -57,7 +58,7 @@ public class AiDecisionLogger {
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
-                    appliedCrisisTrigger);
+                    safetyProfileDegraded, appliedCrisisTrigger);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -97,7 +98,7 @@ public class AiDecisionLogger {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
-                "default", false, false, decision.crisisTrigger());
+                "default", false, false, false, decision.crisisTrigger());
     }
 
     private Map<String, Object> buildTrace(
@@ -113,6 +114,7 @@ public class AiDecisionLogger {
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
             boolean memoryCacheHit,
+            boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
@@ -134,6 +136,9 @@ public class AiDecisionLogger {
         Map<String, Object> trace = new LinkedHashMap<>();
         trace.put("schema_version", SCHEMA_VERSION);
         trace.put("l0_flagged", moderation.flagged());
+        // l0_flagged=false 가 "안전 판정"인지 "판정을 못 받아온 것"인지 구분한다.
+        // 이게 없으면 안전 계층 하나가 통째로 빠진 채 처리된 턴을 사후에 식별할 수 없다 (이슈 #263).
+        trace.put("l0_resolved", moderation.resolved());
         trace.put("l0_category_scores", moderation.categoryScores());
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
@@ -141,6 +146,9 @@ public class AiDecisionLogger {
         trace.put("input_judge_called", inputJudgeCalled);
         trace.put("risk_level", decision.riskLevel() != null ? decision.riskLevel().name() : null);
         trace.put("safety_profile_cache_hit", safetyProfileCacheHit);
+        // 근거 조회에 실패해 보수적 기본값으로 채운 프로파일인지 (이슈 #261).
+        // 위기 이력을 확인하지 못한 턴은 임계값·force_judge 가 실제 이력과 무관하게 결정된다.
+        trace.put("safety_profile_degraded", safetyProfileDegraded);
         trace.put("memory_cache_hit", memoryCacheHit);
         trace.put("llm_model", "gpt-4o");
         trace.put("llm_ttft_ms", ttftMs);

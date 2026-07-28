@@ -15,11 +15,11 @@ class SafetyL1Test {
     private final SafetyL1 safetyL1 = new SafetyL1();
 
     private SafetyL1Input input(String normalizedMessage) {
-        return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.failOpen());
+        return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.clear());
     }
 
     private SafetyL1Input inputWithProfile(String normalizedMessage, SafetyProfile profile) {
-        return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.failOpen(), profile);
+        return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.clear(), profile);
     }
 
     @Test
@@ -69,7 +69,7 @@ class SafetyL1Test {
         var result = safetyL1.check(new SafetyL1Input(
                 "방금 일이 생기고 나서 마음이 확 무너졌어요",
                 List.of(new SafetyL1HistoryMessage("오늘은 괜찮았어요", 70, null)),
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null,
                 25,
                 "catastrophizing"
@@ -88,7 +88,7 @@ class SafetyL1Test {
                         new SafetyL1HistoryMessage("지난번에도 비슷했어요", 45, "overgeneralization"),
                         new SafetyL1HistoryMessage("저는 늘 이런 식이에요", 45, "overgeneralization")
                 ),
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null,
                 45,
                 "overgeneralization"
@@ -104,7 +104,7 @@ class SafetyL1Test {
         var result = safetyL1.check(new SafetyL1Input(
                 "이게 더 큰 문제로 번질까 봐 걱정돼요",
                 List.of(),
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null,
                 45,
                 "catastrophizing"
@@ -119,7 +119,7 @@ class SafetyL1Test {
         var result = safetyL1.check(new SafetyL1Input(
                 "안 좋게 흘러갈 것 같다는 생각이 자꾸 들어요",
                 List.of(),
-                ModerationResult.failOpen(),
+                ModerationResult.clear(),
                 null,
                 45,
                 "fortune_telling"

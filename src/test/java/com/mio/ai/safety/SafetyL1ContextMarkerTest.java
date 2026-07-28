@@ -23,7 +23,7 @@ class SafetyL1ContextMarkerTest {
 
     private SafetyL1Result check(String message) {
         return safetyL1.check(new SafetyL1Input(
-                message.toLowerCase(java.util.Locale.ROOT), List.of(), ModerationResult.failOpen()));
+                message.toLowerCase(java.util.Locale.ROOT), List.of(), ModerationResult.clear()));
     }
 
     private void assertDowngraded(String message) {

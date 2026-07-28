@@ -425,7 +425,7 @@ public class ConversationOrchestrator {
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
-                    appliedCrisisTrigger);
+                    profile.degraded(), appliedCrisisTrigger);
 
             emitter.complete();
 
