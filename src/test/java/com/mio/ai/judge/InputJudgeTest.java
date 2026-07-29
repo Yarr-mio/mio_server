@@ -84,7 +84,8 @@ class InputJudgeTest {
     private InputJudge judgeReturning(String responseJson) {
         LlmClient llmClient = new LlmClient() {
             @Override
-            public long stream(LlmRequest request, java.util.function.Consumer<String> chunkHandler) {
+            public com.mio.ai.llm.LlmStreamResult stream(
+                    LlmRequest request, java.util.function.Consumer<String> chunkHandler) {
                 throw new UnsupportedOperationException();
             }
 

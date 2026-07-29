@@ -6,6 +6,8 @@ import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.domain.AiPolicyDecision;
 import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
+import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
@@ -16,9 +18,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.ToLongFunction;
 
 @Component
 @RequiredArgsConstructor
@@ -31,6 +35,7 @@ public class AiDecisionLogger {
 
     private final AiPolicyDecisionRepository repository;
     private final ObjectMapper objectMapper;
+    private final LlmCostCalculator costCalculator;
 
     @Async("aiDecisionLoggerExecutor")
     public void log(
@@ -50,7 +55,8 @@ public class AiDecisionLogger {
             boolean safetyProfileCacheHit,
             boolean memoryCacheHit,
             boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger) {
+            CrisisTrigger appliedCrisisTrigger,
+            LlmUsage llmUsage) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -58,7 +64,7 @@ public class AiDecisionLogger {
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
-                    safetyProfileDegraded, appliedCrisisTrigger);
+                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -98,7 +104,7 @@ public class AiDecisionLogger {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
-                "default", false, false, false, decision.crisisTrigger());
+                "default", false, false, false, decision.crisisTrigger(), null);
     }
 
     private Map<String, Object> buildTrace(
@@ -115,7 +121,8 @@ public class AiDecisionLogger {
             boolean safetyProfileCacheHit,
             boolean memoryCacheHit,
             boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger) {
+            CrisisTrigger appliedCrisisTrigger,
+            LlmUsage llmUsage) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -150,9 +157,19 @@ public class AiDecisionLogger {
         // 위기 이력을 확인하지 못한 턴은 임계값·force_judge 가 실제 이력과 무관하게 결정된다.
         trace.put("safety_profile_degraded", safetyProfileDegraded);
         trace.put("memory_cache_hit", memoryCacheHit);
-        trace.put("llm_model", "gpt-4o");
+        // LLM 관련 필드는 전부 null 이 될 수 있고, null 은 각각 다른 뜻이다.
+        //   llmUsage == null              → 이 턴은 LLM 을 호출하지 않았다 (보안 거절·위기·폴백)
+        //   llmUsage.resolved() == false  → 호출했지만 사용량을 받지 못했다
+        //   cost == null                  → 사용량을 모르거나 단가 미등록 모델이다
+        // 이전에는 세 경우 모두 model="gpt-4o", cost=0.0 으로 하드코딩돼 있어서
+        // "비용이 0" 과 "비용을 모른다" 가 구분되지 않았고, LLM 을 부르지도 않은 턴까지
+        // gpt-4o 를 쓴 것처럼 기록됐다.
+        trace.put("llm_model", llmUsage != null ? llmUsage.model() : null);
         trace.put("llm_ttft_ms", ttftMs);
-        trace.put("llm_cost_usd", 0.0);
+        trace.put("llm_usage_resolved", llmUsage != null ? llmUsage.resolved() : null);
+        trace.put("llm_prompt_tokens", resolvedTokens(llmUsage, LlmUsage::promptTokens));
+        trace.put("llm_completion_tokens", resolvedTokens(llmUsage, LlmUsage::completionTokens));
+        trace.put("llm_cost_usd", costUsd(llmUsage));
         trace.put("delivery_mode", decision.deliveryMode().name().toLowerCase());
         trace.put("output_pre_filter_result", preFilterResult != null
                 ? (preFilterResult.passed() ? "PASS" : "FAIL") : null);
@@ -173,5 +190,14 @@ public class AiDecisionLogger {
         trace.put("total_pipeline_ms", totalMs);
 
         return trace;
+    }
+
+    /** 사용량을 실제로 받았을 때만 토큰 수를 남긴다. 못 받았으면 0 이 아니라 null 이다. */
+    private Long resolvedTokens(LlmUsage usage, ToLongFunction<LlmUsage> field) {
+        return usage != null && usage.resolved() ? field.applyAsLong(usage) : null;
+    }
+
+    private BigDecimal costUsd(LlmUsage usage) {
+        return usage != null ? costCalculator.costUsd(usage) : null;
     }
 }
