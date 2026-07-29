@@ -371,6 +371,42 @@ class OpenAiLlmClientTest {
     }
 
     @Test
+    @DisplayName("절단 여부를 결과로 돌려준다 — 호출부가 잘린 텍스트를 정본으로 저장하지 않게")
+    void streamResultExposesTruncation() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"요약 앞부분\"}}]}",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        LlmStreamResult result = client(httpClient).stream(
+                LlmRequest.of(MODEL, "system", "user").withMaxCompletionTokens(400),
+                chunk -> { });
+
+        assertThat(result.truncated())
+                .as("지표만 올리고 결과에 안 알려주면 잘린 요약이 그대로 저장된다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("정상 종료면 truncated=false")
+    void streamResultIsNotTruncatedOnNormalStop() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"완결된 요약\"},\"finish_reason\":\"stop\"}]}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        LlmStreamResult result =
+                client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
+
+        assertThat(result.truncated()).isFalse();
+    }
+
+    @Test
     @DisplayName("정상 종료는 절단으로 세지 않는다")
     void doesNotRecordTruncationOnNormalStop() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);

@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -72,6 +73,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         long startMs = System.currentTimeMillis();
         AtomicLong ttft = new AtomicLong(0);
         AtomicReference<LlmUsage> usage = new AtomicReference<>();
+        AtomicBoolean truncated = new AtomicBoolean(false);
         // 이 호출의 종료(outcome + usage)를 이미 기록했는지. 아래 catch 는 우리가 던진 예외와
         // 청크 핸들러가 던진 예외를 함께 받는데, 전자는 이미 기록돼 있어 표시가 없으면 이중 계상된다.
         //
@@ -120,6 +122,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     // 사용량이 남아 최종 결과에 섞이거나 중복 집계된다.
                     ttft.set(0);
                     usage.set(null);
+                    truncated.set(false);
                     continue;
                 }
 
@@ -144,7 +147,9 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                                 if (chunkUsage != null) {
                                     usage.set(chunkUsage);
                                 }
-                                recordIfTruncated(chunk, request.model(), MODE_STREAM);
+                                if (recordIfTruncated(chunk, request.model(), MODE_STREAM)) {
+                                    truncated.set(true);
+                                }
                                 String content = extractDeltaContent(chunk);
                                 if (content != null && !content.isEmpty()) {
                                     if (ttft.get() == 0) {
@@ -183,7 +188,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         recordUsage(MODE_STREAM, resolved);
 
         long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
-        return new LlmStreamResult(ttftMs, resolved);
+        return new LlmStreamResult(ttftMs, resolved, truncated.get());
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
@@ -410,12 +415,14 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
      * 파싱 실패로 이어져 판정이 통째로 사라지는데, 그건 로그에 "파싱 실패"로만 보이고 원인이
      * 상한이었다는 사실은 드러나지 않는다.
      */
-    private void recordIfTruncated(JsonNode root, String model, String mode) {
+    private boolean recordIfTruncated(JsonNode root, String model, String mode) {
         String finishReason = root.path("choices").path(0).path("finish_reason").asText(null);
-        if (FINISH_REASON_LENGTH.equals(finishReason)) {
-            log.warn("LLM 응답이 출력 토큰 상한에 걸려 잘렸다: model={} mode={}", model, mode);
-            meterRegistry.counter(TRUNCATED_METRIC, "model", model, "mode", mode).increment();
+        if (!FINISH_REASON_LENGTH.equals(finishReason)) {
+            return false;
         }
+        log.warn("LLM 응답이 출력 토큰 상한에 걸려 잘렸다: model={} mode={}", model, mode);
+        meterRegistry.counter(TRUNCATED_METRIC, "model", model, "mode", mode).increment();
+        return true;
     }
 
     /** 사용량을 못 받았으면 0 짜리 사용량이 아니라 '미상' 으로 만든다. */

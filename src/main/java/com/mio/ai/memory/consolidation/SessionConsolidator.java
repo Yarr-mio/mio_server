@@ -7,6 +7,7 @@ import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.memory.episodic.Thought;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
@@ -362,11 +363,18 @@ public class SessionConsolidator {
 
     private String generateSummary(String conversationText) {
         StringBuilder sb = new StringBuilder();
-        llmClient.stream(
+        LlmStreamResult result = llmClient.stream(
                 LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText)
                         .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS),
                 sb::append
         );
+        // 잘린 요약을 그대로 쓰면 암호화·저장을 거쳐 세션의 정본 기억이 되고, ExtractorLLM 이
+        // 그 불완전한 텍스트에서 사고·감정을 뽑아낸다. 잘렸다는 사실은 어디에도 남지 않는다.
+        // 상위 consolidate() 의 catch 가 받아 로그를 남기고 이번 컨솔리데이션만 중단한다.
+        if (result.truncated()) {
+            throw new IllegalStateException(
+                    "세션 요약이 출력 토큰 상한에 걸려 잘렸다 — 불완전한 요약을 정본으로 저장하지 않는다");
+        }
         return sb.toString().trim();
     }
 
