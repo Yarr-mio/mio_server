@@ -21,6 +21,7 @@ import java.util.concurrent.Flow;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -163,6 +164,95 @@ class OpenAiLlmClientTest {
 
         assertThat(counter("mio.llm.tokens", "type", "prompt")).isEqualTo(7.0);
         assertThat(counter("mio.llm.usage", "mode", "complete_json")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("429 재시도 시 앞선 시도의 usage가 최종 결과에 섞이지 않는다")
+    void stream_retryDiscardsPreviousAttemptUsage() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> throttled = mock(HttpResponse.class);
+        when(throttled.statusCode()).thenReturn(429);
+        when(throttled.body()).thenReturn(Stream.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":9999,\"completion_tokens\":9999}}"));
+        when(throttled.headers()).thenReturn(
+                java.net.http.HttpHeaders.of(Map.of("Retry-After", List.of("0")), (a, b) -> true));
+        HttpResponse<Stream<String>> ok = streamingResponse(List.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(throttled, ok);
+
+        LlmStreamResult result =
+                client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
+
+        assertThat(result.usage().promptTokens())
+                .as("버려진 시도의 사용량이 남으면 비용이 부풀려 계상된다")
+                .isEqualTo(11);
+        assertThat(counter("mio.llm.tokens", "type", "prompt")).isEqualTo(11.0);
+        assertThat(counter("mio.llm.retries", "reason", "rate_limited"))
+                .as("재시도로 삼켜진 스로틀링은 결과가 success 라 별도 지표가 없으면 흔적이 없다")
+                .isEqualTo(1.0);
+        assertThat(counter("mio.llm.requests", "outcome", "success")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("청크 핸들러가 던지면 aborted로 센다 — 과금됐는데 지표에 없는 상태를 막는다")
+    void stream_recordsOutcomeWhenChunkHandlerThrows() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"안\"}}]}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        // 오케스트레이터는 SSE 전송 IOException 을 RuntimeException 으로 감싸 던진다.
+        assertThatThrownBy(() -> client(httpClient).stream(
+                LlmRequest.of(MODEL, "system", "user"),
+                chunk -> { throw new RuntimeException("SSE 전송 실패"); }))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(counter("mio.llm.requests", "outcome", "aborted")).isEqualTo(1.0);
+        assertThat(counter("mio.llm.usage", "outcome", "missing")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("HTTP 오류는 aborted가 아니라 error 한 번만 센다")
+    void stream_doesNotDoubleCountHttpError() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(500);
+        when(response.body()).thenReturn(Stream.of());
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        assertThatThrownBy(() -> client(httpClient)
+                .stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { }))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(counter("mio.llm.requests", "outcome", "error")).isEqualTo(1.0);
+        assertThat(counter("mio.llm.requests", "outcome", "aborted"))
+                .as("이미 센 실패를 catch 에서 또 세면 실패 수가 두 배가 된다")
+                .isEqualTo(0.0);
+    }
+
+    @Test
+    @DisplayName("임베딩도 토큰·비용을 계측한다 — 빼면 비용 합계가 실제 지출보다 낮다")
+    void embed_recordsUsageAndCost() throws Exception {
+        pricing.setModels(Map.of("text-embedding-3-small",
+                new LlmPricingProperties.ModelPrice(new BigDecimal("0.02"), BigDecimal.ZERO)));
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn(
+                "{\"data\":[{\"embedding\":[0.1,0.2]}],\"usage\":{\"prompt_tokens\":24}}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).embed("안녕하세요");
+
+        assertThat(counter("mio.llm.tokens", "mode", "embed")).isEqualTo(24.0);
+        // 24 * 0.02 / 1e6 = 4.8e-7 — 6자리로 끊으면 0 이 되던 값이다.
+        assertThat(counter("mio.llm.cost.usd", "mode", "embed")).isEqualTo(4.8e-7);
     }
 
     // ── helpers ────────────────────────────────────────────────────

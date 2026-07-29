@@ -37,7 +37,6 @@ class LlmCostCalculatorTest {
         LlmCostCalculator calculator = calculator(Map.of());
 
         assertThat(calculator.costUsd(LlmUsage.of("gpt-5-future", 100, 50))).isNull();
-        assertThat(calculator.hasPrice("gpt-5-future")).isFalse();
     }
 
     @Test

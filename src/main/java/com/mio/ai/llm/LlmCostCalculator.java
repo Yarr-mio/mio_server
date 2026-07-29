@@ -7,6 +7,8 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 토큰 사용량을 USD 비용으로 환산한다.
@@ -29,6 +31,7 @@ public class LlmCostCalculator {
     private static final int COST_SCALE = 10;
 
     private final LlmPricingProperties pricing;
+    private final Set<String> warnedModels = ConcurrentHashMap.newKeySet();
 
     /**
      * @return 비용(USD). 사용량을 못 받았거나 단가가 등록되지 않은 모델이면 {@code null}
@@ -39,8 +42,12 @@ public class LlmCostCalculator {
         }
         LlmPricingProperties.ModelPrice price = pricing.getModels().get(usage.model());
         if (price == null || !price.isValid()) {
-            log.warn("LLM 단가 미등록 모델이라 비용을 계산하지 못했다: model={}. "
-                    + "openai.pricing.models 에 추가해야 비용 집계가 맞는다", usage.model());
+            // 모델당 한 번만 경고한다. 매 호출마다 찍으면 요청 속도로 로그가 쏟아져
+            // 정작 읽어야 할 다른 경고를 덮는다. 발생 횟수는 mio.llm.cost.unpriced 가 센다.
+            if (warnedModels.add(usage.model())) {
+                log.warn("LLM 단가 미등록 모델이라 비용을 계산하지 못했다: model={}. "
+                        + "openai.pricing.models 에 추가해야 비용 집계가 맞는다", usage.model());
+            }
             return null;
         }
 
@@ -55,11 +62,5 @@ public class LlmCostCalculator {
         return inputCost.add(outputCost)
                 .setScale(COST_SCALE, RoundingMode.HALF_UP)
                 .stripTrailingZeros();
-    }
-
-    /** 단가가 등록된 모델인지. 메트릭에서 미등록 모델을 별도 태그로 세기 위해 쓴다. */
-    public boolean hasPrice(String model) {
-        LlmPricingProperties.ModelPrice price = pricing.getModels().get(model);
-        return price != null && price.isValid();
     }
 }
