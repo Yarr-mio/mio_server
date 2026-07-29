@@ -252,7 +252,22 @@ class SessionServiceTest {
 
         sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, null);
 
-        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter);
+        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, null);
+    }
+
+    /**
+     * 턴을 Idempotency-Key 로 역참조하려면 키가 오케스트레이터까지 내려가야 한다.
+     * 이전에는 {@code streamMessage} 가 키를 인자로 받고도 쓰지 않고 버렸다 (이슈 P0-A).
+     */
+    @Test
+    @DisplayName("streamMessage는 Idempotency-Key를 오케스트레이터로 전달한다")
+    void streamMessage_passesIdempotencyKey() {
+        UUID sessionId = UUID.randomUUID();
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, "key-1");
+
+        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, "key-1");
     }
 
     @Test

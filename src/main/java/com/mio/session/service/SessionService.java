@@ -202,7 +202,7 @@ public class SessionService {
 
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
                               SseEmitter emitter, String idempotencyKey) {
-        conversationOrchestrator.handle(userId, sessionId, request.content(), emitter);
+        conversationOrchestrator.handle(userId, sessionId, request.content(), emitter, idempotencyKey);
     }
 
     private void checkMessageRateLimit(UUID userId) {

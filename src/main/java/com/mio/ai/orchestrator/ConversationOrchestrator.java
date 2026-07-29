@@ -50,6 +50,7 @@ import com.mio.ai.security.SecurityAssessment;
 import com.mio.ai.security.SecurityRefusalTemplate;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.session.domain.MessageTurn;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.session.repository.SessionRepository;
@@ -117,7 +118,16 @@ public class ConversationOrchestrator {
     private final Executor outputJudgeExecutor;
 
     public void handle(UUID userId, UUID sessionId, String userMessage, SseEmitter emitter) {
+        handle(userId, sessionId, userMessage, emitter, null);
+    }
+
+    public void handle(UUID userId, UUID sessionId, String userMessage, SseEmitter emitter,
+                       String idempotencyKey) {
         long startMs = System.currentTimeMillis();
+
+        // 이 턴이 어떻게 끝났는지. 어떤 경로로 빠져나가든 터미널 상태로 저장된다 (이슈 P0-A).
+        AtomicReference<String> finishedReasonRef = new AtomicReference<>(null);
+        MessageTurn turn = null;
 
         try {
             Session session = sessionRepository.findById(sessionId)
@@ -135,6 +145,12 @@ public class ConversationOrchestrator {
             UserMessageSignal userSignal = userMessageSignalAnalyzer.analyze(normalized);
             List<SafetyL1HistoryMessage> recentUserMessages =
                     messagePersistenceService.loadRecentUserSafetyHistory(sessionId, 3);
+
+            // 사용자 발화를 생성 전에 저장하고 턴을 연다.
+            // 반드시 위 히스토리 로드 뒤에 와야 한다 — 먼저 저장하면 현재 발화가 자기 자신의
+            // "이전 3턴"에 섞여 감정 급락·반복 부정 판정이 오염된다.
+            turn = messagePersistenceService.openTurn(
+                    sessionId, userId, userMessage, userSignal, idempotencyKey);
 
             // 2. Load SafetyProfile (Redis cache HIT → JSON 역직렬화, MISS → buildSync)
             ProfileResult profileResult = safetyProfileBuilder.getWithCacheHit(sessionId.toString(), userId.toString());
@@ -207,13 +223,15 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "security_refusal", false);
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
                 appliedCrisisTrigger = resolveCrisisTrigger(decision);
+                // CrisisFlowService 가 crisis·done 을 직접 보내므로 sendDoneEvent 를 거치지 않는다.
+                finishedReasonRef.set("crisis_flow");
                 CrisisFlowService.CrisisHandleResult crisisResult =
                         crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
@@ -255,7 +273,7 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
@@ -358,7 +376,7 @@ public class ConversationOrchestrator {
                             if (replacedContent != null) {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "replaced_by_guard", false);
                             } else if (stopSendingDeltas.get()) {
@@ -368,17 +386,17 @@ public class ConversationOrchestrator {
                                         ? capturedSnapshotRef.get() : assistantContent;
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
-                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
-                                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             }
                         }
                     } else {
-                        sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
@@ -394,7 +412,7 @@ public class ConversationOrchestrator {
                         }
                     });
                     assistantContent = contentBuilder.toString();
-                    sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                    sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                             userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                             "stop", true);
                 }
@@ -403,14 +421,14 @@ public class ConversationOrchestrator {
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendDoneEvent(emitter, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "error", false);
             }
 
-            // 8. Persist messages
-            messagePersistenceService.saveConversation(sessionId, userId, userMessage, assistantContent, userSignal,
-                    crisisFlowTriggered);
+            // 8. 응답을 저장하고 턴을 완료로 확정한다. 사용자 발화는 이미 openTurn 에서 저장됐다.
+            messagePersistenceService.completeTurn(
+                    turn.getId(), assistantContent, crisisFlowTriggered, resolveFinishedReason(finishedReasonRef));
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
             checkpointService.maybeCheckpoint(sessionId, userId);
@@ -431,8 +449,25 @@ public class ConversationOrchestrator {
 
         } catch (Exception e) {
             log.error("Conversation orchestration failed for session {}", sessionId, e);
+            // 응답을 만들지 못한 채 끝났음을 남긴다. 이게 없으면 턴이 generating 에 영원히 머물러
+            // 재시도 시 "진행 중"으로 오인된다 (이슈 P0-A).
+            if (turn != null) {
+                messagePersistenceService.failTurn(turn.getId(), resolveFinishedReason(finishedReasonRef));
+            }
             emitter.completeWithError(e);
         }
+    }
+
+    /**
+     * 턴의 터미널 사유를 정한다.
+     *
+     * <p>{@code done} 을 내보내지 못하고 끝난 경로에서는 사유가 비어 있다. 그 경우 {@code error}
+     * 로 남긴다 — DB CHECK 제약상 터미널 상태에는 사유가 반드시 있어야 하고, 실제로도
+     * "결말을 알리지 못하고 끝났다"가 맞는 서술이다.
+     */
+    private String resolveFinishedReason(AtomicReference<String> finishedReasonRef) {
+        String reason = finishedReasonRef.get();
+        return reason != null ? reason : "error";
     }
 
     /**
@@ -476,6 +511,7 @@ public class ConversationOrchestrator {
 
     private void sendDoneEvent(
             SseEmitter emitter,
+            AtomicReference<String> finishedReasonRef,
             UUID userId,
             UUID sessionId,
             String outboundMsgId,
@@ -488,6 +524,10 @@ public class ConversationOrchestrator {
             List<WorkingMessage> recentWorkingMessages,
             String finishedReason,
             boolean classifyCbt) throws IOException {
+
+        // 턴의 터미널 사유로 남긴다. done 을 실제로 내보내기 전에 기록해야, 전송이 실패해도
+        // 서버는 이 턴이 어떻게 끝났는지 알 수 있다 (이슈 P0-A).
+        finishedReasonRef.set(finishedReason);
 
         CbtMetadataResult metadata = classifyCbt
                 ? cbtMetadataClassifier.classify(
