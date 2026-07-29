@@ -215,6 +215,54 @@ class OpenAiLlmClientTest {
         assertThat(counter("mio.llm.usage", "outcome", "missing")).isEqualTo(1.0);
     }
 
+    /**
+     * 계측의 대사(reconcile) 불변식.
+     *
+     * <p>`mio.llm.requests` 합계와 `mio.llm.usage` 합계가 어긋나면 "요청은 셌는데 usage 는
+     * 안 센" 경로가 있다는 뜻이고, 그러면 지표만 보고 누락을 알아낼 수 없다. 성공·HTTP 오류·
+     * 중단 어느 경로로 끝나든 둘 다 정확히 한 번씩 올라가야 한다.
+     */
+    @Test
+    @DisplayName("모든 종료 경로가 requests와 usage를 정확히 한 번씩 남긴다")
+    void everyTerminalPathRecordsBothOutcomeAndUsage() throws Exception {
+        // 1) 성공
+        HttpClient ok = mock(HttpClient.class);
+        HttpResponse<Stream<String>> okResponse = streamingResponse(List.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}",
+                "data: [DONE]"));
+        when(ok.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class))).thenReturn(okResponse);
+        client(ok).stream(LlmRequest.of(MODEL, "s", "u"), chunk -> { });
+
+        // 2) HTTP 오류 — 요청은 보냈지만 usage 를 못 받았다
+        HttpClient failing = mock(HttpClient.class);
+        HttpResponse<Stream<String>> errorResponse = mock(HttpResponse.class);
+        when(errorResponse.statusCode()).thenReturn(500);
+        when(errorResponse.body()).thenReturn(Stream.of());
+        when(failing.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(errorResponse);
+        assertThatThrownBy(() -> client(failing).stream(LlmRequest.of(MODEL, "s", "u"), chunk -> { }))
+                .isInstanceOf(RuntimeException.class);
+
+        // 3) 청크 핸들러 중단
+        HttpClient aborting = mock(HttpClient.class);
+        HttpResponse<Stream<String>> abortResponse = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}", "data: [DONE]"));
+        when(aborting.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(abortResponse);
+        assertThatThrownBy(() -> client(aborting).stream(LlmRequest.of(MODEL, "s", "u"),
+                chunk -> { throw new RuntimeException("SSE 전송 실패"); }))
+                .isInstanceOf(RuntimeException.class);
+
+        assertThat(total("mio.llm.requests")).isEqualTo(3.0);
+        assertThat(total("mio.llm.usage"))
+                .as("실패 경로가 usage 를 남기지 않으면 두 합계가 어긋나 대사할 수 없다")
+                .isEqualTo(3.0);
+        assertThat(counter("mio.llm.usage", "outcome", "resolved")).isEqualTo(1.0);
+        assertThat(counter("mio.llm.usage", "outcome", "missing"))
+                .as("HTTP 오류와 중단 모두 '사용량 모름'으로 남아야 한다")
+                .isEqualTo(2.0);
+    }
+
     @Test
     @DisplayName("HTTP 오류는 aborted가 아니라 error 한 번만 센다")
     void stream_doesNotDoubleCountHttpError() throws Exception {
@@ -260,6 +308,11 @@ class OpenAiLlmClientTest {
     private OpenAiLlmClient client(HttpClient httpClient) {
         return new OpenAiLlmClient("test-key", httpClient, new ObjectMapper(),
                 meterRegistry, new LlmCostCalculator(pricing));
+    }
+
+    private double total(String name) {
+        return meterRegistry.find(name).counters().stream()
+                .mapToDouble(Counter::count).sum();
     }
 
     private double counter(String name, String tagKey, String tagValue) {
