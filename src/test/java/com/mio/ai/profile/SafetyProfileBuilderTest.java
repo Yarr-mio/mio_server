@@ -1,6 +1,7 @@
 package com.mio.ai.profile;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.crisis.CrisisSafetyLatch;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +33,7 @@ class SafetyProfileBuilderTest {
 
     private JdbcTemplate jdbcTemplate;
     private MeterRegistry meterRegistry;
+    private CrisisSafetyLatch crisisSafetyLatch;
     private SafetyProfileBuilder builder;
 
     private final String userId = UUID.randomUUID().toString();
@@ -40,8 +42,9 @@ class SafetyProfileBuilderTest {
     void setUp() {
         jdbcTemplate = mock(JdbcTemplate.class);
         meterRegistry = new SimpleMeterRegistry();
+        crisisSafetyLatch = mock(CrisisSafetyLatch.class);
         builder = new SafetyProfileBuilder(
-                mock(StringRedisTemplate.class), jdbcTemplate, new ObjectMapper(), meterRegistry);
+                mock(StringRedisTemplate.class), jdbcTemplate, new ObjectMapper(), meterRegistry, crisisSafetyLatch);
         stubNonCrisisQueries();
     }
 
@@ -137,7 +140,8 @@ class SafetyProfileBuilderTest {
                 .thenThrow(new RuntimeException("db down"));
 
         SafetyProfile profile = new SafetyProfileBuilder(
-                mock(StringRedisTemplate.class), broken, new ObjectMapper(), meterRegistry).buildSync(userId);
+                mock(StringRedisTemplate.class), broken, new ObjectMapper(), meterRegistry,
+                crisisSafetyLatch).buildSync(userId);
 
         assertThat(profile.hasForceJudge()).isTrue();
         assertThat(profile.emotionDropThreshold()).isEqualTo(25.0);
@@ -248,6 +252,38 @@ class SafetyProfileBuilderTest {
 
         assertThat(profile.degraded()).isTrue();
         assertThat(profile.hasForceJudge()).isTrue();
+    }
+
+    /**
+     * crisis_events 저장이 끝내 실패한 위기가 있으면 조회는 성공해도 그 위기가 테이블에 없다.
+     * 래치가 그 사실을 알려주지 않으면, 방금 위기를 겪은 사용자가 다음 세션에서 아무 일 없었던
+     * 사람으로 처리된다 (이슈 P0-B).
+     */
+    @Test
+    @DisplayName("기록하지 못한 위기가 있으면 조회가 성공해도 보수적으로 만든다")
+    void unrecordedCrisisLatchForcesConservativeProfile() {
+        stubCrisisQuery(0);
+        when(crisisSafetyLatch.isRaised(any(UUID.class))).thenReturn(true);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.degraded())
+                .as("이력이 비어 보여도 기록 실패가 있었으면 신뢰할 수 없다")
+                .isTrue();
+        assertThat(profile.hasForceJudge()).isTrue();
+        assertThat(profile.emotionDropThreshold()).isEqualTo(25.0);
+    }
+
+    @Test
+    @DisplayName("래치가 없으면 정상 조회 결과를 그대로 쓴다")
+    void noLatchKeepsNormalProfile() {
+        stubCrisisQuery(0);
+        when(crisisSafetyLatch.isRaised(any(UUID.class))).thenReturn(false);
+
+        SafetyProfile profile = builder.buildSync(userId);
+
+        assertThat(profile.degraded()).isFalse();
+        assertThat(profile.hasForceJudge()).isFalse();
     }
 
     @Test

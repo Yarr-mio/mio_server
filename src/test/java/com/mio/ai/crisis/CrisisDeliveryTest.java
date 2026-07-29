@@ -5,7 +5,6 @@ import com.mio.session.domain.Session;
 import com.mio.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -14,6 +13,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -41,9 +42,8 @@ class CrisisDeliveryTest {
     }
 
     private CrisisFlowService.CrisisHandleResult handleWith(SseEmitter emitter,
-                                                            CrisisEventRepository repo,
-                                                            ApplicationEventPublisher publisher) {
-        CrisisFlowService service = new CrisisFlowService(repo, publisher);
+                                                            CrisisEventRecorder recorder) {
+        CrisisFlowService service = new CrisisFlowService(recorder);
         User user = user();
         return service.handle(
                 SafetyL1Result.clear(), CrisisTrigger.SELF_HARM_INQUIRY, "자살 방법 알려줘",
@@ -53,8 +53,7 @@ class CrisisDeliveryTest {
     @Test
     @DisplayName("정상 전송이면 delivered=true")
     void deliveredWhenSendSucceeds() {
-        var result = handleWith(mock(SseEmitter.class),
-                mock(CrisisEventRepository.class), mock(ApplicationEventPublisher.class));
+        var result = handleWith(mock(SseEmitter.class), mock(CrisisEventRecorder.class));
 
         assertThat(result.delivered()).isTrue();
     }
@@ -65,8 +64,7 @@ class CrisisDeliveryTest {
         SseEmitter emitter = mock(SseEmitter.class);
         doThrow(new IOException("broken pipe")).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
 
-        var result = handleWith(emitter,
-                mock(CrisisEventRepository.class), mock(ApplicationEventPublisher.class));
+        var result = handleWith(emitter, mock(CrisisEventRecorder.class));
 
         assertThat(result.delivered())
                 .as("사용자가 핫라인을 보지 못했다는 사실이 결과에 담겨야 한다")
@@ -84,14 +82,12 @@ class CrisisDeliveryTest {
         SseEmitter emitter = mock(SseEmitter.class);
         doThrow(new IllegalStateException("ResponseBodyEmitter has already completed"))
                 .when(emitter).send(any(SseEmitter.SseEventBuilder.class));
-        CrisisEventRepository repo = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        CrisisEventRecorder recorder = mock(CrisisEventRecorder.class);
 
-        var result = handleWith(emitter, repo, publisher);
+        var result = handleWith(emitter, recorder);
 
         assertThat(result.delivered()).isFalse();
-        verify(repo).save(any());
-        verify(publisher).publishEvent(any(CrisisDetectedEvent.class));
+        verify(recorder).record(any(), any(), anyInt(), anyString());
     }
 
     /**
@@ -101,8 +97,7 @@ class CrisisDeliveryTest {
     @Test
     @DisplayName("preview 는 handle 과 같은 severity·응답을 낸다")
     void previewMatchesHandle() {
-        CrisisFlowService service = new CrisisFlowService(
-                mock(CrisisEventRepository.class), mock(ApplicationEventPublisher.class));
+        CrisisFlowService service = new CrisisFlowService(mock(CrisisEventRecorder.class));
         User user = user();
 
         for (CrisisTrigger trigger : CrisisTrigger.values()) {
@@ -128,12 +123,10 @@ class CrisisDeliveryTest {
     void stillRecordsWhenDeliveryFails() throws IOException {
         SseEmitter emitter = mock(SseEmitter.class);
         doThrow(new IOException("broken pipe")).when(emitter).send(any(SseEmitter.SseEventBuilder.class));
-        CrisisEventRepository repo = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+        CrisisEventRecorder recorder = mock(CrisisEventRecorder.class);
 
-        handleWith(emitter, repo, publisher);
+        handleWith(emitter, recorder);
 
-        verify(repo).save(any());
-        verify(publisher).publishEvent(any(CrisisDetectedEvent.class));
+        verify(recorder).record(any(), any(), anyInt(), anyString());
     }
 }
