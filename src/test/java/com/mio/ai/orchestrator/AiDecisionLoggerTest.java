@@ -1,6 +1,9 @@
 package com.mio.ai.orchestrator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.LlmPricingProperties;
+import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.domain.AiPolicyDecision;
 import com.mio.ai.judge.OutputPreFilterResult;
@@ -30,7 +33,8 @@ import static org.mockito.Mockito.verify;
 class AiDecisionLoggerTest {
 
     private final AiPolicyDecisionRepository repository = mock(AiPolicyDecisionRepository.class);
-    private final AiDecisionLogger logger = new AiDecisionLogger(repository, new ObjectMapper());
+    private final AiDecisionLogger logger = new AiDecisionLogger(repository, new ObjectMapper(),
+            new LlmCostCalculator(new LlmPricingProperties()));
 
     @Test
     @DisplayName("정책 결정의 risk_level을 집계 컬럼에도 저장한다")
@@ -66,7 +70,8 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 false,
-                decision.crisisTrigger()
+                decision.crisisTrigger(),
+                null
         );
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
@@ -120,7 +125,8 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 false,
-                decision.crisisTrigger()
+                decision.crisisTrigger(),
+                null
         );
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
@@ -175,7 +181,8 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 false,
-                CrisisTrigger.OUTPUT_GUARD
+                CrisisTrigger.OUTPUT_GUARD,
+                null
         );
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
@@ -219,6 +226,7 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 true,
+                null,
                 null
         );
 
@@ -253,6 +261,7 @@ class AiDecisionLoggerTest {
                 false,
                 false,
                 false,
+                null,
                 null
         );
 
@@ -262,6 +271,101 @@ class AiDecisionLoggerTest {
         assertThat(captor.getValue().getTrace())
                 .contains("\"l0_resolved\":true")
                 .contains("\"safety_profile_degraded\":false");
+    }
+
+    @Test
+    @DisplayName("LLM을 호출하지 않은 턴은 모델·비용을 null로 남긴다 — 하드코딩된 gpt-4o/0.0이 아니다")
+    void logLeavesLlmFieldsNullWhenNoLlmCall() {
+        logAndCapture(new LlmCostCalculator(pricedProperties()), null);
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .as("호출하지 않은 모델을 사용한 것처럼 남기면 비용·모델 집계가 통째로 틀어진다")
+                .contains("\"llm_model\":null")
+                .contains("\"llm_usage_resolved\":null")
+                .contains("\"llm_prompt_tokens\":null")
+                .contains("\"llm_cost_usd\":null");
+    }
+
+    @Test
+    @DisplayName("사용량을 받은 턴은 실제 토큰·비용을 남긴다")
+    void logWritesResolvedUsageAndCost() {
+        logAndCapture(new LlmCostCalculator(pricedProperties()),
+                LlmUsage.of("gpt-4o-mini", 1000, 500));
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        // 0.15*1000/1e6 + 0.60*500/1e6 = 0.00015 + 0.0003 = 0.000450
+        assertThat(captor.getValue().getTrace())
+                .contains("\"llm_model\":\"gpt-4o-mini\"")
+                .contains("\"llm_usage_resolved\":true")
+                .contains("\"llm_prompt_tokens\":1000")
+                .contains("\"llm_completion_tokens\":500")
+                .contains("\"llm_cost_usd\":0.00045");
+    }
+
+    @Test
+    @DisplayName("사용량을 못 받으면 토큰·비용은 0이 아니라 null, 모델은 남는다")
+    void logDistinguishesUnresolvedUsageFromZero() {
+        logAndCapture(new LlmCostCalculator(pricedProperties()),
+                LlmUsage.unresolved("gpt-4o-mini"));
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .as("0으로 남기면 '안 썼다'와 '모른다'가 같은 값이 된다")
+                .contains("\"llm_model\":\"gpt-4o-mini\"")
+                .contains("\"llm_usage_resolved\":false")
+                .contains("\"llm_prompt_tokens\":null")
+                .contains("\"llm_cost_usd\":null");
+    }
+
+    @Test
+    @DisplayName("단가 미등록 모델은 비용을 0이 아니라 null로 남긴다")
+    void logLeavesCostNullForUnpricedModel() {
+        logAndCapture(new LlmCostCalculator(new LlmPricingProperties()),
+                LlmUsage.of("gpt-4o-mini", 1000, 500));
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .contains("\"llm_prompt_tokens\":1000")
+                .contains("\"llm_cost_usd\":null");
+    }
+
+    private void logAndCapture(LlmCostCalculator calculator, LlmUsage usage) {
+        new AiDecisionLogger(repository, new ObjectMapper(), calculator).log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                generateDecision("pd_llm"),
+                ModerationResult.clear(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                false,
+                null,
+                null,
+                "default",
+                false,
+                false,
+                false,
+                null,
+                usage
+        );
+    }
+
+    private LlmPricingProperties pricedProperties() {
+        LlmPricingProperties properties = new LlmPricingProperties();
+        properties.setModels(Map.of("gpt-4o-mini", new LlmPricingProperties.ModelPrice(
+                new java.math.BigDecimal("0.15"), new java.math.BigDecimal("0.60"))));
+        return properties;
     }
 
     private PolicyDecision generateDecision(String decisionId) {

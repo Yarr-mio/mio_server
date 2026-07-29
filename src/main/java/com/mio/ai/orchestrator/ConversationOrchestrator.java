@@ -24,6 +24,8 @@ import com.mio.ai.judge.OutputPreFilter;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
+import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.memory.working.WorkingMessage;
@@ -231,6 +233,9 @@ public class ConversationOrchestrator {
             // 7. Execute based on decision
             String assistantContent;
             long llmTtftMs = 0;
+            // LLM 을 호출하지 않은 턴(보안 거절·위기·폴백)에서는 null 로 남는다.
+            // 호출하지 않았다는 사실 자체가 기록돼야 하므로 빈 사용량으로 채우지 않는다.
+            LlmUsage llmUsage = null;
             boolean crisisFlowTriggered = false;
             // 실제로 위기 플로우를 발동시킨 경로. PolicyDecision 이 아니라 실행 결과를 따라간다 —
             // 출력 가드가 승격시킨 위기는 decision.action() 이 GENERATE 라 결정에 경로가 없다.
@@ -282,7 +287,10 @@ public class ConversationOrchestrator {
 
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
-                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, contentBuilder::append));
+                    LlmStreamResult streamResult =
+                            llmClient.stream(llmRequest, withHeartbeat(turn, contentBuilder::append));
+                    llmTtftMs = streamResult.ttftMs();
+                    llmUsage = streamResult.usage();
                     assistantContent = contentBuilder.toString();
 
                     preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
@@ -317,7 +325,7 @@ public class ConversationOrchestrator {
                     AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
                     AtomicReference<String> capturedSnapshotRef = new AtomicReference<>();
 
-                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
+                    LlmStreamResult streamResult = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
                         if (!stopSendingDeltas.get()) {
                             int currentLen = contentBuilder.length();
@@ -346,6 +354,8 @@ public class ConversationOrchestrator {
                             }
                         }
                     }));
+                    llmTtftMs = streamResult.ttftMs();
+                    llmUsage = streamResult.usage();
 
                     assistantContent = contentBuilder.toString();
 
@@ -440,7 +450,7 @@ public class ConversationOrchestrator {
 
                 } else {
                     // SPECULATIVE: stream immediately, no post-guard
-                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
+                    LlmStreamResult streamResult = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
                         try {
                             sendEvent(emitter, new SseEventDto.DeltaEvent(chunk, outboundMsgId));
@@ -448,6 +458,8 @@ public class ConversationOrchestrator {
                             throw new RuntimeException(e);
                         }
                     }));
+                    llmTtftMs = streamResult.ttftMs();
+                    llmUsage = streamResult.usage();
                     assistantContent = contentBuilder.toString();
                     sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                             userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
@@ -481,7 +493,7 @@ public class ConversationOrchestrator {
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
-                    profile.degraded(), appliedCrisisTrigger);
+                    profile.degraded(), appliedCrisisTrigger, llmUsage);
 
             emitter.complete();
 

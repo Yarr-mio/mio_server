@@ -1,6 +1,9 @@
 package com.mio.ai.qa;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.LlmPricingProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.memory.consolidation.ExtractorLlmClient;
 import com.mio.ai.memory.consolidation.ExtractorResult;
@@ -51,7 +54,8 @@ class ExtractorEpisodeTypeQaTest {
                 "OPENAI_API_KEY 미설정 또는 placeholder — LLM 통합 테스트 skip"
         );
         extractor = new ExtractorLlmClient(
-                new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper()),
+                new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
                 new ObjectMapper()
         );
     }

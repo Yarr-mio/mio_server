@@ -2,10 +2,12 @@ package com.mio.ai.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -15,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -28,25 +31,43 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private static final String DONE_MARKER = "data: [DONE]";
     private static final String DATA_PREFIX = "data: ";
 
+    private static final String REQUESTS_METRIC = "mio.llm.requests";
+    private static final String USAGE_METRIC = "mio.llm.usage";
+    private static final String TOKENS_METRIC = "mio.llm.tokens";
+    private static final String COST_METRIC = "mio.llm.cost.usd";
+    private static final String UNPRICED_METRIC = "mio.llm.cost.unpriced";
+
+    private static final String MODE_STREAM = "stream";
+    private static final String MODE_COMPLETE_TEXT = "complete_text";
+    private static final String MODE_COMPLETE_JSON = "complete_json";
+    private static final String MODE_EMBED = "embed";
+
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    private final LlmCostCalculator costCalculator;
 
     public OpenAiLlmClient(
             @Value("${openai.api-key}") String apiKey,
             HttpClient httpClient,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            MeterRegistry meterRegistry,
+            LlmCostCalculator costCalculator) {
         this.apiKey = apiKey;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
+        this.costCalculator = costCalculator;
     }
 
     private static final int MAX_RETRIES = 4;
 
     @Override
-    public long stream(LlmRequest request, Consumer<String> chunkHandler) {
+    public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
         long startMs = System.currentTimeMillis();
         AtomicLong ttft = new AtomicLong(0);
+        AtomicReference<LlmUsage> usage = new AtomicReference<>();
 
         int attempt = 0;
         while (true) {
@@ -69,6 +90,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                 if (response.statusCode() == 429) {
                     response.body().close();
                     if (attempt >= MAX_RETRIES) {
+                        recordOutcome(request.model(), MODE_STREAM, "rate_limited");
                         throw new RuntimeException("OpenAI API error: 429 (rate limited, max retries exceeded)");
                     }
                     long delayMs = streamRetryDelayMs(response, attempt);
@@ -76,12 +98,16 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                             delayMs, attempt + 1, MAX_RETRIES + 1);
                     Thread.sleep(delayMs);
                     attempt++;
+                    // 재시도는 앞선 시도의 결과를 버린다. 리셋하지 않으면 실패한 시도의
+                    // 사용량이 남아 최종 결과에 섞이거나 중복 집계된다.
                     ttft.set(0);
+                    usage.set(null);
                     continue;
                 }
 
                 if (response.statusCode() != 200) {
                     response.body().close();
+                    recordOutcome(request.model(), MODE_STREAM, "error");
                     throw new RuntimeException("OpenAI API error: " + response.statusCode());
                 }
 
@@ -89,8 +115,16 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     lines.filter(line -> line.startsWith(DATA_PREFIX))
                             .takeWhile(line -> !line.equals(DONE_MARKER))
                             .forEach(line -> {
-                                String json = line.substring(DATA_PREFIX.length());
-                                String content = extractDeltaContent(json);
+                                JsonNode chunk = readChunk(line.substring(DATA_PREFIX.length()));
+                                if (chunk == null) {
+                                    return;
+                                }
+                                // include_usage 를 켜면 마지막 청크가 choices=[] + usage 로 온다.
+                                LlmUsage chunkUsage = extractUsage(chunk, request.model());
+                                if (chunkUsage != null) {
+                                    usage.set(chunkUsage);
+                                }
+                                String content = extractDeltaContent(chunk);
                                 if (content != null && !content.isEmpty()) {
                                     if (ttft.get() == 0) {
                                         ttft.set(System.currentTimeMillis() - startMs);
@@ -103,16 +137,25 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                recordOutcome(request.model(), MODE_STREAM, "interrupted");
                 throw new RuntimeException("LLM streaming request interrupted", e);
             } catch (RuntimeException e) {
                 throw e;
             } catch (Exception e) {
                 log.error("LLM streaming error: {}", e.getMessage());
+                recordOutcome(request.model(), MODE_STREAM, "error");
                 throw new RuntimeException("LLM streaming failed", e);
             }
         }
 
-        return ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
+        recordOutcome(request.model(), MODE_STREAM, "success");
+        LlmUsage resolved = usage.get() != null
+                ? usage.get()
+                : LlmUsage.unresolved(request.model());
+        recordUsage(MODE_STREAM, resolved);
+
+        long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
+        return new LlmStreamResult(ttftMs, resolved);
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
@@ -137,6 +180,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         body.put("model", request.model());
         body.put("messages", messages);
         body.put("stream", true);
+        // 이걸 켜지 않으면 스트리밍 응답에는 usage 가 아예 오지 않는다.
+        body.put("stream_options", Map.of("include_usage", true));
 
         return objectMapper.writeValueAsString(body);
     }
@@ -152,6 +197,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     }
 
     private String complete(LlmRequest request, boolean jsonResponse) {
+        String mode = jsonResponse ? MODE_COMPLETE_JSON : MODE_COMPLETE_TEXT;
         try {
             String requestBody = buildNonStreamingRequestBody(request, jsonResponse);
 
@@ -169,17 +215,28 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             );
 
             if (response.statusCode() != 200) {
+                recordOutcome(request.model(), mode, "error");
                 throw new RuntimeException("OpenAI API error: " + response.statusCode());
             }
 
             JsonNode root = objectMapper.readTree(response.body());
+            // 비스트리밍 응답에는 usage 가 항상 실려 오는데 지금까지 읽지 않고 버렸다.
+            // 호출부가 12곳이라 반환 타입은 그대로 두고 메트릭으로만 남긴다.
+            LlmUsage usage = extractUsage(root, request.model());
+            recordOutcome(request.model(), mode, "success");
+            recordUsage(mode, usage != null ? usage : LlmUsage.unresolved(request.model()));
+
             return root.path("choices").path(0).path("message").path("content").asText();
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            recordOutcome(request.model(), mode, "interrupted");
             throw new RuntimeException("LLM complete request interrupted", e);
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             log.error("LLM complete error: {}", e.getMessage());
+            recordOutcome(request.model(), mode, "error");
             throw new RuntimeException("LLM complete failed", e);
         }
     }
@@ -220,37 +277,111 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
+                recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
                 throw new RuntimeException("OpenAI Embeddings API error: " + response.statusCode());
             }
 
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode embeddingNode = root.path("data").path(0).path("embedding");
             if (embeddingNode.isMissingNode() || !embeddingNode.isArray()) {
+                recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
                 throw new RuntimeException("Unexpected embeddings response structure: " + response.body());
             }
             float[] result = new float[embeddingNode.size()];
             for (int i = 0; i < result.length; i++) {
                 result[i] = (float) embeddingNode.get(i).asDouble();
             }
+
+            // 임베딩도 과금 대상이다. 빼면 mio.llm.cost.usd 가 실제 지출보다 낮게 나온다.
+            LlmUsage usage = extractUsage(root, EMBEDDING_MODEL);
+            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "success");
+            recordUsage(MODE_EMBED, usage != null ? usage : LlmUsage.unresolved(EMBEDDING_MODEL));
+
             return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "interrupted");
             throw new RuntimeException("Embeddings request interrupted", e);
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Embeddings API error: {}", e.getMessage());
+            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
             throw new RuntimeException("Embeddings request failed", e);
         }
     }
 
-    private String extractDeltaContent(String json) {
+    // ── usage 파싱·계측 ────────────────────────────────────────────
+
+    /**
+     * 응답(또는 스트리밍 청크)에서 usage 를 읽는다.
+     *
+     * <p>{@code usage} 가 없거나 null 이면 {@code null} 을 돌려준다 — 0 토큰짜리 사용량을
+     * 만들어내지 않는다. 스트리밍은 마지막 청크에만 usage 가 실려 오므로 중간 청크에서는
+     * 항상 {@code null} 이 나오는 게 정상이다.
+     *
+     * <p>모델 태그는 응답이 알려주는 실제 서빙 모델(예: {@code gpt-4o-2024-08-06})이 아니라
+     * <b>요청한 모델</b>을 쓴다. 날짜가 붙은 모델 ID 는 단가표 키와 어긋나고 태그 카디널리티만
+     * 늘린다.
+     */
+    private LlmUsage extractUsage(JsonNode root, String requestedModel) {
+        JsonNode usage = root.path("usage");
+        if (usage.isMissingNode() || usage.isNull()) {
+            return null;
+        }
+        JsonNode prompt = usage.path("prompt_tokens");
+        JsonNode completion = usage.path("completion_tokens");
+        if (!prompt.isNumber()) {
+            return null;
+        }
+        // 임베딩 응답에는 completion_tokens 가 없다. 출력 토큰이 실제로 0 인 경우다.
+        return LlmUsage.of(requestedModel, prompt.asLong(),
+                completion.isNumber() ? completion.asLong() : 0L);
+    }
+
+    private void recordOutcome(String model, String mode, String outcome) {
+        meterRegistry.counter(REQUESTS_METRIC, "model", model, "mode", mode, "outcome", outcome)
+                .increment();
+    }
+
+    private void recordUsage(String mode, LlmUsage usage) {
+        String model = usage.model();
+        if (!usage.resolved()) {
+            // "사용량을 못 받았다" 를 별도 값으로 남긴다. 토큰 0 으로 세면 조용히 과소 계상된다.
+            meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode, "outcome", "missing")
+                    .increment();
+            return;
+        }
+
+        meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode, "outcome", "resolved")
+                .increment();
+        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode, "type", "prompt")
+                .increment(usage.promptTokens());
+        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode, "type", "completion")
+                .increment(usage.completionTokens());
+
+        BigDecimal cost = costCalculator.costUsd(usage);
+        if (cost == null) {
+            meterRegistry.counter(UNPRICED_METRIC, "model", model, "mode", mode).increment();
+            return;
+        }
+        meterRegistry.counter(COST_METRIC, "model", model, "mode", mode)
+                .increment(cost.doubleValue());
+    }
+
+    private JsonNode readChunk(String json) {
         try {
-            JsonNode root = objectMapper.readTree(json);
-            JsonNode delta = root.path("choices").path(0).path("delta");
-            JsonNode content = delta.path("content");
-            if (!content.isMissingNode() && !content.isNull()) {
-                return content.asText();
-            }
-        } catch (Exception ignored) {
+            return objectMapper.readTree(json);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String extractDeltaContent(JsonNode root) {
+        JsonNode delta = root.path("choices").path(0).path("delta");
+        JsonNode content = delta.path("content");
+        if (!content.isMissingNode() && !content.isNull()) {
+            return content.asText();
         }
         return null;
     }
