@@ -1,14 +1,12 @@
 package com.mio.ai.crisis;
 
 import com.mio.ai.safety.SafetyL1Result;
-import com.mio.crisis.domain.CrisisEvent;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.user.domain.User;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -19,6 +17,9 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -27,9 +28,9 @@ class CrisisFlowServiceTest {
     @Test
     @DisplayName("crisis done 이벤트에도 CBT emotion_score를 전달한다")
     void handle_sends_emotion_score_in_crisis_done_event() throws Exception {
-        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        CrisisEventRecorder crisisEventRecorder = mock(CrisisEventRecorder.class);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(true);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRecorder);
         SseEmitter emitter = mock(SseEmitter.class);
 
         User user = User.builder()
@@ -69,8 +70,7 @@ class CrisisFlowServiceTest {
         assertThat(doneEvent.emotionScore()).isEqualTo(18);
         assertThat(doneEvent.isCrisisFlagged()).isTrue();
         assertThat(doneEvent.finishedReason()).isEqualTo("crisis_flow");
-        verify(crisisEventRepository).save(any());
-        verify(eventPublisher).publishEvent(any(CrisisDetectedEvent.class));
+        verify(crisisEventRecorder).record(any(), any(), anyInt(), anyString());
     }
 
     /**
@@ -84,9 +84,9 @@ class CrisisFlowServiceTest {
     @Test
     @DisplayName("강등된 위기가 위기 플로우에 도달하면 severity 3과 핫라인을 보장한다")
     void unverifiedCrisisStillGetsSeverityThreeAndHotline() throws Exception {
-        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        CrisisEventRecorder crisisEventRecorder = mock(CrisisEventRecorder.class);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(true);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRecorder);
         SseEmitter emitter = mock(SseEmitter.class);
 
         User user = User.builder()
@@ -132,9 +132,9 @@ class CrisisFlowServiceTest {
         // 강등된 위기도 발단은 키워드 매칭이다. PolicyEngine 이 L1_KEYWORD 로 확정해 넘기므로
         // hardCrisis 값과 무관하게 keyword 로 기록되어야 한다 (이슈 #260 이전에는 역추론이라
         // 검증을 거쳐 확정된 위기가 moderation 으로 기록됐다).
-        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
-        verify(crisisEventRepository).save(persisted.capture());
-        assertThat(persisted.getValue().getTriggerType()).isEqualTo("keyword");
+        ArgumentCaptor<String> triggerType = ArgumentCaptor.forClass(String.class);
+        verify(crisisEventRecorder).record(any(), any(), anyInt(), triggerType.capture());
+        assertThat(triggerType.getValue()).isEqualTo("keyword");
     }
 
     /**
@@ -146,9 +146,9 @@ class CrisisFlowServiceTest {
     @Test
     @DisplayName("자해 질의 위기는 수단을 거절하면서 핫라인을 노출하고 기록된다")
     void selfHarmInquiryRefusesMeansAndStillConnectsHelp() throws Exception {
-        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        CrisisEventRecorder crisisEventRecorder = mock(CrisisEventRecorder.class);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(true);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRecorder);
         SseEmitter emitter = mock(SseEmitter.class);
 
         User user = User.builder()
@@ -196,11 +196,9 @@ class CrisisFlowServiceTest {
                 .as("거절만 하고 끝내지 않고 도움으로 연결한다")
                 .contains("전문가");
 
-        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
-        verify(crisisEventRepository).save(persisted.capture());
-        assertThat(persisted.getValue().getTriggerType()).isEqualTo("keyword");
-        assertThat(persisted.getValue().getSeverity()).isEqualTo(3);
-        verify(eventPublisher).publishEvent(any(CrisisDetectedEvent.class));
+        ArgumentCaptor<String> triggerType = ArgumentCaptor.forClass(String.class);
+        verify(crisisEventRecorder).record(any(), any(), anyInt(), triggerType.capture());
+        assertThat(triggerType.getValue()).isEqualTo("keyword");
     }
 
     /**
@@ -212,9 +210,9 @@ class CrisisFlowServiceTest {
     @Test
     @DisplayName("출력 가드가 잡은 위기는 pattern으로 기록된다")
     void outputGuardCrisisIsRecordedAsPattern() throws Exception {
-        CrisisEventRepository crisisEventRepository = mock(CrisisEventRepository.class);
-        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
-        CrisisFlowService service = new CrisisFlowService(crisisEventRepository, eventPublisher);
+        CrisisEventRecorder crisisEventRecorder = mock(CrisisEventRecorder.class);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(true);
+        CrisisFlowService service = new CrisisFlowService(crisisEventRecorder);
         SseEmitter emitter = mock(SseEmitter.class);
 
         User user = User.builder()
@@ -232,9 +230,9 @@ class CrisisFlowServiceTest {
         service.handle(SafetyL1Result.clear(), CrisisTrigger.OUTPUT_GUARD, "요즘 좀 지쳐요",
                 user, session, emitter, "msg_out_test", 40);
 
-        ArgumentCaptor<CrisisEvent> persisted = ArgumentCaptor.forClass(CrisisEvent.class);
-        verify(crisisEventRepository).save(persisted.capture());
-        assertThat(persisted.getValue().getTriggerType()).isEqualTo("pattern");
+        ArgumentCaptor<String> triggerType = ArgumentCaptor.forClass(String.class);
+        verify(crisisEventRecorder).record(any(), any(), anyInt(), triggerType.capture());
+        assertThat(triggerType.getValue()).isEqualTo("pattern");
     }
 
     private Set<ResponseBodyEmitter.DataWithMediaType> extractData(SseEmitter.SseEventBuilder builder) {

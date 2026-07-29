@@ -1,13 +1,11 @@
 package com.mio.ai.crisis;
 
 import com.mio.ai.safety.SafetyL1Result;
-import com.mio.crisis.domain.CrisisEvent;
 import com.mio.session.domain.Session;
 import com.mio.session.dto.SseEventDto;
 import com.mio.user.domain.User;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -19,8 +17,7 @@ import java.util.List;
 @Slf4j
 public class CrisisFlowService {
 
-    private final CrisisEventRepository crisisEventRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final CrisisEventRecorder crisisEventRecorder;
 
     private static final List<String> SEVERITY_3_KEYWORDS = List.of(
             "자살", "자해", "죽고싶다", "죽을거야", "목숨을끊", "자살하고싶", "자해하고싶"
@@ -88,11 +85,11 @@ public class CrisisFlowService {
                     session.getId(), severity, e);
         }
 
-        persistCrisisEvent(user, session, severity, triggerType);
-        // SafetyProfile 즉시 invalidate (§17.8)
-        eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
+        // 기록과 프로파일 갱신 알림은 recorder 가 맡는다. 저장에 성공한 경우에만 발행하며,
+        // 끝내 실패하면 안전 래치를 올려 다음 프로파일이 보수적으로 만들어지게 한다 (이슈 P0-B).
+        boolean recorded = crisisEventRecorder.record(user, session, severity, triggerType);
 
-        return new CrisisHandleResult(fixedResponse, severity, delivered);
+        return new CrisisHandleResult(fixedResponse, severity, delivered, recorded);
     }
 
     /**
@@ -175,30 +172,22 @@ public class CrisisFlowService {
         return new SseEventDto.CrisisEvent(severity, fixedResponse, null);
     }
 
-    private void persistCrisisEvent(User user, Session session, int severity, String triggerType) {
-        try {
-            CrisisEvent event = CrisisEvent.builder()
-                    .user(user)
-                    .session(session)
-                    .triggerType(triggerType)
-                    .severity(severity)
-                    .operatorReviewed(false)
-                    .build();
-            crisisEventRepository.save(event);
-        } catch (Exception e) {
-            log.error("Failed to persist crisis event", e);
-        }
-    }
 
     /**
      * @param delivered 위기 안내가 실제로 사용자에게 전송됐는지. {@code false} 면 기록은 남았지만
      *                  사용자는 핫라인을 보지 못했다 — 턴을 완료로 기록하면 안 된다.
      */
-    public record CrisisHandleResult(String fixedResponse, int severity, boolean delivered) {
+    public record CrisisHandleResult(
+            String fixedResponse, int severity, boolean delivered, boolean recorded) {
+
+        /** 기록 여부 개념 도입 이전 시그니처 — 기존 호출부 호환용. */
+        public CrisisHandleResult(String fixedResponse, int severity, boolean delivered) {
+            this(fixedResponse, severity, delivered, true);
+        }
 
         /** 전송 여부 개념 도입 이전 시그니처 — 기존 호출부 호환용. */
         public CrisisHandleResult(String fixedResponse, int severity) {
-            this(fixedResponse, severity, true);
+            this(fixedResponse, severity, true, true);
         }
     }
 }

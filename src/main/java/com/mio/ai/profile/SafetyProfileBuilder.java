@@ -2,6 +2,7 @@ package com.mio.ai.profile;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisDetectedEvent;
+import com.mio.ai.crisis.CrisisSafetyLatch;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -64,6 +65,7 @@ public class SafetyProfileBuilder {
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+    private final CrisisSafetyLatch crisisSafetyLatch;
 
     private final Executor profileBuildPool = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -221,9 +223,14 @@ public class SafetyProfileBuilder {
             //
             // outcomes·sessionMeta는 제외한다. 개입 힌트 품질과 personalized 라벨에만 영향을 주고
             // 위험 게이팅(riskPrior·force_judge·임계값)에는 들어가지 않는다.
+            //
+            // 안전 래치도 함께 본다 — crisis_events 저장이 끝내 실패한 위기가 있으면
+            // 조회는 성공해도 그 위기가 테이블에 없다. 래치가 그 사실을 알려준다 (이슈 P0-B).
+            boolean unrecordedCrisis = crisisSafetyLatch.isRaised(userUUID);
             boolean degraded = !crisisHistory.resolved()
                     || !beliefs.resolved()
-                    || !patterns.resolved();
+                    || !patterns.resolved()
+                    || unrecordedCrisis;
 
             // 근거가 없으면 default. 단 "없음"을 확인한 경우여야 한다.
             //
