@@ -7,6 +7,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -72,11 +73,11 @@ class CrisisEventRecorderTest {
     @Test
     @DisplayName("첫 시도에 성공하면 재시도 없이 이벤트를 발행한다")
     void recordsOnFirstAttempt() {
-        when(writer.write(any(), any(), anyInt(), anyString())).thenReturn(UUID.randomUUID());
+        when(writer.write(any(), any(), anyInt(), anyString(), any())).thenReturn(UUID.randomUUID());
 
         assertThat(record()).isTrue();
 
-        verify(writer).write(any(), any(), anyInt(), anyString());
+        verify(writer).write(any(), any(), anyInt(), anyString(), any());
         verify(publisher).publishEvent(any(CrisisDetectedEvent.class));
         assertThat(sleeps).isEmpty();
         assertThat(counter("recorded")).isEqualTo(1.0);
@@ -85,7 +86,7 @@ class CrisisEventRecorderTest {
     @Test
     @DisplayName("일시 실패는 재시도로 복구하고 성공으로 기록한다")
     void retriesTransientFailure() {
-        when(writer.write(any(), any(), anyInt(), anyString()))
+        when(writer.write(any(), any(), anyInt(), anyString(), any()))
                 .thenThrow(new RuntimeException("deadlock"))
                 .thenReturn(UUID.randomUUID());
 
@@ -104,13 +105,13 @@ class CrisisEventRecorderTest {
     @Test
     @DisplayName("저장에 끝내 실패하면 이벤트를 발행하지 않고 안전 래치를 올린다")
     void raisesLatchAndSkipsPublishWhenExhausted() {
-        when(writer.write(any(), any(), anyInt(), anyString()))
+        when(writer.write(any(), any(), anyInt(), anyString(), any()))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThat(record()).isFalse();
 
         verify(writer, org.mockito.Mockito.times(CrisisEventRecorder.MAX_ATTEMPTS))
-                .write(any(), any(), anyInt(), anyString());
+                .write(any(), any(), anyInt(), anyString(), any());
         verify(publisher, never()).publishEvent(any());
         verify(latch).raise(user.getId(), 3);
         assertThat(counter("failed")).isEqualTo(1.0);
@@ -119,7 +120,7 @@ class CrisisEventRecorderTest {
     @Test
     @DisplayName("재시도 대기는 지수적으로 늘고 지터가 섞인다")
     void backOffGrowsWithJitter() {
-        when(writer.write(any(), any(), anyInt(), anyString()))
+        when(writer.write(any(), any(), anyInt(), anyString(), any()))
                 .thenThrow(new RuntimeException("db down"));
 
         record();
@@ -133,24 +134,65 @@ class CrisisEventRecorderTest {
     }
 
     /**
-     * 기록에 성공하면 실제 이력이 생겼으므로 이전에 올려둔 래치는 의미가 없다.
-     * 남겨두면 그 사용자가 14일 내내 불필요하게 degraded 로 취급된다.
+     * 위기 A 저장이 실패해 래치가 올라간 뒤 별도 위기 B 가 정상 저장돼도, A 는 여전히
+     * crisis_events 에 없다. 여기서 래치를 내리면 누락된 A 를 잊게 되어 프로파일이 정상으로
+     * 돌아간다. 실제 복구가 구현되기 전까지는 TTL 로 만료되게 둔다.
      */
     @Test
-    @DisplayName("기록에 성공하면 이전 래치를 내린다")
-    void clearsLatchOnSuccess() {
-        when(writer.write(any(), any(), anyInt(), anyString())).thenReturn(UUID.randomUUID());
+    @DisplayName("다른 위기가 성공해도 이전 실패의 래치를 지우지 않는다")
+    void successDoesNotEraseEarlierFailureLatch() {
+        when(writer.write(any(), any(), anyInt(), anyString(), any())).thenReturn(UUID.randomUUID());
 
         record();
 
-        verify(latch).clear(user.getId());
+        // clear 메서드 자체를 없앴다. 래치는 TTL 로만 만료된다.
         verify(latch, never()).raise(any(), anyInt());
+    }
+
+    /**
+     * writer 는 REQUIRES_NEW 라 반환 시점에 이미 커밋됐다. 그 뒤 동기 리스너가 예외를 던질 때
+     * 재시도하면 같은 위기가 여러 건 저장되고, 마지막 시도가 실패하면 저장됐는데도 래치가 올라간다.
+     */
+    @Test
+    @DisplayName("저장 뒤 발행이 실패해도 재시도하거나 래치를 올리지 않는다")
+    void publishFailureDoesNotRetryOrRaiseLatch() {
+        when(writer.write(any(), any(), anyInt(), anyString(), any())).thenReturn(UUID.randomUUID());
+        org.mockito.Mockito.doThrow(new RuntimeException("listener blew up"))
+                .when(publisher).publishEvent(any(CrisisDetectedEvent.class));
+
+        assertThat(record())
+                .as("저장은 성공했으므로 기록 성공이다")
+                .isTrue();
+
+        verify(writer, org.mockito.Mockito.times(1))
+                .write(any(), any(), anyInt(), anyString(), any());
+        verify(latch, never()).raise(any(), anyInt());
+    }
+
+    /**
+     * 커밋은 성공했는데 응답이 유실된 경우, 재시도가 새 행을 만들면 같은 위기가 두 번 기록된다.
+     * 모든 시도가 같은 dedup 키를 써야 writer 가 기존 행을 재사용할 수 있다.
+     */
+    @Test
+    @DisplayName("재시도는 같은 dedup 키를 쓴다")
+    void retriesReuseSameDedupKey() {
+        when(writer.write(any(), any(), anyInt(), anyString(), any()))
+                .thenThrow(new RuntimeException("connection reset"))
+                .thenReturn(UUID.randomUUID());
+
+        record();
+
+        ArgumentCaptor<UUID> keys = ArgumentCaptor.forClass(UUID.class);
+        verify(writer, org.mockito.Mockito.times(2))
+                .write(any(), any(), anyInt(), anyString(), keys.capture());
+        assertThat(keys.getAllValues()).hasSize(2);
+        assertThat(keys.getAllValues().get(0)).isEqualTo(keys.getAllValues().get(1));
     }
 
     @Test
     @DisplayName("대기 중 인터럽트되면 즉시 중단하고 래치를 올린다")
     void stopsOnInterrupt() {
-        when(writer.write(any(), any(), anyInt(), anyString()))
+        when(writer.write(any(), any(), anyInt(), anyString(), any()))
                 .thenThrow(new RuntimeException("db down"));
         recorder = new CrisisEventRecorder(writer, latch, publisher, meterRegistry, millis -> {
             throw new InterruptedException("shutdown");
@@ -158,7 +200,7 @@ class CrisisEventRecorderTest {
 
         assertThat(record()).isFalse();
 
-        verify(writer, org.mockito.Mockito.times(1)).write(any(), any(), anyInt(), anyString());
+        verify(writer, org.mockito.Mockito.times(1)).write(any(), any(), anyInt(), anyString(), any());
         verify(latch).raise(user.getId(), 3);
         assertThat(Thread.interrupted()).as("인터럽트 상태를 복원해야 한다").isTrue();
     }

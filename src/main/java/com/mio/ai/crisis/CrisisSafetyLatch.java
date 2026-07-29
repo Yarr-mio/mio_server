@@ -49,25 +49,19 @@ public class CrisisSafetyLatch {
     /**
      * 기록하지 못한 위기가 있는지.
      *
-     * <p>조회 실패는 {@code false} 가 아니라 예외로 다루지 않고 {@code false} 로 반환한다 —
-     * 이 값은 프로파일을 <b>보수적으로</b> 만드는 방향으로만 쓰이고, 호출부가 이미 조회 실패를
-     * 별도로 degraded 처리하기 때문이다.
+     * <p><b>조회에 실패하면 {@code true} 를 반환한다.</b> 이 래치 자체가 유실된 위기를 보완하는
+     * 안전 신호다. 확인하지 못했는데 {@code false} 를 돌려주면, 과거에 기록 실패가 있었더라도
+     * 프로파일이 정상으로 돌아간다 — 이 작업이 없애려는 "모른다를 괜찮다로" 그 자체다.
+     *
+     * <p>대가는 Redis 장애 중 모든 사용자가 보수적 프로파일이 되는 것이다. 지연·비용은 늘지만
+     * 방향은 안전 쪽이다.
      */
     public boolean isRaised(UUID userId) {
         try {
             return Boolean.TRUE.equals(redisTemplate.hasKey(KEY.formatted(userId)));
         } catch (Exception e) {
-            log.warn("Crisis safety latch check failed: userId={}", userId, e);
-            return false;
-        }
-    }
-
-    /** 위기가 정상 기록되면 래치를 내린다. */
-    public void clear(UUID userId) {
-        try {
-            redisTemplate.delete(KEY.formatted(userId));
-        } catch (Exception e) {
-            log.warn("Crisis safety latch could not be cleared: userId={}", userId, e);
+            log.warn("Crisis safety latch check failed, assuming raised: userId={}", userId, e);
+            return true;
         }
     }
 }

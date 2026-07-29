@@ -71,20 +71,38 @@ public class CrisisEventRecorder {
      * @return 기록에 성공했는지
      */
     public boolean record(User user, Session session, int severity, String triggerType) {
+        // 논리 이벤트마다 한 번만 만든다. 재시도가 같은 키로 들어가야 중복 행이 안 생긴다.
+        UUID dedupKey = UUID.randomUUID();
+
+        if (!persistWithRetry(user, session, severity, triggerType, dedupKey)) {
+            onExhausted(user, severity);
+            return false;
+        }
+
+        // 여기서부터는 저장이 확정된 뒤다. 발행이나 지표에서 예외가 나도 재시도하면 안 된다 —
+        // 이미 커밋된 이벤트를 한 번 더 쓰게 되고, 마지막 시도가 실패하면 저장됐는데도 래치가
+        // 올라간다. 재시도 범위를 저장으로 한정한 이유다.
+        afterRecorded(user, session, severity);
+        return true;
+    }
+
+    /** @return 저장에 성공했는지. 저장 외의 작업은 이 루프에 넣지 않는다. */
+    private boolean persistWithRetry(User user, Session session, int severity,
+                                     String triggerType, UUID dedupKey) {
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                writer.write(user, session, severity, triggerType);
-                onRecorded(user, session, severity);
+                writer.write(user, session, severity, triggerType, dedupKey);
                 return true;
             } catch (Exception e) {
                 if (attempt == MAX_ATTEMPTS) {
-                    onExhausted(user, severity, e);
+                    log.error("Crisis event write failed after {} attempts: userId={} severity={}",
+                            MAX_ATTEMPTS, user.getId(), severity, e);
                     return false;
                 }
                 log.warn("Crisis event write failed (attempt {}/{}), retrying: userId={}",
                         attempt, MAX_ATTEMPTS, user.getId(), e);
                 if (!backOff(attempt)) {
-                    onExhausted(user, severity, e);
+                    log.error("Crisis event write interrupted: userId={}", user.getId(), e);
                     return false;
                 }
             }
@@ -92,18 +110,25 @@ public class CrisisEventRecorder {
         return false;
     }
 
-    private void onRecorded(User user, Session session, int severity) {
-        meterRegistry.counter(METRIC, "outcome", "recorded").increment();
-        // 이전에 기록하지 못한 위기가 있었다면 이제 실제 이력이 생겼으므로 래치를 내린다.
-        safetyLatch.clear(user.getId());
-        // 저장이 커밋된 뒤에만 발행한다 (writer 가 REQUIRES_NEW 라 반환 시점에 이미 커밋됐다).
-        eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
+    /**
+     * 저장이 확정된 뒤의 후속 작업. 실패해도 저장을 되돌리지 않고 로그만 남긴다.
+     *
+     * <p>래치는 건드리지 않는다. 이 위기가 저장됐다는 사실이 <b>다른</b> 위기가 유실됐다는
+     * 사실을 지우지는 못한다. 유실된 이벤트가 실제로 복구되기 전까지는 TTL 로 만료되게 둔다.
+     */
+    private void afterRecorded(User user, Session session, int severity) {
+        try {
+            meterRegistry.counter(METRIC, "outcome", "recorded").increment();
+            // writer 가 REQUIRES_NEW 라 반환 시점에 이미 커밋됐다.
+            eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
+        } catch (Exception e) {
+            log.error("Crisis event was saved but follow-up failed: userId={} severity={}",
+                    user.getId(), severity, e);
+        }
     }
 
-    private void onExhausted(User user, int severity, Exception cause) {
+    private void onExhausted(User user, int severity) {
         meterRegistry.counter(METRIC, "outcome", "failed").increment();
-        log.error("Crisis event could not be recorded after {} attempts: userId={} severity={}",
-                MAX_ATTEMPTS, user.getId(), severity, cause);
         // 기록은 실패했지만 위기가 있었다는 사실까지 잃을 수는 없다. 다른 저장소에 표시해
         // 다음 프로파일이 보수적으로 만들어지게 한다.
         safetyLatch.raise(user.getId(), severity);

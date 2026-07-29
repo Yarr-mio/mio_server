@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -29,11 +30,20 @@ class CrisisEventWriter {
 
     private final CrisisEventRepository crisisEventRepository;
 
+    /**
+     * @param dedupKey 논리 이벤트의 안정 키. 재시도가 같은 키로 들어오면 새로 만들지 않고
+     *                 기존 행을 돌려준다 — 커밋은 성공했지만 응답이 유실된 경우를 위해서다.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public UUID write(User user, Session session, int severity, String triggerType) {
+    public UUID write(User user, Session session, int severity, String triggerType, UUID dedupKey) {
+        Optional<CrisisEvent> existing = crisisEventRepository.findByDedupKey(dedupKey);
+        if (existing.isPresent()) {
+            return existing.get().getId();
+        }
         CrisisEvent event = CrisisEvent.builder()
                 .user(user)
                 .session(session)
+                .dedupKey(dedupKey)
                 .triggerType(triggerType)
                 .severity(severity)
                 .operatorReviewed(false)
