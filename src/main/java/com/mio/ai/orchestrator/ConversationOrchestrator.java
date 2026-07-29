@@ -149,7 +149,7 @@ public class ConversationOrchestrator {
 
             // 같은 Idempotency-Key 로 이미 완료된 턴이 있으면 저장된 응답을 재생한다.
             // LLM 을 다시 호출하지 않으므로 재시도가 비용을 늘리지 않는다 (이슈 P0-A).
-            if (replayCompletedTurn(userId, idempotencyKey, outboundMsgId, emitter)) {
+            if (replayCompletedTurn(sessionId, idempotencyKey, outboundMsgId, emitter)) {
                 emitter.complete();
                 return;
             }
@@ -603,13 +603,13 @@ public class ConversationOrchestrator {
      * <p>재생 실패는 삼킨다 — 재생하지 못하면 새로 생성하는 편이 낫지, 요청 전체를 실패시킬
      * 이유가 없다.
      */
-    private boolean replayCompletedTurn(UUID userId, String idempotencyKey,
+    private boolean replayCompletedTurn(UUID sessionId, String idempotencyKey,
                                         String outboundMsgId, SseEmitter emitter) {
         if (idempotencyKey == null) {
             return false;
         }
         try {
-            MessageTurn completed = messagePersistenceService.findTurn(userId, idempotencyKey)
+            MessageTurn completed = messagePersistenceService.findTurn(sessionId, idempotencyKey)
                     .filter(t -> t.getStatus() == TurnStatus.COMPLETED)
                     .orElse(null);
             if (completed == null) {

@@ -188,7 +188,7 @@ public class SessionService {
         checkMessageRateLimit(userId);
         Session session = findSession(sessionId);
         validateSessionOwner(session, userId);
-        rejectIfTurnInFlight(userId, idempotencyKey);
+        rejectIfTurnInFlight(sessionId, idempotencyKey);
     }
 
     /**
@@ -203,11 +203,11 @@ public class SessionService {
      *   <li>실패·버려짐 — 같은 턴을 재개하므로 통과시킨다</li>
      * </ul>
      */
-    private void rejectIfTurnInFlight(UUID userId, String idempotencyKey) {
+    private void rejectIfTurnInFlight(UUID sessionId, String idempotencyKey) {
         if (idempotencyKey == null) {
             return;
         }
-        sessionMessagePersistenceService.findTurn(userId, idempotencyKey)
+        sessionMessagePersistenceService.findTurn(sessionId, idempotencyKey)
                 .filter(turn -> turn.getStatus() == TurnStatus.GENERATING)
                 .filter(turn -> turn.getUpdatedAt().isAfter(
                         OffsetDateTime.now(ZoneOffset.UTC).minus(IN_FLIGHT_TURN_WINDOW)))

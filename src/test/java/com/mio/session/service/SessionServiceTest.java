@@ -314,7 +314,7 @@ class SessionServiceTest {
     @DisplayName("validateMessageRequest: 진행 중인 턴이 있으면 DUPLICATE_REQUEST")
     void validateMessageRequest_turnInFlight_throws() {
         UUID sessionId = stubValidSession();
-        when(sessionMessagePersistenceService.findTurn(userId, "key-1"))
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
                 .thenReturn(Optional.of(turnWith(TurnStatus.GENERATING, OffsetDateTime.now(ZoneOffset.UTC))));
 
         assertThatThrownBy(() -> sessionService.validateMessageRequest(userId, sessionId, "key-1"))
@@ -327,7 +327,7 @@ class SessionServiceTest {
     @DisplayName("validateMessageRequest: 완료된 턴은 통과시킨다 — 저장된 응답을 재생해야 한다")
     void validateMessageRequest_completedTurn_passes() {
         UUID sessionId = stubValidSession();
-        when(sessionMessagePersistenceService.findTurn(userId, "key-1"))
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
                 .thenReturn(Optional.of(turnWith(TurnStatus.COMPLETED, OffsetDateTime.now(ZoneOffset.UTC))));
 
         sessionService.validateMessageRequest(userId, sessionId, "key-1");
@@ -337,7 +337,7 @@ class SessionServiceTest {
     @DisplayName("validateMessageRequest: 실패한 턴은 통과시킨다 — 같은 턴을 재개해야 한다")
     void validateMessageRequest_failedTurn_passes() {
         UUID sessionId = stubValidSession();
-        when(sessionMessagePersistenceService.findTurn(userId, "key-1"))
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
                 .thenReturn(Optional.of(turnWith(TurnStatus.FAILED, OffsetDateTime.now(ZoneOffset.UTC))));
 
         sessionService.validateMessageRequest(userId, sessionId, "key-1");
@@ -352,7 +352,7 @@ class SessionServiceTest {
     void validateMessageRequest_staleGeneratingTurn_passes() {
         UUID sessionId = stubValidSession();
         OffsetDateTime stale = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5);
-        when(sessionMessagePersistenceService.findTurn(userId, "key-1"))
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
                 .thenReturn(Optional.of(turnWith(TurnStatus.GENERATING, stale)));
 
         sessionService.validateMessageRequest(userId, sessionId, "key-1");

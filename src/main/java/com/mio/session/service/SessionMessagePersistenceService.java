@@ -71,7 +71,7 @@ public class SessionMessagePersistenceService {
         // 있으므로 다시 저장하면 같은 말이 대화 기록에 두 번 남는다.
         if (idempotencyKey != null) {
             Optional<MessageTurn> existing =
-                    messageTurnRepository.findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
+                    messageTurnRepository.findBySession_IdAndIdempotencyKey(sessionId, idempotencyKey);
             if (existing.isPresent()) {
                 MessageTurn turn = existing.get();
                 // 완료된 턴은 재생 대상이지 재개 대상이 아니다. 재생이 실패해 여기까지 흘러온
@@ -206,13 +206,17 @@ public class SessionMessagePersistenceService {
         }
     }
 
-    /** 같은 Idempotency-Key 재시도 시 기존 턴을 찾는다. */
+    /**
+     * 같은 세션에서 같은 Idempotency-Key 로 재시도한 턴을 찾는다.
+     *
+     * <p>세션 범위인 이유는 {@code MessageTurnRepository.findBySession_IdAndIdempotencyKey} 참조.
+     */
     @Transactional(readOnly = true)
-    public Optional<MessageTurn> findTurn(UUID userId, String idempotencyKey) {
+    public Optional<MessageTurn> findTurn(UUID sessionId, String idempotencyKey) {
         if (idempotencyKey == null) {
             return Optional.empty();
         }
-        return messageTurnRepository.findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
+        return messageTurnRepository.findBySession_IdAndIdempotencyKey(sessionId, idempotencyKey);
     }
 
     /** 완료된 턴의 응답 원문을 복호화해 돌려준다 — 재시도 재생용. */

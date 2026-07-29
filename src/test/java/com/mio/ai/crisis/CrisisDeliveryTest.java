@@ -74,6 +74,52 @@ class CrisisDeliveryTest {
     }
 
     /**
+     * emitter 가 이미 완료된 뒤 send 하면 IOException 이 아니라 IllegalStateException 이 난다.
+     * IOException 만 잡으면 그 예외가 밖으로 나가 crisis_events 기록과 프로파일 갱신이 통째로
+     * 건너뛰어진다 — 위기 사실 자체가 사라진다.
+     */
+    @Test
+    @DisplayName("IOException 이 아닌 송신 실패에도 위기 기록은 남는다")
+    void recordsEvenWhenSendThrowsUnchecked() throws IOException {
+        SseEmitter emitter = mock(SseEmitter.class);
+        doThrow(new IllegalStateException("ResponseBodyEmitter has already completed"))
+                .when(emitter).send(any(SseEmitter.SseEventBuilder.class));
+        CrisisEventRepository repo = mock(CrisisEventRepository.class);
+        ApplicationEventPublisher publisher = mock(ApplicationEventPublisher.class);
+
+        var result = handleWith(emitter, repo, publisher);
+
+        assertThat(result.delivered()).isFalse();
+        verify(repo).save(any());
+        verify(publisher).publishEvent(any(CrisisDetectedEvent.class));
+    }
+
+    /**
+     * 결말을 전송보다 먼저 저장하려면 오케스트레이터가 severity·고정 응답을 미리 알아야 한다.
+     * preview 와 handle 이 다른 값을 내면 저장된 것과 전송된 것이 어긋난다.
+     */
+    @Test
+    @DisplayName("preview 는 handle 과 같은 severity·응답을 낸다")
+    void previewMatchesHandle() {
+        CrisisFlowService service = new CrisisFlowService(
+                mock(CrisisEventRepository.class), mock(ApplicationEventPublisher.class));
+        User user = user();
+
+        for (CrisisTrigger trigger : CrisisTrigger.values()) {
+            var preview = service.preview(SafetyL1Result.clear(), trigger, "죽고싶다");
+            var handled = service.handle(SafetyL1Result.clear(), trigger, "죽고싶다",
+                    user, session(user), mock(SseEmitter.class), "msg_out_test", 20);
+
+            assertThat(preview.severity())
+                    .as("trigger=%s severity 불일치", trigger)
+                    .isEqualTo(handled.severity());
+            assertThat(preview.fixedResponse())
+                    .as("trigger=%s 응답 불일치", trigger)
+                    .isEqualTo(handled.fixedResponse());
+        }
+    }
+
+    /**
      * 전송에 실패해도 기록과 프로파일 갱신은 진행되어야 한다. 사용자가 위기 상태였다는 사실은
      * 전달 실패와 무관하게 참이고, 다음 세션의 보호 근거가 된다.
      */

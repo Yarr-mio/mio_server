@@ -65,10 +65,14 @@ CREATE TABLE message_turns (
         CHECK (crisis_severity IS NULL OR crisis_severity BETWEEN 1 AND 3)
 );
 
--- 같은 사용자가 같은 키로 두 번 요청하면 INSERT 가 실패한다. Redis SETNX 와 달리
+-- 같은 세션에서 같은 키로 두 번 요청하면 INSERT 가 실패한다. Redis SETNX 와 달리
 -- 내구성이 있고, 중복 판정과 턴 생성이 한 번의 원자적 연산으로 끝난다.
-CREATE UNIQUE INDEX uq_message_turns_user_idempotency
-    ON message_turns (user_id, idempotency_key)
+--
+-- 범위가 사용자가 아니라 세션인 이유: Idempotency-Key 는 엔드포인트 호출 단위이고 이
+-- 엔드포인트는 /sessions/{sessionId}/messages 다. (user, key) 로 잡으면 다른 세션에서 같은
+-- 키를 재사용했을 때 이전 세션의 턴을 재개하고, 생성된 응답이 그 세션에 저장된다.
+CREATE UNIQUE INDEX uq_message_turns_session_idempotency
+    ON message_turns (session_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
 -- 세션별 최근 턴 조회 (진행 중 턴 확인, 운영 조사)

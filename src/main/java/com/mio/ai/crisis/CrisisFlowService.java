@@ -78,7 +78,11 @@ public class CrisisFlowService {
             emitter.send(SseEmitter.event()
                     .name(doneEvent.eventName())
                     .data(doneEvent));
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // IOException 만 잡으면 안 된다. emitter 가 이미 완료된 상태에서 send 하면
+            // IllegalStateException 이 나고, 그게 밖으로 나가면 아래 crisis_events 기록과
+            // 프로파일 갱신이 통째로 건너뛰어진다. 사용자가 위기 상태였다는 사실은 전달 실패와
+            // 무관하게 참이고 다음 세션의 보호 근거다.
             delivered = false;
             log.error("Crisis response was NOT delivered to the user: sessionId={} severity={}",
                     session.getId(), severity, e);

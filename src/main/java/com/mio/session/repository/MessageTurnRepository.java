@@ -14,8 +14,14 @@ import java.util.UUID;
 
 public interface MessageTurnRepository extends JpaRepository<MessageTurn, UUID> {
 
-    /** 같은 Idempotency-Key 재시도 시 기존 턴을 찾는다. */
-    Optional<MessageTurn> findByUser_IdAndIdempotencyKey(UUID userId, String idempotencyKey);
+    /**
+     * 같은 세션에서 같은 Idempotency-Key 로 재시도한 턴을 찾는다.
+     *
+     * <p>사용자가 아니라 <b>세션</b>으로 범위를 잡는다. Idempotency-Key 는 엔드포인트 호출
+     * 단위이고 이 엔드포인트는 세션에 속한다. 사용자 단위로 잡으면 다른 세션에서 같은 키를
+     * 재사용했을 때 이전 세션의 턴을 재개하고, 생성된 응답이 그 세션에 저장된다.
+     */
+    Optional<MessageTurn> findBySession_IdAndIdempotencyKey(UUID sessionId, String idempotencyKey);
 
     /**
      * 응답을 만들지 못한 채 오래 남은 턴. 프로세스가 죽어 터미널 상태를 못 남긴 경우다.
