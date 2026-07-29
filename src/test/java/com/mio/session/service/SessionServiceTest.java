@@ -6,8 +6,10 @@ import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.common.error.BusinessException;
 import org.springframework.context.ApplicationEventPublisher;
 import com.mio.common.error.ErrorCode;
+import com.mio.session.domain.MessageTurn;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
+import com.mio.session.domain.TurnStatus;
 import com.mio.session.dto.ActiveSessionResponse;
 import com.mio.session.dto.CreateSessionRequest;
 import com.mio.session.dto.EmotionScoreRequest;
@@ -31,6 +33,8 @@ import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,6 +46,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -252,7 +257,22 @@ class SessionServiceTest {
 
         sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, null);
 
-        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter);
+        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, null);
+    }
+
+    /**
+     * 턴을 Idempotency-Key 로 역참조하려면 키가 오케스트레이터까지 내려가야 한다.
+     * 이전에는 {@code streamMessage} 가 키를 인자로 받고도 쓰지 않고 버렸다 (이슈 P0-A).
+     */
+    @Test
+    @DisplayName("streamMessage는 Idempotency-Key를 오케스트레이터로 전달한다")
+    void streamMessage_passesIdempotencyKey() {
+        UUID sessionId = UUID.randomUUID();
+        SseEmitter emitter = mock(SseEmitter.class);
+
+        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, "key-1");
+
+        verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, "key-1");
     }
 
     @Test
@@ -270,34 +290,82 @@ class SessionServiceTest {
                         .isEqualTo(ErrorCode.RATE_LIMIT_EXCEEDED));
     }
 
-    @Test
-    @DisplayName("validateMessageRequest: 중복 Idempotency-Key 시 DUPLICATE_REQUEST 예외가 발생한다")
-    void validateMessageRequest_duplicateIdempotencyKey_throws() {
+    private UUID stubValidSession() {
         UUID sessionId = UUID.randomUUID();
         Session session = Session.builder().user(mockUser).characterId("mio").build();
         ReflectionTestUtils.setField(session, "id", sessionId);
         when(valueOps.increment(anyString())).thenReturn(1L);
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
-        when(valueOps.setIfAbsent(anyString(), anyString(), anyLong(), any())).thenReturn(false);
+        return sessionId;
+    }
 
-        assertThatThrownBy(() -> sessionService.validateMessageRequest(userId, sessionId, "dup-key-123"))
+    private MessageTurn turnWith(TurnStatus status, OffsetDateTime updatedAt) {
+        MessageTurn turn = MessageTurn.start(null, null, "key-1", UUID.randomUUID());
+        ReflectionTestUtils.setField(turn, "status", status);
+        ReflectionTestUtils.setField(turn, "updatedAt", updatedAt);
+        return turn;
+    }
+
+    /**
+     * 이전에는 Redis 에 키를 선점하고 해제하지 않아, 첫 시도가 실패하면 TTL 1시간 동안 같은
+     * 키로 재시도조차 막혔다. 이제 "지금 진행 중일 때만" 거절한다 (이슈 P0-A).
+     */
+    @Test
+    @DisplayName("validateMessageRequest: 진행 중인 턴이 있으면 DUPLICATE_REQUEST")
+    void validateMessageRequest_turnInFlight_throws() {
+        UUID sessionId = stubValidSession();
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
+                .thenReturn(Optional.of(turnWith(TurnStatus.GENERATING, OffsetDateTime.now(ZoneOffset.UTC))));
+
+        assertThatThrownBy(() -> sessionService.validateMessageRequest(userId, sessionId, "key-1"))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.DUPLICATE_REQUEST));
     }
 
     @Test
-    @DisplayName("validateMessageRequest: Idempotency-Key가 null이면 setIfAbsent를 호출하지 않는다")
-    void validateMessageRequest_nullIdempotencyKey_skipsAtomicSet() {
-        UUID sessionId = UUID.randomUUID();
-        Session session = Session.builder().user(mockUser).characterId("mio").build();
-        ReflectionTestUtils.setField(session, "id", sessionId);
-        when(valueOps.increment(anyString())).thenReturn(1L);
-        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+    @DisplayName("validateMessageRequest: 완료된 턴은 통과시킨다 — 저장된 응답을 재생해야 한다")
+    void validateMessageRequest_completedTurn_passes() {
+        UUID sessionId = stubValidSession();
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
+                .thenReturn(Optional.of(turnWith(TurnStatus.COMPLETED, OffsetDateTime.now(ZoneOffset.UTC))));
+
+        sessionService.validateMessageRequest(userId, sessionId, "key-1");
+    }
+
+    @Test
+    @DisplayName("validateMessageRequest: 실패한 턴은 통과시킨다 — 같은 턴을 재개해야 한다")
+    void validateMessageRequest_failedTurn_passes() {
+        UUID sessionId = stubValidSession();
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
+                .thenReturn(Optional.of(turnWith(TurnStatus.FAILED, OffsetDateTime.now(ZoneOffset.UTC))));
+
+        sessionService.validateMessageRequest(userId, sessionId, "key-1");
+    }
+
+    /**
+     * 프로세스가 죽어 터미널 상태를 남기지 못한 턴은 generating 에 머문다. 영원히 거절하면
+     * 그 사용자는 그 키로 다시 말을 걸 수 없다.
+     */
+    @Test
+    @DisplayName("validateMessageRequest: 오래된 generating 턴은 버려진 것으로 보고 통과시킨다")
+    void validateMessageRequest_staleGeneratingTurn_passes() {
+        UUID sessionId = stubValidSession();
+        OffsetDateTime stale = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(5);
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
+                .thenReturn(Optional.of(turnWith(TurnStatus.GENERATING, stale)));
+
+        sessionService.validateMessageRequest(userId, sessionId, "key-1");
+    }
+
+    @Test
+    @DisplayName("validateMessageRequest: Idempotency-Key가 null이면 턴을 조회하지 않는다")
+    void validateMessageRequest_nullIdempotencyKey_skipsTurnLookup() {
+        UUID sessionId = stubValidSession();
 
         sessionService.validateMessageRequest(userId, sessionId, null);
 
-        verify(redisTemplate).expire(anyString(), anyLong(), any());
+        verify(sessionMessagePersistenceService, never()).findTurn(any(), any());
     }
 
     @Test

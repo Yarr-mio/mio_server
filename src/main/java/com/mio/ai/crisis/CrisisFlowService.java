@@ -65,6 +65,9 @@ public class CrisisFlowService {
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
 
+        // 전송 실패해도 기록은 남겨야 하므로 여기서 흐름을 끊지 않는다. 다만 삼키지도 않는다 —
+        // 위기 안내가 사용자에게 닿았는지는 이 플로우에서 가장 중요한 사실이다.
+        boolean delivered = true;
         try {
             emitter.send(SseEmitter.event()
                     .name(crisisEvent.eventName())
@@ -75,16 +78,35 @@ public class CrisisFlowService {
             emitter.send(SseEmitter.event()
                     .name(doneEvent.eventName())
                     .data(doneEvent));
-        } catch (IOException e) {
-            log.error("Failed to send crisis SSE event", e);
+        } catch (Exception e) {
+            // IOException 만 잡으면 안 된다. emitter 가 이미 완료된 상태에서 send 하면
+            // IllegalStateException 이 나고, 그게 밖으로 나가면 아래 crisis_events 기록과
+            // 프로파일 갱신이 통째로 건너뛰어진다. 사용자가 위기 상태였다는 사실은 전달 실패와
+            // 무관하게 참이고 다음 세션의 보호 근거다.
+            delivered = false;
+            log.error("Crisis response was NOT delivered to the user: sessionId={} severity={}",
+                    session.getId(), severity, e);
         }
 
         persistCrisisEvent(user, session, severity, triggerType);
         // SafetyProfile 즉시 invalidate (§17.8)
         eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
 
-        return new CrisisHandleResult(fixedResponse, severity);
+        return new CrisisHandleResult(fixedResponse, severity, delivered);
     }
+
+    /**
+     * 전송 전에 severity 와 고정 응답을 미리 계산한다.
+     *
+     * <p>오케스트레이터가 <b>결말을 저장한 뒤에</b> 전송하려면 이 값들이 전송보다 먼저 필요하다.
+     * 순수 계산이라 {@link #handle} 이 다시 계산해도 같은 값이 나온다.
+     */
+    public CrisisPreview preview(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
+        int severity = determineSeverity(l1Result, trigger, originalMessage);
+        return new CrisisPreview(severity, getFixedResponse(severity, trigger));
+    }
+
+    public record CrisisPreview(int severity, String fixedResponse) {}
 
     private int determineSeverity(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
         // 자해·자살 수단 질의는 severity 3 으로 고정한다 (이슈 #260).
@@ -133,7 +155,13 @@ public class CrisisFlowService {
         };
     }
 
-    private SseEventDto.CrisisEvent buildCrisisEvent(int severity, String fixedResponse) {
+    /**
+     * 위기 SSE 이벤트를 만든다. severity 2 이상이면 핫라인이 붙는다.
+     *
+     * <p>재시도 재생에서도 같은 이벤트를 복원해야 하므로 공개한다 — 텍스트만 재생하면 연결이
+     * 끊겨 재시도하는 위기 사용자가 핫라인을 보지 못한다.
+     */
+    public SseEventDto.CrisisEvent buildCrisisEvent(int severity, String fixedResponse) {
         if (severity >= 2) {
             return new SseEventDto.CrisisEvent(
                     severity,
@@ -162,5 +190,15 @@ public class CrisisFlowService {
         }
     }
 
-    public record CrisisHandleResult(String fixedResponse, int severity) {}
+    /**
+     * @param delivered 위기 안내가 실제로 사용자에게 전송됐는지. {@code false} 면 기록은 남았지만
+     *                  사용자는 핫라인을 보지 못했다 — 턴을 완료로 기록하면 안 된다.
+     */
+    public record CrisisHandleResult(String fixedResponse, int severity, boolean delivered) {
+
+        /** 전송 여부 개념 도입 이전 시그니처 — 기존 호출부 호환용. */
+        public CrisisHandleResult(String fixedResponse, int severity) {
+            this(fixedResponse, severity, true);
+        }
+    }
 }
