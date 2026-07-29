@@ -91,6 +91,19 @@ public class CrisisFlowService {
         return new CrisisHandleResult(fixedResponse, severity, delivered);
     }
 
+    /**
+     * 전송 전에 severity 와 고정 응답을 미리 계산한다.
+     *
+     * <p>오케스트레이터가 <b>결말을 저장한 뒤에</b> 전송하려면 이 값들이 전송보다 먼저 필요하다.
+     * 순수 계산이라 {@link #handle} 이 다시 계산해도 같은 값이 나온다.
+     */
+    public CrisisPreview preview(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
+        int severity = determineSeverity(l1Result, trigger, originalMessage);
+        return new CrisisPreview(severity, getFixedResponse(severity, trigger));
+    }
+
+    public record CrisisPreview(int severity, String fixedResponse) {}
+
     private int determineSeverity(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
         // 자해·자살 수단 질의는 severity 3 으로 고정한다 (이슈 #260).
         // 계획·수단의 구체성은 임상적으로 단순 사고 표현보다 높은 위험 지표이며, 아래 키워드 스캔에

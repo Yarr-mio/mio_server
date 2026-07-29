@@ -11,6 +11,7 @@ import com.mio.session.domain.Message;
 import com.mio.session.domain.MessageRole;
 import com.mio.session.domain.MessageTurn;
 import com.mio.session.domain.Session;
+import com.mio.session.domain.TurnStatus;
 import com.mio.session.repository.MessageRepository;
 import com.mio.session.repository.MessageTurnRepository;
 import com.mio.session.repository.SessionRepository;
@@ -22,6 +23,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.interceptor.TransactionAspectSupport;
 
 import java.nio.charset.StandardCharsets;
 import java.time.OffsetDateTime;
@@ -132,10 +134,9 @@ public class SessionMessagePersistenceService {
         MessageTurn turn = messageTurnRepository.findById(turnId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
 
-        // 리스를 잃었으면 여기서 멈춘다. 메시지를 저장하기 전에 확인해야 고아 메시지가 안 생긴다.
+        // 값싼 조기 확인. 최종 판정은 아래 조건부 UPDATE 가 한다.
         if (!turn.isHeldBy(leaseToken)) {
-            log.warn("Turn lease lost, abandoning completion: turnId={} status={}",
-                    turnId, turn.getStatus());
+            log.warn("Turn lease lost, abandoning completion: turnId={} status={}", turnId, turn.getStatus());
             return;
         }
 
@@ -148,8 +149,18 @@ public class SessionMessagePersistenceService {
                     turn.getSession().getId(), 1, OffsetDateTime.now(ZoneOffset.UTC));
         }
 
-        turn.complete(assistantMessageId, finishedReason, crisisSeverity);
-        messageTurnRepository.save(turn);
+        // 소유권 확인과 상태 전이를 한 번의 UPDATE 로 한다. 위의 메모리 비교만으로는
+        // compare-and-set 이 아니라, 그 사이에 재시도가 리스를 가져가도 덮어쓸 수 있다.
+        int updated = messageTurnRepository.finishIfHeld(
+                turnId, leaseToken, TurnStatus.COMPLETED, finishedReason,
+                assistantMessageId, crisisSeverity, OffsetDateTime.now(ZoneOffset.UTC));
+
+        if (updated == 0) {
+            // 그 창에서 소유권을 잃었다. 이 트랜잭션을 통째로 롤백해 방금 저장한 응답 메시지도
+            // 없앤다 — 어떤 턴도 참조하지 않는 고아 메시지를 남기지 않기 위해서다.
+            log.warn("Turn lease lost during completion, rolling back: turnId={}", turnId);
+            TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+        }
     }
 
     /**
@@ -162,14 +173,12 @@ public class SessionMessagePersistenceService {
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void failTurn(UUID turnId, UUID leaseToken, String finishedReason) {
         try {
-            messageTurnRepository.findById(turnId).ifPresent(turn -> {
-                if (!turn.isHeldBy(leaseToken)) {
-                    log.warn("Turn lease lost, abandoning failure record: turnId={}", turnId);
-                    return;
-                }
-                turn.fail(finishedReason);
-                messageTurnRepository.save(turn);
-            });
+            int updated = messageTurnRepository.finishIfHeld(
+                    turnId, leaseToken, TurnStatus.FAILED, finishedReason,
+                    null, null, OffsetDateTime.now(ZoneOffset.UTC));
+            if (updated == 0) {
+                log.warn("Turn lease lost or already terminal, skipping failure record: turnId={}", turnId);
+            }
         } catch (Exception e) {
             log.error("Failed to mark turn as failed: turnId={} reason={}", turnId, finishedReason, e);
         }

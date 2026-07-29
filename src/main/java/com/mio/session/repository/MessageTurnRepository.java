@@ -41,4 +41,33 @@ public interface MessageTurnRepository extends JpaRepository<MessageTurn, UUID> 
     int touchIfHeld(@Param("turnId") UUID turnId,
                     @Param("leaseToken") UUID leaseToken,
                     @Param("now") OffsetDateTime now);
+
+    /**
+     * 리스를 쥐고 있을 때만 터미널 상태로 전이한다 — 소유권 확인과 전이가 한 번의 원자 연산이다.
+     *
+     * <p>{@code findById} 로 읽고 메모리에서 토큰을 비교한 뒤 저장하는 방식은 compare-and-set 이
+     * 아니다. 그 사이에 재시도가 리스를 가져가고 커밋해도, 이미 읽어둔 엔티티를 저장하면 새
+     * 리스를 덮어쓴다. {@code WHERE lease_token = ?} 조건을 DB 로 내려 그 창을 없앤다.
+     *
+     * @return 1이면 전이 성공, 0이면 다른 시도가 이어받았다는 뜻
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update MessageTurn t
+               set t.status = :status,
+                   t.finishedReason = :finishedReason,
+                   t.assistantMessageId = :assistantMessageId,
+                   t.crisisSeverity = :crisisSeverity,
+                   t.updatedAt = :now
+             where t.id = :turnId
+               and t.leaseToken = :leaseToken
+               and t.status = com.mio.session.domain.TurnStatus.GENERATING
+            """)
+    int finishIfHeld(@Param("turnId") UUID turnId,
+                     @Param("leaseToken") UUID leaseToken,
+                     @Param("status") TurnStatus status,
+                     @Param("finishedReason") String finishedReason,
+                     @Param("assistantMessageId") UUID assistantMessageId,
+                     @Param("crisisSeverity") Integer crisisSeverity,
+                     @Param("now") OffsetDateTime now);
 }

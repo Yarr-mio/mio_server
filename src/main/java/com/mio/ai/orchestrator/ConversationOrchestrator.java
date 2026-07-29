@@ -71,11 +71,13 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -131,6 +133,8 @@ public class ConversationOrchestrator {
         // 위기 플로우로 끝난 턴의 severity. 재생 시 핫라인을 포함한 crisis 이벤트를 복원한다.
         AtomicReference<Integer> crisisSeverityRef = new AtomicReference<>(null);
         MessageTurn turn = null;
+        // 결말이 이미 저장됐는지. done 을 보내기 전에 저장하는 것이 이 작업의 핵심 순서다.
+        AtomicBoolean turnPersisted = new AtomicBoolean(false);
         String outboundMsgId = "msg_out_" + shortId();
 
         try {
@@ -238,18 +242,27 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "security_refusal", false);
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
                 appliedCrisisTrigger = resolveCrisisTrigger(decision);
+                // 위기 응답은 CrisisFlowService 가 crisis·done 을 직접 보낸다. 그 전에 결말을
+                // 저장해야 한다 — 전송 뒤에 저장하면 커밋 전 프로세스 종료 시 사용자는 응답을
+                // 받았는데 서버는 모르는 상태가 된다.
+                CrisisFlowService.CrisisPreview preview =
+                        crisisFlowService.preview(l1Result, appliedCrisisTrigger, userMessage);
+                assistantContent = preview.fixedResponse();
+                finishedReasonRef.set("crisis_flow");
+                crisisSeverityRef.set(preview.severity());
+                persistTurnOutcome(turn, turnPersisted, assistantContent, true,
+                        "crisis_flow", preview.severity());
+
                 CrisisFlowService.CrisisHandleResult crisisResult =
                         crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
-                assistantContent = crisisResult.fixedResponse();
-                // CrisisFlowService 가 crisis·done 을 직접 보내므로 sendDoneEvent 를 거치지 않는다.
                 recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
 
             } else if (decision.action() == DecisionAction.GENERATE) {
@@ -270,7 +283,7 @@ public class ConversationOrchestrator {
 
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
-                    llmTtftMs = llmClient.stream(llmRequest, contentBuilder::append);
+                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, contentBuilder::append));
                     assistantContent = contentBuilder.toString();
 
                     preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
@@ -280,7 +293,7 @@ public class ConversationOrchestrator {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
-                                    finishedReasonRef, crisisSeverityRef);
+                                    finishedReasonRef, crisisSeverityRef, turn, turnPersisted);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
@@ -289,7 +302,7 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                        sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
@@ -305,7 +318,7 @@ public class ConversationOrchestrator {
                     AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
                     AtomicReference<String> capturedSnapshotRef = new AtomicReference<>();
 
-                    llmTtftMs = llmClient.stream(llmRequest, chunk -> {
+                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
                         if (!stopSendingDeltas.get()) {
                             int currentLen = contentBuilder.length();
@@ -333,7 +346,7 @@ public class ConversationOrchestrator {
                                 throw new RuntimeException(e);
                             }
                         }
-                    });
+                    }));
 
                     assistantContent = contentBuilder.toString();
 
@@ -375,11 +388,19 @@ public class ConversationOrchestrator {
 
                         if (isCrisis) {
                             // Bug 5 fix: invoke crisis flow — crisis + done SSE issued inside handle()
+                            // 전송 전에 결말을 저장한다. handle() 이 done 까지 보내므로 그 뒤에
+                            // 저장하면 사용자는 응답을 받았는데 서버는 모르는 창이 생긴다.
+                            CrisisFlowService.CrisisPreview preview =
+                                    crisisFlowService.preview(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage);
+                            assistantContent = preview.fixedResponse();
+                            finishedReasonRef.set("crisis_flow");
+                            crisisSeverityRef.set(preview.severity());
+                            persistTurnOutcome(turn, turnPersisted, assistantContent, true,
+                                    "crisis_flow", preview.severity());
+
                             CrisisFlowService.CrisisHandleResult crisisResult =
                                     crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
                                             user, session, emitter, outboundMsgId, userSignal.emotionScore());
-                            assistantContent = crisisResult != null ? crisisResult.fixedResponse()
-                                    : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
                             recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
                         } else {
                             String replacedContent = switch (judgeActionResult.action()) {
@@ -393,7 +414,7 @@ public class ConversationOrchestrator {
                             if (replacedContent != null) {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
-                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "replaced_by_guard", false);
                             } else if (stopSendingDeltas.get()) {
@@ -403,33 +424,33 @@ public class ConversationOrchestrator {
                                         ? capturedSnapshotRef.get() : assistantContent;
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
-                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
-                                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             }
                         }
                     } else {
-                        sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
 
                 } else {
                     // SPECULATIVE: stream immediately, no post-guard
-                    llmTtftMs = llmClient.stream(llmRequest, chunk -> {
+                    llmTtftMs = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
                         try {
                             sendEvent(emitter, new SseEventDto.DeltaEvent(chunk, outboundMsgId));
                         } catch (IOException e) {
                             throw new RuntimeException(e);
                         }
-                    });
+                    }));
                     assistantContent = contentBuilder.toString();
-                    sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                    sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                             userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                             "stop", true);
                 }
@@ -438,14 +459,14 @@ public class ConversationOrchestrator {
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
-                sendDoneEvent(emitter, finishedReasonRef, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "error", false);
             }
 
-            // 8. 응답을 저장하고 턴을 완료로 확정한다. 사용자 발화는 이미 openTurn 에서 저장됐다.
-            messagePersistenceService.completeTurn(
-                    turn.getId(), turn.getLeaseToken(), assistantContent, crisisFlowTriggered,
+            // 8. 안전망. 정상 경로는 done 을 보내기 전에 이미 저장했다(persistTurnOutcome).
+            //    어떤 분기가 done 을 보내지 않고 여기까지 왔다면 그때 저장한다.
+            persistTurnOutcome(turn, turnPersisted, assistantContent, crisisFlowTriggered,
                     resolveFinishedReason(finishedReasonRef), crisisSeverityRef.get());
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
@@ -496,10 +517,58 @@ public class ConversationOrchestrator {
             finishedReasonRef.set("error");
             return;
         }
-        finishedReasonRef.set(result.delivered() ? "crisis_flow" : "error");
-        if (result.delivered()) {
-            crisisSeverityRef.set(result.severity());
+        // 전달 실패 여부와 무관하게 위기로 끝난 턴이다. severity 를 반드시 남긴다 —
+        // 이게 없으면 재생이 텍스트만 내보내고, 연결이 끊겨 재시도한 위기 사용자가 핫라인을
+        // 보지 못한다. 그 상황을 막으려고 이 필드를 만들었는데 정반대로 동작했다.
+        finishedReasonRef.set("crisis_flow");
+        crisisSeverityRef.set(result.severity());
+
+        if (!result.delivered()) {
+            // 턴은 완료로 남긴다. 실패로 두면 재시도가 파이프라인을 다시 태워 crisis_events 에
+            // 중복 행이 생긴다. 완료로 두면 재시도가 저장된 위기 응답을 핫라인과 함께 재생한다.
+            log.warn("Crisis turn completed but not delivered — retry will replay the hotline");
         }
+    }
+
+    /** 하트비트 간격. IN_FLIGHT_TURN_WINDOW(90초)보다 충분히 짧아야 리스를 잃지 않는다. */
+    private static final long HEARTBEAT_INTERVAL_MS = 25_000L;
+
+    /**
+     * 스트리밍 중 주기적으로 진행 중임을 알린다.
+     *
+     * <p>생성이 90초를 넘으면 {@code updated_at} 이 stale 이 되어 재시도가 턴을 이어받고 두 번째
+     * 생성이 시작된다. 청크마다 DB 를 때릴 수는 없으므로 간격으로 스로틀한다.
+     */
+    private Consumer<String> withHeartbeat(MessageTurn turn, Consumer<String> delegate) {
+        if (turn == null) {
+            return delegate;
+        }
+        AtomicLong lastBeat = new AtomicLong(System.currentTimeMillis());
+        return chunk -> {
+            delegate.accept(chunk);
+            long now = System.currentTimeMillis();
+            long previous = lastBeat.get();
+            if (now - previous >= HEARTBEAT_INTERVAL_MS && lastBeat.compareAndSet(previous, now)) {
+                messagePersistenceService.touchTurn(turn.getId(), turn.getLeaseToken());
+            }
+        };
+    }
+
+    /**
+     * 턴의 결말을 저장한다. 한 턴에서 한 번만 수행된다.
+     *
+     * <p>저장 실패는 삼키지 않는다 — 결말이 남지 않으면 재시도가 이미 보낸 응답을 다시
+     * 생성하므로, 이 작업의 목적 자체가 무너진다. 예외는 상위 catch 로 올라가 failTurn 과
+     * 폴백 전송으로 이어진다.
+     */
+    private void persistTurnOutcome(MessageTurn turn, AtomicBoolean turnPersisted,
+                                    String assistantContent, boolean crisisFlowTriggered,
+                                    String finishedReason, Integer crisisSeverity) {
+        if (turn == null || !turnPersisted.compareAndSet(false, true)) {
+            return;
+        }
+        messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
+                assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
     }
 
     /** 실패로 끝난 턴에서 사용자에게 내보내는 문구. */
@@ -551,8 +620,15 @@ public class ConversationOrchestrator {
                     .loadAssistantContent(completed.getAssistantMessageId())
                     .orElse(null);
             if (content == null) {
-                // 위기 플로우·보안 거절은 고정 응답이라 assistant 메시지가 없다.
-                // 재생할 원문이 없으므로 새로 처리하게 둔다.
+                // 재생할 원문이 없으면 새로 처리하게 둔다.
+                //
+                // 위기 턴은 여기 걸리면 안 된다 — 고정 응답도 assistant 메시지로 저장되므로
+                // 원문이 있어야 정상이다. 없다는 건 데이터가 어긋났다는 뜻이고, 그대로 재생하면
+                // 핫라인 없는 빈 응답이 나가므로 재생하지 않고 로그를 남긴다.
+                if (completed.getCrisisSeverity() != null) {
+                    log.error("Crisis turn has no assistant content — cannot replay hotline: turnId={}",
+                            completed.getId());
+                }
                 return false;
             }
 
@@ -617,13 +693,21 @@ public class ConversationOrchestrator {
             String outboundMsgId,
             Integer emotionScore,
             AtomicReference<String> finishedReasonRef,
-            AtomicReference<Integer> crisisSeverityRef) throws IOException {
+            AtomicReference<Integer> crisisSeverityRef,
+            MessageTurn turn,
+            AtomicBoolean turnPersisted) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
             case REWRITE -> result.rewrittenContent() != null ? result.rewrittenContent() : originalContent;
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
+                // 전송 전에 결말을 저장한다 (이슈 P0-A 리뷰 반영).
+                CrisisFlowService.CrisisPreview preview =
+                        crisisFlowService.preview(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage);
+                persistTurnOutcome(turn, turnPersisted, preview.fixedResponse(), true,
+                        "crisis_flow", preview.severity());
+
                 CrisisFlowService.CrisisHandleResult cr =
                         crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
                                 user, session, emitter, outboundMsgId, emotionScore);
@@ -636,6 +720,9 @@ public class ConversationOrchestrator {
     private void sendDoneEvent(
             SseEmitter emitter,
             AtomicReference<String> finishedReasonRef,
+            MessageTurn turn,
+            AtomicReference<Integer> crisisSeverityRef,
+            AtomicBoolean turnPersisted,
             UUID userId,
             UUID sessionId,
             String outboundMsgId,
@@ -649,9 +736,13 @@ public class ConversationOrchestrator {
             String finishedReason,
             boolean classifyCbt) throws IOException {
 
-        // 턴의 터미널 사유로 남긴다. done 을 실제로 내보내기 전에 기록해야, 전송이 실패해도
-        // 서버는 이 턴이 어떻게 끝났는지 알 수 있다 (이슈 P0-A).
         finishedReasonRef.set(finishedReason);
+
+        // 결말을 먼저 저장하고 그 다음에 done 을 보낸다.
+        // 순서가 반대면, done 이 클라이언트에 도착한 뒤 커밋 전에 프로세스가 죽었을 때 DB 에는
+        // generating 턴과 사용자 발화만 남는다. 재시도는 사용자가 이미 받은 응답을 다시 생성한다.
+        persistTurnOutcome(turn, turnPersisted, assistantContent, isCrisisFlagged,
+                finishedReason, crisisSeverityRef.get());
 
         CbtMetadataResult metadata = classifyCbt
                 ? cbtMetadataClassifier.classify(
