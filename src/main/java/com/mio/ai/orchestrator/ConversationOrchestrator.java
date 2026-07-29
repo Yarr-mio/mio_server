@@ -77,7 +77,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -530,28 +529,19 @@ public class ConversationOrchestrator {
         }
     }
 
-    /** 하트비트 간격. IN_FLIGHT_TURN_WINDOW(90초)보다 충분히 짧아야 리스를 잃지 않는다. */
-    private static final long HEARTBEAT_INTERVAL_MS = 25_000L;
-
     /**
-     * 스트리밍 중 주기적으로 진행 중임을 알린다.
+     * 스트리밍 중 턴이 살아 있음을 알리는 소비자로 감싼다.
      *
-     * <p>생성이 90초를 넘으면 {@code updated_at} 이 stale 이 되어 재시도가 턴을 이어받고 두 번째
-     * 생성이 시작된다. 청크마다 DB 를 때릴 수는 없으므로 간격으로 스로틀한다.
+     * <p>보장 범위는 청크가 들어오는 동안이다 — 자세한 내용은 {@link TurnHeartbeat} 참조.
      */
     private Consumer<String> withHeartbeat(MessageTurn turn, Consumer<String> delegate) {
         if (turn == null) {
             return delegate;
         }
-        AtomicLong lastBeat = new AtomicLong(System.currentTimeMillis());
-        return chunk -> {
-            delegate.accept(chunk);
-            long now = System.currentTimeMillis();
-            long previous = lastBeat.get();
-            if (now - previous >= HEARTBEAT_INTERVAL_MS && lastBeat.compareAndSet(previous, now)) {
-                messagePersistenceService.touchTurn(turn.getId(), turn.getLeaseToken());
-            }
-        };
+        return new TurnHeartbeat(
+                System::currentTimeMillis,
+                () -> messagePersistenceService.touchTurn(turn.getId(), turn.getLeaseToken())
+        ).wrap(delegate);
     }
 
     /**
