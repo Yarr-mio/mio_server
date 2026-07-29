@@ -65,6 +65,9 @@ public class CrisisFlowService {
 
         SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
 
+        // 전송 실패해도 기록은 남겨야 하므로 여기서 흐름을 끊지 않는다. 다만 삼키지도 않는다 —
+        // 위기 안내가 사용자에게 닿았는지는 이 플로우에서 가장 중요한 사실이다.
+        boolean delivered = true;
         try {
             emitter.send(SseEmitter.event()
                     .name(crisisEvent.eventName())
@@ -76,14 +79,16 @@ public class CrisisFlowService {
                     .name(doneEvent.eventName())
                     .data(doneEvent));
         } catch (IOException e) {
-            log.error("Failed to send crisis SSE event", e);
+            delivered = false;
+            log.error("Crisis response was NOT delivered to the user: sessionId={} severity={}",
+                    session.getId(), severity, e);
         }
 
         persistCrisisEvent(user, session, severity, triggerType);
         // SafetyProfile 즉시 invalidate (§17.8)
         eventPublisher.publishEvent(new CrisisDetectedEvent(session.getId(), user.getId(), severity));
 
-        return new CrisisHandleResult(fixedResponse, severity);
+        return new CrisisHandleResult(fixedResponse, severity, delivered);
     }
 
     private int determineSeverity(SafetyL1Result l1Result, CrisisTrigger trigger, String originalMessage) {
@@ -162,5 +167,15 @@ public class CrisisFlowService {
         }
     }
 
-    public record CrisisHandleResult(String fixedResponse, int severity) {}
+    /**
+     * @param delivered 위기 안내가 실제로 사용자에게 전송됐는지. {@code false} 면 기록은 남았지만
+     *                  사용자는 핫라인을 보지 못했다 — 턴을 완료로 기록하면 안 된다.
+     */
+    public record CrisisHandleResult(String fixedResponse, int severity, boolean delivered) {
+
+        /** 전송 여부 개념 도입 이전 시그니처 — 기존 호출부 호환용. */
+        public CrisisHandleResult(String fixedResponse, int severity) {
+            this(fixedResponse, severity, true);
+        }
+    }
 }

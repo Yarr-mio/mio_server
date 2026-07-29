@@ -129,6 +129,7 @@ public class ConversationOrchestrator {
         // 이 턴이 어떻게 끝났는지. 어떤 경로로 빠져나가든 터미널 상태로 저장된다 (이슈 P0-A).
         AtomicReference<String> finishedReasonRef = new AtomicReference<>(null);
         MessageTurn turn = null;
+        String outboundMsgId = "msg_out_" + shortId();
 
         try {
             Session session = sessionRepository.findById(sessionId)
@@ -137,7 +138,6 @@ public class ConversationOrchestrator {
                     .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
             String inboundMsgId = "msg_in_" + shortId();
-            String outboundMsgId = "msg_out_" + shortId();
 
             sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now(ZoneOffset.UTC)));
 
@@ -238,12 +238,13 @@ public class ConversationOrchestrator {
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
                 appliedCrisisTrigger = resolveCrisisTrigger(decision);
-                // CrisisFlowService 가 crisis·done 을 직접 보내므로 sendDoneEvent 를 거치지 않는다.
-                finishedReasonRef.set("crisis_flow");
                 CrisisFlowService.CrisisHandleResult crisisResult =
                         crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
+                // CrisisFlowService 가 crisis·done 을 직접 보내므로 sendDoneEvent 를 거치지 않는다.
+                // 전송에 실패했다면 사용자는 핫라인을 보지 못했다 — 완료로 기록하면 안 된다.
+                finishedReasonRef.set(crisisResult.delivered() ? "crisis_flow" : "error");
 
             } else if (decision.action() == DecisionAction.GENERATE) {
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
@@ -457,12 +458,37 @@ public class ConversationOrchestrator {
 
         } catch (Exception e) {
             log.error("Conversation orchestration failed for session {}", sessionId, e);
-            // 응답을 만들지 못한 채 끝났음을 남긴다. 이게 없으면 턴이 generating 에 영원히 머물러
-            // 재시도 시 "진행 중"으로 오인된다 (이슈 P0-A).
+            // 1) 결말을 먼저 저장한다. 이게 없으면 턴이 generating 에 영원히 머물러 재시도 시
+            //    "진행 중"으로 오인된다 (이슈 P0-A). 연결 상태와 무관하게 항상 수행한다.
             if (turn != null) {
                 messagePersistenceService.failTurn(turn.getId(), resolveFinishedReason(finishedReasonRef));
             }
+            // 2) 연결이 살아 있으면 결말을 알린다. 전송은 보장할 수 없다 — 이미 끊긴 뒤라면
+            //    보낼 대상이 없다. 저장이 보장 대상이고 전송은 최선 노력이다.
+            sendFallbackDone(emitter, outboundMsgId);
             emitter.completeWithError(e);
+        }
+    }
+
+    /** 실패로 끝난 턴에서 사용자에게 내보내는 문구. */
+    private static final String FAILURE_FALLBACK =
+            "지금 답변을 만들지 못했어요. 잠시 후 다시 말씀해주시겠어요?";
+
+    /**
+     * 실패한 턴의 결말을 클라이언트에 알린다.
+     *
+     * <p>{@code delta.replace} 를 쓰는 이유는 이미 일부 토큰이 나갔을 수 있어서다. 그대로 두면
+     * 문장이 중간에 끊긴 채 남는다. 아무것도 안 나갔다면 이 문구가 그대로 보인다.
+     *
+     * <p>여기서 나는 예외는 삼킨다. 이 메서드는 이미 실패 처리 중에 호출되고, 연결이 끊겨
+     * 전송이 불가능한 것이 가장 흔한 실패 원인이다. 그건 정상이지 새로운 오류가 아니다.
+     */
+    private void sendFallbackDone(SseEmitter emitter, String outboundMsgId) {
+        try {
+            sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(FAILURE_FALLBACK, outboundMsgId));
+            sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, false, "error"));
+        } catch (Exception ignored) {
+            log.debug("Fallback done not delivered — connection already closed: msgId={}", outboundMsgId);
         }
     }
 
