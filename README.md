@@ -102,12 +102,20 @@ Flyway가 시작 시 자동으로 DB 마이그레이션을 수행합니다.
 ### 6. 동작 확인
 
 ```bash
-# Health check
-curl http://localhost:8080/actuator/health
+# Health check (liveness — 프로세스가 응답 가능한지만 확인)
+curl http://localhost:8080/health
 
 # Swagger UI
 open http://localhost:8080/swagger-ui.html
+
+# 의존성까지 포함한 상태·메트릭은 관리 포트(9090)에 있다.
+# 운영에서는 publish 하지 않으므로 컨테이너 밖에서 도달할 수 없다.
+curl http://localhost:9090/actuator/health
+curl http://localhost:9090/actuator/prometheus | grep '^mio_'
 ```
+
+> 운영 서버에서 스크레이프하려면:
+> `docker compose exec app curl -s localhost:9090/actuator/prometheus`
 
 ---
 

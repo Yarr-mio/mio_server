@@ -32,6 +32,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
+    // Metrics — Micrometer 카운터를 Prometheus 포맷으로 스크레이프 가능하게 만든다.
+    // 이 레지스트리가 없으면 코드가 기록하는 지표를 프로세스 밖에서 읽을 방법이 없다.
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+
     // Database
     runtimeOnly("org.postgresql:postgresql")
     implementation("org.flywaydb:flyway-database-postgresql")
