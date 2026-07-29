@@ -61,6 +61,9 @@ import java.util.stream.Collectors;
 public class SessionConsolidator {
 
     private static final String SUMMARY_MODEL = "gpt-4o-mini";
+    // 요약 출력 상한. 프롬프트가 500자를 요구하고 한국어 1자 ≈ 0.71 토큰이라 ~355 토큰,
+    // 2배 이상 여유를 둔다. 잘리면 세션 요약이 문장 중간에서 끊긴 채 저장된다.
+    private static final int SUMMARY_MAX_COMPLETION_TOKENS = 800;
     private static final String SUMMARY_SYSTEM_PROMPT = """
             당신은 CBT 코칭 세션 분석 전문가입니다.
             사용자와 AI 캐릭터 간의 대화 내용을 바탕으로 세션 요약을 300~500자 이내로 작성하세요.
@@ -360,7 +363,8 @@ public class SessionConsolidator {
     private String generateSummary(String conversationText) {
         StringBuilder sb = new StringBuilder();
         llmClient.stream(
-                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText),
+                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText)
+                        .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS),
                 sb::append
         );
         return sb.toString().trim();

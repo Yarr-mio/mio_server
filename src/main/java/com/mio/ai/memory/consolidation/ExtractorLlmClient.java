@@ -20,6 +20,8 @@ import java.util.Set;
 public class ExtractorLlmClient {
 
     private static final String MODEL = "gpt-4o-mini";
+    // JSON 추출 출력 상한. 항목 최대 3개라 여유를 둔다.
+    private static final int MAX_COMPLETION_TOKENS = 600;
 
     private static final String SYSTEM_PROMPT = """
             당신은 CBT(인지행동치료) 전문 분석가입니다.
@@ -97,7 +99,8 @@ public class ExtractorLlmClient {
         StringBuilder responseBuilder = new StringBuilder();
         try {
             llmClient.stream(
-                    LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary),
+                    LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary)
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
                     responseBuilder::append
             );
             return parseResponse(responseBuilder.toString());

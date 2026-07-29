@@ -303,6 +303,88 @@ class OpenAiLlmClientTest {
         assertThat(counter("mio.llm.cost.usd", "mode", "embed")).isEqualTo(4.8e-7);
     }
 
+    @Test
+    @DisplayName("상한을 지정하면 max_completion_tokens로 보낸다 — max_tokens는 최신 모델이 거부한다")
+    void sendsMaxCompletionTokensWhenSpecified() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of("data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).stream(
+                LlmRequest.of(MODEL, "system", "user").withMaxCompletionTokens(400),
+                chunk -> { });
+
+        assertThat(requestBody(capturedRequest(httpClient)))
+                .contains("\"max_completion_tokens\":400")
+                .doesNotContain("\"max_tokens\"");
+    }
+
+    @Test
+    @DisplayName("상한을 지정하지 않으면 아무것도 보내지 않는다")
+    void omitsMaxCompletionTokensWhenUnspecified() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = successfulResponse();
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).completeJson(LlmRequest.of(MODEL, "system", "user"));
+
+        assertThat(requestBody(capturedRequest(httpClient)))
+                .doesNotContain("max_completion_tokens");
+    }
+
+    @Test
+    @DisplayName("상한에 걸려 잘리면 계측한다 — 안 세면 상한이 빡빡해도 알 수 없다")
+    void recordsTruncationOnNonStreaming() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"choices\":[{\"finish_reason\":\"length\","
+                + "\"message\":{\"content\":\"{\\\"a\\\": \\\"잘린\"}}],"
+                + "\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":400}}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).completeJson(
+                LlmRequest.of(MODEL, "system", "user").withMaxCompletionTokens(400));
+
+        assertThat(counter("mio.llm.truncated", "mode", "complete_json")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("스트리밍 절단도 계측한다 — 실측상 스트리밍도 finish_reason=length를 준다")
+    void recordsTruncationOnStreaming() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"인지행동\"}}]}",
+                "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).stream(
+                LlmRequest.of(MODEL, "system", "user").withMaxCompletionTokens(400),
+                chunk -> { });
+
+        assertThat(counter("mio.llm.truncated", "mode", "stream")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("정상 종료는 절단으로 세지 않는다")
+    void doesNotRecordTruncationOnNormalStop() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"안녕\"},\"finish_reason\":\"stop\"}]}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
+
+        assertThat(meterRegistry.find("mio.llm.truncated").counters()).isEmpty();
+    }
+
     // ── helpers ────────────────────────────────────────────────────
 
     private OpenAiLlmClient client(HttpClient httpClient) {

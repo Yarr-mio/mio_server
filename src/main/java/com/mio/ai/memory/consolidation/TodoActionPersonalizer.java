@@ -25,6 +25,8 @@ import java.util.List;
 public class TodoActionPersonalizer {
 
     private static final String MODEL = "gpt-4o-mini";
+    // 템플릿 개인화 출력 상한. 템플릿 수만큼 문장을 만들어야 해 여유를 둔다.
+    private static final int MAX_COMPLETION_TOKENS = 600;
     private static final int MAX_ACTION_LENGTH = 120;
 
     private static final String SYSTEM_PROMPT = """
@@ -61,7 +63,8 @@ public class TodoActionPersonalizer {
         try {
             StringBuilder response = new StringBuilder();
             llmClient.stream(
-                    LlmRequest.of(MODEL, SYSTEM_PROMPT, buildUserMessage(sessionSummary, triggerTags, templates)),
+                    LlmRequest.of(MODEL, SYSTEM_PROMPT, buildUserMessage(sessionSummary, triggerTags, templates))
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
                     response::append
             );
             List<String> personalized = parse(response.toString(), templates.size());

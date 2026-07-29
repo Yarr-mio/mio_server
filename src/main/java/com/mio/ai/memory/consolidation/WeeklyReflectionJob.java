@@ -32,6 +32,9 @@ import java.util.*;
 @RequiredArgsConstructor
 public class WeeklyReflectionJob {
 
+    // 주간 회고 출력 상한. 프롬프트가 500자를 요구한다 (~355 토큰).
+    private static final int REFLECTION_MAX_COMPLETION_TOKENS = 800;
+
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final String NARRATIVE_SYSTEM = """
             당신은 CBT 기반 감정 코칭 AI입니다.
@@ -175,7 +178,8 @@ public class WeeklyReflectionJob {
 
     private String generateText(String systemPrompt, String context) {
         try {
-            return llmClient.completeText(LlmRequest.of("gpt-4o-mini", systemPrompt, context));
+            return llmClient.completeText(LlmRequest.of("gpt-4o-mini", systemPrompt, context)
+                    .withMaxCompletionTokens(REFLECTION_MAX_COMPLETION_TOKENS));
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] LLM call failed: {}", e.getMessage());
             return null;

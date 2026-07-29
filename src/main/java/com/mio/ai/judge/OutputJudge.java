@@ -14,6 +14,8 @@ import org.springframework.stereotype.Component;
 public class OutputJudge {
 
     private static final String JUDGE_MODEL = "gpt-4o-mini";
+    // JSON 판정 출력 상한. 잘리면 파싱 실패 → REPLACE 로 떨어져 정상 응답이 대체된다.
+    private static final int JUDGE_MAX_COMPLETION_TOKENS = 400;
 
     private static final String SYSTEM_PROMPT = """
             You are a safety reviewer for a mental health coaching AI.
@@ -42,7 +44,8 @@ public class OutputJudge {
     public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult) {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent);
+            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {
