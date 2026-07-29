@@ -43,6 +43,16 @@ public class MessageTurn {
     @Column(name = "status", nullable = false)
     private TurnStatus status;
 
+    /**
+     * 이 턴을 현재 처리 중인 시도의 소유권 토큰. 열거나 재개할 때마다 새로 발급한다.
+     *
+     * <p>SSE 타임아웃은 클라이언트 연결만 닫고 백그라운드 처리는 계속 돈다. 그래서 오래 걸리는
+     * 턴이 버려진 것으로 오판되어 재시도가 같은 턴을 재개할 수 있다. 이때 원래 시도가 뒤늦게
+     * 완료를 쓰면 나중 것이 덮어써 응답과 메시지가 어긋난다.
+     */
+    @Column(name = "lease_token", nullable = false)
+    private UUID leaseToken;
+
     @Column(name = "user_message_id")
     private UUID userMessageId;
 
@@ -83,6 +93,7 @@ public class MessageTurn {
                 .idempotencyKey(idempotencyKey)
                 .status(TurnStatus.GENERATING)
                 .userMessageId(userMessageId)
+                .leaseToken(UUID.randomUUID())
                 .build();
     }
 
@@ -125,6 +136,13 @@ public class MessageTurn {
         this.finishedReason = null;
         this.assistantMessageId = null;
         this.crisisSeverity = null;
+        // 소유권을 새 시도로 넘긴다. 이전 시도가 뒤늦게 완료를 쓰려 해도 토큰이 달라 물러난다.
+        this.leaseToken = UUID.randomUUID();
+    }
+
+    /** 이 시도가 아직 턴의 소유자인지. 아니면 다른 시도가 이어받은 것이다. */
+    public boolean isHeldBy(UUID leaseToken) {
+        return this.leaseToken != null && this.leaseToken.equals(leaseToken);
     }
 
     public boolean isResumable() {

@@ -147,6 +147,38 @@ class MessageTurnTest {
         assertThat(turn.getCrisisSeverity()).isNull();
     }
 
+    /**
+     * SSE 타임아웃은 클라이언트 연결만 닫고 백그라운드 처리는 계속 돈다. 그래서 오래 걸리는 턴이
+     * 버려진 것으로 오판되어 재시도가 같은 턴을 이어받을 수 있다. 그때 원래 시도가 뒤늦게 완료를
+     * 쓰면 나중 것이 덮어써 응답과 메시지가 어긋난다. 소유권을 토큰으로 명시해 막는다.
+     */
+    @Test
+    @DisplayName("턴을 열면 소유권 토큰이 발급된다")
+    void startIssuesLeaseToken() {
+        MessageTurn turn = newTurn();
+
+        assertThat(turn.getLeaseToken()).isNotNull();
+        assertThat(turn.isHeldBy(turn.getLeaseToken())).isTrue();
+        assertThat(turn.isHeldBy(UUID.randomUUID())).isFalse();
+    }
+
+    @Test
+    @DisplayName("재개하면 소유권이 새 시도로 넘어가 이전 시도는 물러난다")
+    void resumeTransfersLease() {
+        MessageTurn turn = newTurn();
+        UUID firstAttempt = turn.getLeaseToken();
+        turn.fail("error");
+
+        turn.resume();
+        UUID secondAttempt = turn.getLeaseToken();
+
+        assertThat(secondAttempt).isNotEqualTo(firstAttempt);
+        assertThat(turn.isHeldBy(firstAttempt))
+                .as("이전 시도는 더 이상 소유자가 아니므로 완료를 쓰면 안 된다")
+                .isFalse();
+        assertThat(turn.isHeldBy(secondAttempt)).isTrue();
+    }
+
     @Test
     @DisplayName("TurnStatus 는 DB 값과 양방향 변환된다")
     void statusRoundTrips() {

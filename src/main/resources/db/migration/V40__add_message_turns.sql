@@ -26,6 +26,14 @@ CREATE TABLE message_turns (
     -- failed     : 응답을 만들지 못하고 종료 (finished_reason 에 사유)
     status               TEXT        NOT NULL,
 
+    -- 이 턴을 현재 처리 중인 시도의 소유권 토큰. 턴을 열거나 재개할 때마다 새로 발급한다.
+    --
+    -- SSE 타임아웃은 클라이언트 연결만 닫고 백그라운드 처리는 계속 돌기 때문에, 오래 걸리는
+    -- 턴이 "버려진 것"으로 오판되어 재시도가 같은 턴을 재개할 수 있다. 그때 원래 시도가
+    -- 뒤늦게 완료를 쓰면 나중 것이 덮어써 응답과 메시지가 어긋난다.
+    -- 터미널 전이를 토큰 일치 조건으로 걸어 늦게 도착한 시도가 조용히 물러나게 한다.
+    lease_token          UUID        NOT NULL,
+
     -- 내용이 아니라 참조만 둔다. 메시지가 지워져도 턴 기록은 남긴다.
     user_message_id      UUID        REFERENCES messages(id) ON DELETE SET NULL,
     assistant_message_id UUID        REFERENCES messages(id) ON DELETE SET NULL,

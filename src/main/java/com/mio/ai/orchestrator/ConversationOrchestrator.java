@@ -220,6 +220,11 @@ public class ConversationOrchestrator {
                 reactiveOntologyActivationDispatcher.activateBeliefs(userId, sessionId, normalized);
             }
 
+            // 진행 중임을 알린다. 여기부터 LLM 생성·출력 검증이라 가장 오래 걸린다.
+            // 이게 없으면 updated_at 이 턴을 연 시점에 고정되어 살아있는 턴이 버려진 것으로
+            // 오판되고, 재시도가 같은 턴을 이어받는다.
+            messagePersistenceService.touchTurn(turn.getId(), turn.getLeaseToken());
+
             // 7. Execute based on decision
             String assistantContent;
             long llmTtftMs = 0;
@@ -440,7 +445,7 @@ public class ConversationOrchestrator {
 
             // 8. 응답을 저장하고 턴을 완료로 확정한다. 사용자 발화는 이미 openTurn 에서 저장됐다.
             messagePersistenceService.completeTurn(
-                    turn.getId(), assistantContent, crisisFlowTriggered,
+                    turn.getId(), turn.getLeaseToken(), assistantContent, crisisFlowTriggered,
                     resolveFinishedReason(finishedReasonRef), crisisSeverityRef.get());
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
@@ -465,7 +470,8 @@ public class ConversationOrchestrator {
             // 1) 결말을 먼저 저장한다. 이게 없으면 턴이 generating 에 영원히 머물러 재시도 시
             //    "진행 중"으로 오인된다 (이슈 P0-A). 연결 상태와 무관하게 항상 수행한다.
             if (turn != null) {
-                messagePersistenceService.failTurn(turn.getId(), resolveFinishedReason(finishedReasonRef));
+                messagePersistenceService.failTurn(
+                        turn.getId(), turn.getLeaseToken(), resolveFinishedReason(finishedReasonRef));
             }
             // 2) 연결이 살아 있으면 결말을 알린다. 전송은 보장할 수 없다 — 이미 끊긴 뒤라면
             //    보낼 대상이 없다. 저장이 보장 대상이고 전송은 최선 노력이다.

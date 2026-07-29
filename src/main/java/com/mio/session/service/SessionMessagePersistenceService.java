@@ -115,21 +115,15 @@ public class SessionMessagePersistenceService {
      * (사용자 종료 또는 30분 타임아웃) 이미 사용자에게 내보낸 응답은 기록되어야 한다.
      * 이전에는 여기서 예외가 나면서 턴 전체가 버려졌다.
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void completeTurn(
-            UUID turnId,
-            String assistantContent,
-            boolean crisisFlowTriggered,
-            String finishedReason) {
-        completeTurn(turnId, assistantContent, crisisFlowTriggered, finishedReason, null);
-    }
-
     /**
+     * @param leaseToken     {@code openTurn} 이 발급한 소유권 토큰. 다른 시도가 턴을 이어받았으면
+     *                       아무것도 하지 않고 물러난다 — 응답 메시지도 저장하지 않는다.
      * @param crisisSeverity 위기 플로우로 끝난 턴이면 그 severity — 재생 시 핫라인 복원에 쓴다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void completeTurn(
             UUID turnId,
+            UUID leaseToken,
             String assistantContent,
             boolean crisisFlowTriggered,
             String finishedReason,
@@ -137,6 +131,13 @@ public class SessionMessagePersistenceService {
 
         MessageTurn turn = messageTurnRepository.findById(turnId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
+
+        // 리스를 잃었으면 여기서 멈춘다. 메시지를 저장하기 전에 확인해야 고아 메시지가 안 생긴다.
+        if (!turn.isHeldBy(leaseToken)) {
+            log.warn("Turn lease lost, abandoning completion: turnId={} status={}",
+                    turnId, turn.getStatus());
+            return;
+        }
 
         UUID assistantMessageId = null;
         if (assistantContent != null && !assistantContent.isBlank()) {
@@ -159,14 +160,40 @@ public class SessionMessagePersistenceService {
      * ({@code SummaryStatusWriter.markFailed} 와 같은 이유)
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void failTurn(UUID turnId, String finishedReason) {
+    public void failTurn(UUID turnId, UUID leaseToken, String finishedReason) {
         try {
             messageTurnRepository.findById(turnId).ifPresent(turn -> {
+                if (!turn.isHeldBy(leaseToken)) {
+                    log.warn("Turn lease lost, abandoning failure record: turnId={}", turnId);
+                    return;
+                }
                 turn.fail(finishedReason);
                 messageTurnRepository.save(turn);
             });
         } catch (Exception e) {
             log.error("Failed to mark turn as failed: turnId={} reason={}", turnId, finishedReason, e);
+        }
+    }
+
+    /**
+     * 진행 중임을 알린다 — {@code updated_at} 만 갱신한다.
+     *
+     * <p>이게 없으면 {@code updated_at} 이 턴을 연 시점에 고정되어, 파이프라인이 오래 걸리는
+     * 턴이 "버려진 것"으로 오판된다. SSE 타임아웃은 클라이언트 연결만 닫고 백그라운드 처리는
+     * 계속 돌기 때문이다.
+     *
+     * <p>실패는 삼킨다. 하트비트를 놓쳐도 리스 토큰이 최종 정합성을 지킨다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void touchTurn(UUID turnId, UUID leaseToken) {
+        try {
+            int updated = messageTurnRepository.touchIfHeld(
+                    turnId, leaseToken, OffsetDateTime.now(ZoneOffset.UTC));
+            if (updated == 0) {
+                log.debug("Turn heartbeat skipped — lease not held: turnId={}", turnId);
+            }
+        } catch (Exception e) {
+            log.warn("Turn heartbeat failed: turnId={}", turnId, e);
         }
     }
 
