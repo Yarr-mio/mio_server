@@ -9,6 +9,7 @@ import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
 import com.mio.session.domain.SummaryStatus;
+import com.mio.session.domain.TurnStatus;
 import com.mio.session.dto.*;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
@@ -26,6 +27,9 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -38,7 +42,13 @@ public class SessionService {
     private static final Set<String> ALLOWED_CHARACTER_IDS = Set.of("mio", "bau", "rumi", "momo", "chichi");
     private static final int MSG_RATE_LIMIT_MAX = 60;
     private static final long MSG_RATE_LIMIT_TTL_SECONDS = 60L;
-    private static final long MSG_IDEMPOTENCY_TTL_SECONDS = 3600L;
+    /**
+     * 이 시간 안에 갱신된 generating 턴은 아직 살아 있다고 본다.
+     *
+     * <p>SSE emitter 타임아웃(60초)과 Nginx proxy_read_timeout(60초)보다 길게 잡는다. 그보다
+     * 짧으면 실제로 응답을 만들고 있는 턴을 버려진 것으로 오인해 중복 생성이 일어난다.
+     */
+    private static final Duration IN_FLIGHT_TURN_WINDOW = Duration.ofSeconds(90);
 
     private final SessionRepository sessionRepository;
     private final SessionSummaryRepository sessionSummaryRepository;
@@ -178,13 +188,32 @@ public class SessionService {
         checkMessageRateLimit(userId);
         Session session = findSession(sessionId);
         validateSessionOwner(session, userId);
-        if (idempotencyKey != null) {
-            Boolean acquired = redisTemplate.opsForValue().setIfAbsent(
-                    messageIdempotencyKey(userId, idempotencyKey), "1", MSG_IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
-            if (!Boolean.TRUE.equals(acquired)) {
-                throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
-            }
+        rejectIfTurnInFlight(userId, idempotencyKey);
+    }
+
+    /**
+     * 같은 Idempotency-Key 의 턴이 <b>지금 진행 중</b>일 때만 거절한다 (이슈 P0-A).
+     *
+     * <p>이전에는 Redis 에 키를 선점하고 해제하지 않아, 첫 시도가 LLM 오류로 죽으면 TTL 1시간
+     * 동안 같은 키로 재시도조차 막혔다. 이제 판정 근거를 턴 상태로 옮긴다.
+     *
+     * <ul>
+     *   <li>진행 중 — 아직 살아 있을 수 있으므로 거절한다</li>
+     *   <li>완료 — 저장된 응답을 재생하므로 통과시킨다</li>
+     *   <li>실패·버려짐 — 같은 턴을 재개하므로 통과시킨다</li>
+     * </ul>
+     */
+    private void rejectIfTurnInFlight(UUID userId, String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return;
         }
+        sessionMessagePersistenceService.findTurn(userId, idempotencyKey)
+                .filter(turn -> turn.getStatus() == TurnStatus.GENERATING)
+                .filter(turn -> turn.getUpdatedAt().isAfter(
+                        OffsetDateTime.now(ZoneOffset.UTC).minus(IN_FLIGHT_TURN_WINDOW)))
+                .ifPresent(turn -> {
+                    throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
+                });
     }
 
     @Transactional

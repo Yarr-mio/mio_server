@@ -65,6 +65,20 @@ public class SessionMessagePersistenceService {
             UserMessageSignal userSignal,
             String idempotencyKey) {
 
+        // 같은 키의 턴이 이미 있으면 새로 만들지 않고 재개한다. 사용자 발화는 이미 저장돼
+        // 있으므로 다시 저장하면 같은 말이 대화 기록에 두 번 남는다.
+        if (idempotencyKey != null) {
+            Optional<MessageTurn> existing =
+                    messageTurnRepository.findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
+            if (existing.isPresent()) {
+                MessageTurn turn = existing.get();
+                log.info("Resuming turn: turnId={} previousStatus={} reason={}",
+                        turn.getId(), turn.getStatus(), turn.getFinishedReason());
+                turn.resume();
+                return messageTurnRepository.save(turn);
+            }
+        }
+
         Session session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
         User user = userRepository.findById(userId)

@@ -94,6 +94,19 @@ public class MessageTurn {
         this.status = TurnStatus.COMPLETED;
     }
 
+    /**
+     * 실패했거나 버려진 턴을 다시 생성 중으로 되돌린다 — 같은 Idempotency-Key 재시도.
+     *
+     * <p>새 턴을 만들지 않고 기존 턴을 재사용한다. 사용자 발화는 이미 저장돼 있으므로 다시
+     * 저장하면 같은 말이 대화 기록에 두 번 남는다. 이전 실패 사유는 지워진다 — 진행 중인 턴에
+     * 종료 사유가 남아 있으면 안 되기 때문이다(DB CHECK).
+     */
+    public void resume() {
+        this.status = TurnStatus.GENERATING;
+        this.finishedReason = null;
+        this.assistantMessageId = null;
+    }
+
     /** 응답을 만들지 못하고 끝난 턴으로 확정한다. */
     public void fail(String finishedReason) {
         this.finishedReason = requireReason(finishedReason);

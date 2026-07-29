@@ -52,6 +52,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.MessageTurn;
 import com.mio.session.domain.Session;
+import com.mio.session.domain.TurnStatus;
 import com.mio.session.dto.SseEventDto;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.service.CbtReconstructionService;
@@ -139,6 +140,13 @@ public class ConversationOrchestrator {
             String outboundMsgId = "msg_out_" + shortId();
 
             sendEvent(emitter, new SseEventDto.SessionMetaEvent(inboundMsgId, OffsetDateTime.now(ZoneOffset.UTC)));
+
+            // 같은 Idempotency-Key 로 이미 완료된 턴이 있으면 저장된 응답을 재생한다.
+            // LLM 을 다시 호출하지 않으므로 재시도가 비용을 늘리지 않는다 (이슈 P0-A).
+            if (replayCompletedTurn(userId, idempotencyKey, outboundMsgId, emitter)) {
+                emitter.complete();
+                return;
+            }
 
             // 1. Normalize
             String normalized = inputNormalizer.normalize(userMessage);
@@ -455,6 +463,50 @@ public class ConversationOrchestrator {
                 messagePersistenceService.failTurn(turn.getId(), resolveFinishedReason(finishedReasonRef));
             }
             emitter.completeWithError(e);
+        }
+    }
+
+    /**
+     * 이미 완료된 턴이면 저장된 응답을 재생하고 {@code true} 를 반환한다.
+     *
+     * <p>클라이언트가 응답을 받는 도중 연결이 끊겨 같은 키로 다시 요청한 경우다. 파이프라인을
+     * 다시 태우면 LLM 을 또 호출하고(비용) 같은 사용자 발화로 다른 답을 주게 된다. 저장된 것을
+     * 그대로 내보내는 것이 idempotency 의 의미에 맞는다.
+     *
+     * <p>재생 실패는 삼킨다 — 재생하지 못하면 새로 생성하는 편이 낫지, 요청 전체를 실패시킬
+     * 이유가 없다.
+     */
+    private boolean replayCompletedTurn(UUID userId, String idempotencyKey,
+                                        String outboundMsgId, SseEmitter emitter) {
+        if (idempotencyKey == null) {
+            return false;
+        }
+        try {
+            MessageTurn completed = messagePersistenceService.findTurn(userId, idempotencyKey)
+                    .filter(t -> t.getStatus() == TurnStatus.COMPLETED)
+                    .orElse(null);
+            if (completed == null) {
+                return false;
+            }
+
+            String content = messagePersistenceService
+                    .loadAssistantContent(completed.getAssistantMessageId())
+                    .orElse(null);
+            if (content == null) {
+                // 위기 플로우·보안 거절은 고정 응답이라 assistant 메시지가 없다.
+                // 재생할 원문이 없으므로 새로 처리하게 둔다.
+                return false;
+            }
+
+            log.info("Replaying completed turn: turnId={} reason={}",
+                    completed.getId(), completed.getFinishedReason());
+            sendEvent(emitter, new SseEventDto.DeltaEvent(content, outboundMsgId));
+            sendEvent(emitter, new SseEventDto.DoneEvent(
+                    outboundMsgId, null, false, false, completed.getFinishedReason()));
+            return true;
+        } catch (Exception e) {
+            log.warn("Turn replay failed, falling through to normal processing: key={}", idempotencyKey, e);
+            return false;
         }
     }
 
