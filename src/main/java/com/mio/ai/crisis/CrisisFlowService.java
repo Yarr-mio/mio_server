@@ -138,7 +138,13 @@ public class CrisisFlowService {
         };
     }
 
-    private SseEventDto.CrisisEvent buildCrisisEvent(int severity, String fixedResponse) {
+    /**
+     * 위기 SSE 이벤트를 만든다. severity 2 이상이면 핫라인이 붙는다.
+     *
+     * <p>재시도 재생에서도 같은 이벤트를 복원해야 하므로 공개한다 — 텍스트만 재생하면 연결이
+     * 끊겨 재시도하는 위기 사용자가 핫라인을 보지 못한다.
+     */
+    public SseEventDto.CrisisEvent buildCrisisEvent(int severity, String fixedResponse) {
         if (severity >= 2) {
             return new SseEventDto.CrisisEvent(
                     severity,

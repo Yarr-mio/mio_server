@@ -128,6 +128,8 @@ public class ConversationOrchestrator {
 
         // 이 턴이 어떻게 끝났는지. 어떤 경로로 빠져나가든 터미널 상태로 저장된다 (이슈 P0-A).
         AtomicReference<String> finishedReasonRef = new AtomicReference<>(null);
+        // 위기 플로우로 끝난 턴의 severity. 재생 시 핫라인을 포함한 crisis 이벤트를 복원한다.
+        AtomicReference<Integer> crisisSeverityRef = new AtomicReference<>(null);
         MessageTurn turn = null;
         String outboundMsgId = "msg_out_" + shortId();
 
@@ -243,8 +245,7 @@ public class ConversationOrchestrator {
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
                 assistantContent = crisisResult.fixedResponse();
                 // CrisisFlowService 가 crisis·done 을 직접 보내므로 sendDoneEvent 를 거치지 않는다.
-                // 전송에 실패했다면 사용자는 핫라인을 보지 못했다 — 완료로 기록하면 안 된다.
-                finishedReasonRef.set(crisisResult.delivered() ? "crisis_flow" : "error");
+                recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
 
             } else if (decision.action() == DecisionAction.GENERATE) {
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
@@ -273,7 +274,8 @@ public class ConversationOrchestrator {
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
-                                    outboundMsgId, userSignal.emotionScore());
+                                    outboundMsgId, userSignal.emotionScore(),
+                                    finishedReasonRef, crisisSeverityRef);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
@@ -373,6 +375,7 @@ public class ConversationOrchestrator {
                                             user, session, emitter, outboundMsgId, userSignal.emotionScore());
                             assistantContent = crisisResult != null ? crisisResult.fixedResponse()
                                     : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                            recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
                         } else {
                             String replacedContent = switch (judgeActionResult.action()) {
                                 case REWRITE -> judgeActionResult.rewrittenContent() != null
@@ -437,7 +440,8 @@ public class ConversationOrchestrator {
 
             // 8. 응답을 저장하고 턴을 완료로 확정한다. 사용자 발화는 이미 openTurn 에서 저장됐다.
             messagePersistenceService.completeTurn(
-                    turn.getId(), assistantContent, crisisFlowTriggered, resolveFinishedReason(finishedReasonRef));
+                    turn.getId(), assistantContent, crisisFlowTriggered,
+                    resolveFinishedReason(finishedReasonRef), crisisSeverityRef.get());
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
             checkpointService.maybeCheckpoint(sessionId, userId);
@@ -467,6 +471,28 @@ public class ConversationOrchestrator {
             //    보낼 대상이 없다. 저장이 보장 대상이고 전송은 최선 노력이다.
             sendFallbackDone(emitter, outboundMsgId);
             emitter.completeWithError(e);
+        }
+    }
+
+    /**
+     * 위기 플로우의 결과를 턴에 반영한다.
+     *
+     * <p>위기 진입 경로가 셋이라(입력 판정 / CAUTIOUS_SPECULATIVE 출력 가드 / BUFFER 출력 가드)
+     * 한 곳에서만 기록하면 나머지 경로의 턴이 사유 없이 {@code error} 로 확정된다. 정상 전달된
+     * 위기가 실패로 기록되고, 재시도 시 그 잘못된 사유가 재생된다.
+     *
+     * <p>전송에 실패했다면 사용자는 핫라인을 보지 못했다 — 완료로 기록하지 않는다.
+     */
+    private void recordCrisisOutcome(CrisisFlowService.CrisisHandleResult result,
+                                     AtomicReference<String> finishedReasonRef,
+                                     AtomicReference<Integer> crisisSeverityRef) {
+        if (result == null) {
+            finishedReasonRef.set("error");
+            return;
+        }
+        finishedReasonRef.set(result.delivered() ? "crisis_flow" : "error");
+        if (result.delivered()) {
+            crisisSeverityRef.set(result.severity());
         }
     }
 
@@ -524,8 +550,19 @@ public class ConversationOrchestrator {
                 return false;
             }
 
-            log.info("Replaying completed turn: turnId={} reason={}",
-                    completed.getId(), completed.getFinishedReason());
+            log.info("Replaying completed turn: turnId={} reason={} crisisSeverity={}",
+                    completed.getId(), completed.getFinishedReason(), completed.getCrisisSeverity());
+
+            Integer severity = completed.getCrisisSeverity();
+            if (severity != null) {
+                // 위기로 끝난 턴이다. 텍스트만 재생하면 사용자가 핫라인을 다시 보지 못한다 —
+                // 연결이 끊겨 재시도하는 위기 사용자에게 가장 필요한 것이 그 번호다.
+                sendEvent(emitter, crisisFlowService.buildCrisisEvent(severity, content));
+                sendEvent(emitter, new SseEventDto.DoneEvent(
+                        outboundMsgId, null, true, false, completed.getFinishedReason()));
+                return true;
+            }
+
             sendEvent(emitter, new SseEventDto.DeltaEvent(content, outboundMsgId));
             sendEvent(emitter, new SseEventDto.DoneEvent(
                     outboundMsgId, null, false, false, completed.getFinishedReason()));
@@ -572,7 +609,9 @@ public class ConversationOrchestrator {
             Session session,
             SseEmitter emitter,
             String outboundMsgId,
-            Integer emotionScore) throws IOException {
+            Integer emotionScore,
+            AtomicReference<String> finishedReasonRef,
+            AtomicReference<Integer> crisisSeverityRef) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -582,6 +621,7 @@ public class ConversationOrchestrator {
                 CrisisFlowService.CrisisHandleResult cr =
                         crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
                                 user, session, emitter, outboundMsgId, emotionScore);
+                recordCrisisOutcome(cr, finishedReasonRef, crisisSeverityRef);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }
         };

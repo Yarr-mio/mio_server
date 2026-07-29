@@ -72,6 +72,11 @@ public class SessionMessagePersistenceService {
                     messageTurnRepository.findByUser_IdAndIdempotencyKey(userId, idempotencyKey);
             if (existing.isPresent()) {
                 MessageTurn turn = existing.get();
+                // 완료된 턴은 재생 대상이지 재개 대상이 아니다. 재생이 실패해 여기까지 흘러온
+                // 경우라도 되돌리면 안 된다 — 저장된 응답이 고아가 되고 LLM 을 다시 호출한다.
+                if (!turn.isResumable()) {
+                    throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
+                }
                 log.info("Resuming turn: turnId={} previousStatus={} reason={}",
                         turn.getId(), turn.getStatus(), turn.getFinishedReason());
                 turn.resume();
@@ -116,6 +121,19 @@ public class SessionMessagePersistenceService {
             String assistantContent,
             boolean crisisFlowTriggered,
             String finishedReason) {
+        completeTurn(turnId, assistantContent, crisisFlowTriggered, finishedReason, null);
+    }
+
+    /**
+     * @param crisisSeverity 위기 플로우로 끝난 턴이면 그 severity — 재생 시 핫라인 복원에 쓴다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void completeTurn(
+            UUID turnId,
+            String assistantContent,
+            boolean crisisFlowTriggered,
+            String finishedReason,
+            Integer crisisSeverity) {
 
         MessageTurn turn = messageTurnRepository.findById(turnId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
@@ -129,7 +147,7 @@ public class SessionMessagePersistenceService {
                     turn.getSession().getId(), 1, OffsetDateTime.now(ZoneOffset.UTC));
         }
 
-        turn.complete(assistantMessageId, finishedReason);
+        turn.complete(assistantMessageId, finishedReason, crisisSeverity);
         messageTurnRepository.save(turn);
     }
 

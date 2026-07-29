@@ -89,6 +89,64 @@ class MessageTurnTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * 완료된 턴을 재개하면 저장된 응답 참조가 끊겨 그 메시지가 고아가 되고, 파이프라인이 다시
+     * 돌아 같은 발화에 두 번째 응답과 두 번째 LLM 호출이 생긴다. 완료된 턴은 재생 대상이다.
+     */
+    @Test
+    @DisplayName("완료된 턴은 재개할 수 없다")
+    void completedTurnCannotBeResumed() {
+        MessageTurn turn = newTurn();
+        turn.complete(UUID.randomUUID(), "stop");
+
+        assertThat(turn.isResumable()).isFalse();
+        assertThatThrownBy(turn::resume)
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("실패·진행 중인 턴은 재개할 수 있고 이전 흔적이 지워진다")
+    void failedTurnResumesCleanly() {
+        MessageTurn turn = newTurn();
+        turn.complete(UUID.randomUUID(), "crisis_flow", 3);
+        // 완료는 재개 불가이므로 실패 턴으로 다시 만든다
+        MessageTurn failed = newTurn();
+        failed.fail("error");
+
+        assertThat(failed.isResumable()).isTrue();
+        failed.resume();
+
+        assertThat(failed.getStatus()).isEqualTo(TurnStatus.GENERATING);
+        assertThat(failed.getFinishedReason()).isNull();
+        assertThat(failed.getAssistantMessageId()).isNull();
+        assertThat(failed.getCrisisSeverity()).isNull();
+    }
+
+    /**
+     * 위기로 끝난 턴은 재생 시 핫라인을 포함한 crisis 이벤트를 복원해야 한다. severity 가
+     * 없으면 텍스트만 재생되어, 연결이 끊겨 재시도한 위기 사용자가 상담 번호를 보지 못한다.
+     */
+    @Test
+    @DisplayName("위기로 끝난 턴은 severity 를 보존한다")
+    void crisisTurnRetainsSeverity() {
+        MessageTurn turn = newTurn();
+
+        turn.complete(UUID.randomUUID(), "crisis_flow", 3);
+
+        assertThat(turn.getCrisisSeverity()).isEqualTo(3);
+        assertThat(turn.getFinishedReason()).isEqualTo("crisis_flow");
+    }
+
+    @Test
+    @DisplayName("일반 응답으로 끝난 턴에는 severity 가 없다")
+    void normalTurnHasNoSeverity() {
+        MessageTurn turn = newTurn();
+
+        turn.complete(UUID.randomUUID(), "stop");
+
+        assertThat(turn.getCrisisSeverity()).isNull();
+    }
+
     @Test
     @DisplayName("TurnStatus 는 DB 값과 양방향 변환된다")
     void statusRoundTrips() {

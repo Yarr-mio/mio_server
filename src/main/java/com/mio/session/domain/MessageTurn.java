@@ -53,6 +53,10 @@ public class MessageTurn {
     @Column(name = "finished_reason")
     private String finishedReason;
 
+    /** 위기 플로우로 끝난 턴의 severity. 재생 시 crisis 이벤트 복원에 쓴다. */
+    @Column(name = "crisis_severity")
+    private Integer crisisSeverity;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -89,8 +93,17 @@ public class MessageTurn {
      * 내보내므로 assistant 메시지가 남지 않는 경로가 있다. 그 경우에도 턴 자체는 완료다.
      */
     public void complete(UUID assistantMessageId, String finishedReason) {
+        complete(assistantMessageId, finishedReason, null);
+    }
+
+    /**
+     * @param crisisSeverity 위기 플로우로 끝난 턴이면 그 severity. 재생 시 핫라인을 포함한
+     *                       crisis 이벤트를 복원하는 데 쓴다.
+     */
+    public void complete(UUID assistantMessageId, String finishedReason, Integer crisisSeverity) {
         this.assistantMessageId = assistantMessageId;
         this.finishedReason = requireReason(finishedReason);
+        this.crisisSeverity = crisisSeverity;
         this.status = TurnStatus.COMPLETED;
     }
 
@@ -102,9 +115,20 @@ public class MessageTurn {
      * 종료 사유가 남아 있으면 안 되기 때문이다(DB CHECK).
      */
     public void resume() {
+        // 완료된 턴은 재개하지 않는다. 응답이 이미 저장돼 있는데 generating 으로 되돌리면
+        // assistant_message_id 참조가 끊겨 그 메시지가 고아가 되고, 파이프라인이 다시 돌아
+        // 같은 발화에 두 번째 응답과 두 번째 LLM 호출이 생긴다.
+        if (status == TurnStatus.COMPLETED) {
+            throw new IllegalStateException("completed turn must be replayed, not resumed: " + id);
+        }
         this.status = TurnStatus.GENERATING;
         this.finishedReason = null;
         this.assistantMessageId = null;
+        this.crisisSeverity = null;
+    }
+
+    public boolean isResumable() {
+        return status != TurnStatus.COMPLETED;
     }
 
     /** 응답을 만들지 못하고 끝난 턴으로 확정한다. */

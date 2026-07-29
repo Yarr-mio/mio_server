@@ -246,9 +246,6 @@ public class SessionService {
         }
     }
 
-    private static String messageIdempotencyKey(UUID userId, String key) {
-        return "msg:idempotency:" + userId + ":" + key;
-    }
 
     private User findUser(UUID userId) {
         return userRepository.findById(userId)

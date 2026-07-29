@@ -34,6 +34,11 @@ CREATE TABLE message_turns (
     -- stop | replaced_by_guard | crisis_flow | security_refusal | error
     finished_reason      TEXT,
 
+    -- 위기 플로우로 끝난 턴의 severity. 재시도 재생 시 crisis 이벤트(핫라인 포함)를 그대로
+    -- 복원하기 위해 필요하다. 이게 없으면 연결이 끊긴 위기 사용자가 재시도했을 때 텍스트만
+    -- 받고 핫라인을 보지 못한다.
+    crisis_severity      INT,
+
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
 
@@ -46,7 +51,10 @@ CREATE TABLE message_turns (
         CHECK (
             (status = 'generating' AND finished_reason IS NULL)
             OR (status IN ('completed', 'failed') AND finished_reason IS NOT NULL)
-        )
+        ),
+
+    CONSTRAINT ck_message_turns_crisis_severity
+        CHECK (crisis_severity IS NULL OR crisis_severity BETWEEN 1 AND 3)
 );
 
 -- 같은 사용자가 같은 키로 두 번 요청하면 INSERT 가 실패한다. Redis SETNX 와 달리
