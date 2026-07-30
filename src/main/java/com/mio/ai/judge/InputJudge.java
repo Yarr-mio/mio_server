@@ -93,11 +93,18 @@ public class InputJudge {
         JsonNode root = objectMapper.readTree(json);
 
         JsonNode secNode = root.path("security");
-        SecurityLevel secLevel = parseSecurityLevel(
-                secNode.hasNonNull("level") ? secNode.path("level").asText() : "CLEAN");
+        // security.level 이 없으면 "안전함"이 아니라 "판정하지 못함"이다. 이 판정은 이제
+        // effectiveSecurity 결합에 실제로 쓰이므로(이슈 #262), CLEAN 으로 채우면 규칙이
+        // 의심한 입력을 Judge 가 "깨끗하다"고 복구해버린다 — 없는 근거로 등급을 낮추는 셈이다.
+        if (!secNode.hasNonNull("level")) {
+            throw new IllegalStateException("InputJudge 응답에 security.level 이 없다");
+        }
+        SecurityLevel secLevel = parseSecurityLevel(secNode.path("level").asText());
         List<String> attackTypes = new ArrayList<>();
         secNode.path("attack_types").forEach(n -> attackTypes.add(n.asText()));
-        boolean requireOutputSecGuard = secNode.path("require_output_security_guard").asBoolean(false);
+        // 가드 요구는 부재 시 켜는 쪽이 기본이다. 끄는 쪽을 기본으로 두면 필드 누락이
+        // 곧 가드 해제가 된다.
+        boolean requireOutputSecGuard = secNode.path("require_output_security_guard").asBoolean(true);
         SecurityVerdict security = new SecurityVerdict(secLevel, attackTypes, requireOutputSecGuard);
 
         JsonNode riskNode = root.path("risk");
@@ -112,7 +119,7 @@ public class InputJudge {
         riskNode.path("risk_types").forEach(n -> riskTypes.add(n.asText()));
         GenerationMode genMode = parseGenerationMode(riskNode.path("recommended_generation_mode").asText("NORMAL"));
         DeliveryMode delivery = parseDeliveryMode(riskNode.path("recommended_delivery").asText("SPECULATIVE"));
-        boolean requireSafetyGuard = riskNode.path("require_output_safety_guard").asBoolean(false);
+        boolean requireSafetyGuard = riskNode.path("require_output_safety_guard").asBoolean(true);
         RiskVerdict risk = new RiskVerdict(riskLevel, riskTypes, genMode, delivery, requireSafetyGuard);
 
         double confidence = root.path("confidence").asDouble(0.5);
@@ -120,12 +127,18 @@ public class InputJudge {
         return new InputJudgeResult(security, risk, confidence);
     }
 
+    /**
+     * 알 수 없는 값을 CLEAN 으로 떨어뜨리지 않는다 ({@link #parseRiskLevel} 과 같은 이유).
+     *
+     * <p>이 판정은 {@code EffectiveSecurityResolver} 에서 규칙 판정과 결합된다. 스키마를 벗어난
+     * 값이 CLEAN 이 되면 규칙이 SUSPICIOUS 로 본 입력을 "Judge 가 깨끗하다고 했다"며 되돌린다.
+     * 판정 실패로 올려 규칙 판정이 유지되게 한다.
+     */
     private SecurityLevel parseSecurityLevel(String value) {
         try {
             return SecurityLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown SecurityLevel from LLM: {}, defaulting to CLEAN", value);
-            return SecurityLevel.CLEAN;
+            throw new IllegalStateException("InputJudge 가 알 수 없는 SecurityLevel 을 반환했다: " + value, e);
         }
     }
 

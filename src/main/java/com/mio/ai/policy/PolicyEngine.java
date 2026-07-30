@@ -6,7 +6,9 @@ import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.profile.SafetyProfile;
 import com.mio.ai.safety.CombinedSignal;
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.security.SecurityLevel;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -17,9 +19,12 @@ import java.util.UUID;
  * Phase 2: 우선순위 10단계 전체 구현.
  */
 @Component
+@RequiredArgsConstructor
 public class PolicyEngine {
 
     private static final String POLICY_VERSION = "v2.0-phase2";
+
+    private final EffectiveSecurityResolver effectiveSecurityResolver;
 
     public PolicyDecision decide(
             CombinedSignal combined,
@@ -29,50 +34,58 @@ public class PolicyEngine {
 
         String decisionId = "pd_" + decisionSuffix();
 
+        // 0. 규칙 판정과 Judge 판정을 합친다 (이슈 #262).
+        //
+        // 이전에는 규칙 판정만 봤고 Judge 의 보안 판정은 파싱만 하고 버렸다. 그래서 보안은
+        // 정규식 목록 하나에 전적으로 의존했다. 아래 분기는 전부 이 결합 결과를 쓴다 —
+        // 결정에 기록되는 등급도 실제 적용된 등급이어야 하므로 build(...) 인자도 같이 바꾼다.
+        SecurityLevel effectiveSecurity =
+                effectiveSecurityResolver.resolve(combined.securityLevel(), judgeResult);
+
         // 1. Security ATTACK — 성격에 따라 갈린다 (이슈 #260).
         //
         // 자해·자살 수단 질의는 등급상 ATTACK 이지만 거절이 아니라 위기 플로우로 보낸다.
         // 검사 순서를 통째로 뒤로 미루지는 않는다 — 그러면 진짜 인젝션이 위기 키워드를 끼워 넣어
         // 보안 필터를 우회할 수 있다. 성격이 다른 입력만 분기시킨다.
-        if (combined.securityLevel() == SecurityLevel.ATTACK) {
+        if (effectiveSecurity == SecurityLevel.ATTACK) {
             if (combined.selfHarmInquiry()) {
-                return crisisFlow(decisionId, combined, CrisisTrigger.SELF_HARM_INQUIRY);
+                return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.SELF_HARM_INQUIRY);
             }
             return build(decisionId, DecisionAction.SECURITY_REFUSAL,
                     GenerationMode.CRISIS, DeliveryMode.SECURITY_REFUSAL,
-                    combined.securityLevel(), false, false, false,
+                    effectiveSecurity, false, false, false,
                     InterventionHints.empty(), RiskLevel.ATTACK);
         }
 
         // 2. L0 self-harm/intent + L1 hardCrisis
         if (combined.hardCrisis()) {
-            return crisisFlow(decisionId, combined, CrisisTrigger.L1_KEYWORD);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD);
         }
 
         // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
         // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
         if (combined.hardCrisisUnverified() && !crisisClearedByJudge(judgeResult)) {
-            return crisisFlow(decisionId, combined, CrisisTrigger.L1_KEYWORD);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD);
         }
 
         // 3. Security SUSPICIOUS → GUARDED + OutputGuard 활성
-        if (combined.securityLevel() == SecurityLevel.SUSPICIOUS) {
+        if (effectiveSecurity == SecurityLevel.SUSPICIOUS) {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
-                    combined.securityLevel(), true, true, true,
+                    effectiveSecurity, true, true, true,
                     InterventionHints.empty(), RiskLevel.LOW);
         }
 
         // 4. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
         if (combined.l0Flagged() && combined.l1Result().moderationFlagged()) {
-            return crisisFlow(decisionId, combined, CrisisTrigger.MODERATION);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.MODERATION);
         }
 
         // 5. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
         if (combined.l0Flagged() && !combined.hardCrisis() && !combined.l1Result().moderationFlagged()) {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
-                    combined.securityLevel(), true, true, true,
+                    effectiveSecurity, true, true, true,
                     InterventionHints.empty(), RiskLevel.MEDIUM);
         }
 
@@ -85,14 +98,14 @@ public class PolicyEngine {
             // 다른 판정원이 붙었을 때 이 값이 아래 분기에 걸리지 않고 CLEAR_LOW 기본값으로
             // 조용히 떨어지는 것을 막는다.
             if (riskLevel == RiskLevel.HARD_CRISIS) {
-                return crisisFlow(decisionId, combined, CrisisTrigger.INPUT_JUDGE);
+                return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.INPUT_JUDGE);
             }
 
             // 6. HIGH → GUARDED + BUFFER
             if (riskLevel == RiskLevel.HIGH) {
                 return build(decisionId, DecisionAction.GENERATE,
                         GenerationMode.GUARDED, DeliveryMode.BUFFER,
-                        combined.securityLevel(), true, true, true,
+                        effectiveSecurity, true, true, true,
                         generateHints(profile, riskLevel), RiskLevel.HIGH);
             }
 
@@ -105,7 +118,7 @@ public class PolicyEngine {
                         : generateHints(profile, riskLevel);
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
-                        combined.securityLevel(), true, true, true,
+                        effectiveSecurity, true, true, true,
                         hints, RiskLevel.MEDIUM);
             }
 
@@ -113,7 +126,7 @@ public class PolicyEngine {
             if (riskLevel == RiskLevel.LOW) {
                 return build(decisionId, DecisionAction.GENERATE,
                         GenerationMode.NORMAL, DeliveryMode.SPECULATIVE,
-                        combined.securityLevel(), true, true, false,
+                        effectiveSecurity, true, true, false,
                         generateHints(profile, riskLevel), RiskLevel.LOW);
             }
         }
@@ -122,14 +135,14 @@ public class PolicyEngine {
         if (combined.repetitiveNegative() || combined.emotionSpike()) {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.SUPPORTIVE, DeliveryMode.SPECULATIVE,
-                    combined.securityLevel(), true, true, false,
+                    effectiveSecurity, true, true, false,
                     generateHints(profile, RiskLevel.LOW), RiskLevel.LOW);
         }
 
         // 10. CLEAR_LOW (기본)
         return build(decisionId, DecisionAction.GENERATE,
                 GenerationMode.NORMAL, DeliveryMode.SPECULATIVE,
-                combined.securityLevel(), true, true, false,
+                effectiveSecurity, true, true, false,
                 InterventionHints.empty(), RiskLevel.CLEAR_LOW);
     }
 
@@ -160,11 +173,12 @@ public class PolicyEngine {
      * 위기 플로우 결정. 진입 경로만 다르고 나머지 값은 모두 같으므로 한 곳에 모은다.
      * 경로를 결정에 실어 보내면 {@code CrisisFlowService} 가 신호를 역추론할 필요가 없다 (이슈 #260).
      */
-    private PolicyDecision crisisFlow(String decisionId, CombinedSignal combined, CrisisTrigger trigger) {
+    private PolicyDecision crisisFlow(String decisionId, SecurityLevel effectiveSecurity,
+                                      CrisisTrigger trigger) {
         return new PolicyDecision(
                 decisionId, DecisionAction.CRISIS_FLOW,
                 GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
-                combined.securityLevel(), false, false, false,
+                effectiveSecurity, false, false, false,
                 InterventionHints.empty(), POLICY_VERSION, RiskLevel.HARD_CRISIS, trigger
         );
     }

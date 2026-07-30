@@ -1,5 +1,6 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudgeResult;
@@ -51,7 +52,7 @@ class PipelineSignalChainQaTest {
         securityFilter = new SecurityRuleFilter();
         safetyL1 = new SafetyL1();
         combiner = new SafetySignalCombiner();
-        policyEngine = new PolicyEngine();
+        policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         defaultProfile = new SafetyProfile(
                 "test_user", "default", Map.of(), List.of(), List.of(),
                 List.of(), 0.0, 0, List.of()
