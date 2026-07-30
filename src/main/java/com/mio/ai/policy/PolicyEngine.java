@@ -40,7 +40,8 @@ public class PolicyEngine {
         // 정규식 목록 하나에 전적으로 의존했다. 아래 분기는 전부 이 결합 결과를 쓴다 —
         // 결정에 기록되는 등급도 실제 적용된 등급이어야 하므로 build(...) 인자도 같이 바꾼다.
         SecurityLevel effectiveSecurity =
-                effectiveSecurityResolver.resolve(combined.securityLevel(), judgeResult);
+                effectiveSecurityResolver.resolve(combined.securityLevel(),
+                        combined.securityEvidenceUnverifiableByJudge(), judgeResult);
 
         // 1. Security ATTACK — 성격에 따라 갈린다 (이슈 #260).
         //

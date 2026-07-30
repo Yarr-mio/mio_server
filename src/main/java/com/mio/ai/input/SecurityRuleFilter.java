@@ -150,9 +150,12 @@ public class SecurityRuleFilter {
         }
 
         Set<String> suspiciousTypes = new LinkedHashSet<>(matches(haystack, SUSPICIOUS_MATCHERS));
-        suspiciousTypes.addAll(obfuscationSignals(rawText));
+        List<String> rawSignals = obfuscationSignals(rawText);
+        suspiciousTypes.addAll(rawSignals);
         if (!suspiciousTypes.isEmpty()) {
-            return SecurityAssessment.suspicious(List.copyOf(suspiciousTypes));
+            // 원문에서만 드러난 근거가 섞여 있으면 Judge 가 확인할 수 없다는 사실을 함께 싣는다.
+            // 이게 없으면 Judge 의 CLEAN 한 번으로 원문 탐지 결과가 사라진다.
+            return SecurityAssessment.suspicious(List.copyOf(suspiciousTypes), !rawSignals.isEmpty());
         }
 
         return SecurityAssessment.clean();

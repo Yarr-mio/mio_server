@@ -35,11 +35,17 @@ import org.springframework.stereotype.Component;
 public class EffectiveSecurityResolver {
 
     /**
-     * @param ruleLevel   {@code SecurityRuleFilter} 의 결정론적 판정
-     * @param judgeResult Judge 결과. {@code null} 이면 호출되지 않았고,
-     *                    {@code failed()} 면 호출했지만 판정을 받지 못했다
+     * @param ruleLevel            {@code SecurityRuleFilter} 의 결정론적 판정
+     * @param unverifiableByJudge  판정 근거를 Judge 가 구조적으로 확인할 수 없는 경우.
+     *                             Judge 에는 정규화본만 전달되므로 원문에서만 드러나는
+     *                             근거(Base64·제로폭)가 여기 해당한다. 이때 Judge 의 CLEAN 은
+     *                             "확인했더니 깨끗하다"가 아니라 "확인할 수 없었다"이므로
+     *                             강등 근거로 쓰지 않는다
+     * @param judgeResult          Judge 결과. {@code null} 이면 호출되지 않았고,
+     *                             {@code failed()} 면 호출했지만 판정을 받지 못했다
      */
-    public SecurityLevel resolve(SecurityLevel ruleLevel, InputJudgeResult judgeResult) {
+    public SecurityLevel resolve(SecurityLevel ruleLevel, boolean unverifiableByJudge,
+                                 InputJudgeResult judgeResult) {
         if (ruleLevel == SecurityLevel.ATTACK) {
             return SecurityLevel.ATTACK;
         }
@@ -51,6 +57,10 @@ public class EffectiveSecurityResolver {
         }
 
         if (ruleLevel == SecurityLevel.SUSPICIOUS) {
+            // 근거를 Judge 가 볼 수 없었다면 그의 CLEAN 은 판정이 아니라 침묵이다.
+            if (unverifiableByJudge) {
+                return SecurityLevel.SUSPICIOUS;
+            }
             // Judge 가 명시적으로 CLEAN 이라고 한 경우에만 오탐을 복구한다.
             return judgeLevel == SecurityLevel.CLEAN ? SecurityLevel.CLEAN : SecurityLevel.SUSPICIOUS;
         }
