@@ -81,6 +81,69 @@ class InputJudgeTest {
                 .isTrue();
     }
 
+    // ── 이슈 #262: 보안 판정이 실제로 소비되므로 파싱 기본값이 fail-closed 여야 한다 ──
+
+    @Test
+    @DisplayName("security.level 이 없으면 CLEAN 이 아니라 판정 실패다")
+    void missingSecurityLevelIsJudgeFailure() {
+        InputJudge judge = judgeReturning("""
+                {"risk":{"risk_level":"LOW"},"confidence":0.9}
+                """);
+
+        InputJudgeResult result = judge.judge(
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+
+        assertThat(result.failed())
+                .as("CLEAN 으로 채우면 규칙이 의심한 입력을 '없는 근거'로 복구해버린다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("스키마 밖 SecurityLevel 은 CLEAN 으로 떨어뜨리지 않는다")
+    void unknownSecurityLevelIsJudgeFailure() {
+        InputJudge judge = judgeReturning("""
+                {"security":{"level":"PROBABLY_FINE"},"risk":{"risk_level":"LOW"},"confidence":0.9}
+                """);
+
+        InputJudgeResult result = judge.judge(
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+
+        assertThat(result.failed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("가드 요구 필드가 없으면 켜는 쪽이 기본이다")
+    void missingGuardFlagsDefaultToOn() {
+        InputJudge judge = judgeReturning("""
+                {"security":{"level":"SUSPICIOUS"},"risk":{"risk_level":"LOW"},"confidence":0.9}
+                """);
+
+        InputJudgeResult result = judge.judge(
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+
+        assertThat(result.failed()).isFalse();
+        assertThat(result.security().requireOutputSecurityGuard())
+                .as("필드 누락이 곧 가드 해제가 되면 안 된다")
+                .isTrue();
+        assertThat(result.risk().requireOutputSafetyGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("정상 응답은 그대로 파싱한다 — fail-closed 가 정상 경로를 막지 않는다")
+    void wellFormedResponseIsParsed() {
+        InputJudge judge = judgeReturning("""
+                {"security":{"level":"CLEAN","require_output_security_guard":false},
+                 "risk":{"risk_level":"LOW","require_output_safety_guard":false},"confidence":0.9}
+                """);
+
+        InputJudgeResult result = judge.judge(
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+
+        assertThat(result.failed()).isFalse();
+        assertThat(result.security().level()).isEqualTo(SecurityLevel.CLEAN);
+        assertThat(result.security().requireOutputSecurityGuard()).isFalse();
+    }
+
     private InputJudge judgeReturning(String responseJson) {
         LlmClient llmClient = new LlmClient() {
             @Override

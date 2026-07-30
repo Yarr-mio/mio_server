@@ -176,7 +176,8 @@ public class ConversationOrchestrator {
             boolean safetyProfileCacheHit = profileResult.cacheHit();
 
             // 3. Safety checks (parallel in production; sequential with virtual threads)
-            SecurityAssessment securityAssessment = securityRuleFilter.check(normalized);
+            // 원문을 함께 넘긴다. 정규화본은 소문자화돼 있어 Base64 우회를 탐지할 수 없다.
+            SecurityAssessment securityAssessment = securityRuleFilter.check(normalized, userMessage);
             ModerationResult moderation = moderationClient.moderate(normalized);
             SafetyL1Result l1Result = safetyL1.check(
                     new SafetyL1Input(

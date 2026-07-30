@@ -1,5 +1,6 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.judge.CbtInterventionState;
 import com.mio.ai.judge.CbtMetadataClassifier;
@@ -56,7 +57,7 @@ class CbtMetadataQaTest {
     @BeforeEach
     void setUp() {
         classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
-        policyEngine = new PolicyEngine();
+        policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         defaultProfile = new SafetyProfile(
                 "test_user", "default", Map.of(), List.of(), List.of(),
                 List.of(), 0.0, 0, List.of()

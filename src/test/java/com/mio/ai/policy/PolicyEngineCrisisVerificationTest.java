@@ -1,5 +1,6 @@
 package com.mio.ai.policy;
 
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
@@ -24,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PolicyEngineCrisisVerificationTest {
 
-    private final PolicyEngine policyEngine = new PolicyEngine();
+    private final PolicyEngine policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
 
     private CombinedSignal unverified() {
         SafetyL1Result l1 = new SafetyL1Result(

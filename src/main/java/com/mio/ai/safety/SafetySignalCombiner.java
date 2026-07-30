@@ -30,7 +30,8 @@ public class SafetySignalCombiner {
                 moderation.flagged(),
                 requiresJudge,
                 l1,
-                confidence
+                confidence,
+                security.unverifiableByJudge()
         );
     }
 

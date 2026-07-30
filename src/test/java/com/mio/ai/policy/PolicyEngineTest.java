@@ -1,5 +1,6 @@
 package com.mio.ai.policy;
 
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
@@ -17,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class PolicyEngineTest {
 
-    private final PolicyEngine policyEngine = new PolicyEngine();
+    private final PolicyEngine policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
 
     private CombinedSignal combined(SecurityLevel security, boolean hardCrisis,
                                     boolean riskCandidate, boolean l0Flagged) {
@@ -151,5 +152,139 @@ class PolicyEngineTest {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
         var decision = policyEngine.decide(combined, judgeResult(RiskLevel.MEDIUM), null, limitReached);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+    }
+
+    // ── 이슈 #262: Judge 보안 판정이 실제로 결정에 반영되는지 ──────────────
+
+    @Test
+    @DisplayName("규칙 오탐을 Judge 가 복구하면 가드 없이 정상 생성으로 돌아간다")
+    void judgeClearsRuleFalsePositiveAndRestoresNormalPath() {
+        // "회사에서 관리자 권한을 못 받아서" 같은 발화 — 규칙은 SUSPICIOUS, Judge 는 CLEAN
+        CombinedSignal combined = combined(SecurityLevel.SUSPICIOUS, false, false, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.CLEAN, List.of(), false),
+                RiskVerdict.clearLow(), 0.9);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.securityLevel())
+                .as("결정에 기록되는 등급은 실제로 적용된 등급이어야 한다")
+                .isEqualTo(SecurityLevel.CLEAN);
+        assertThat(decision.generationMode())
+                .as("Judge 가 깨끗하다고 했는데 GUARDED 로 남으면 오탐 복구가 안 된 것이다")
+                .isNotEqualTo(GenerationMode.GUARDED);
+    }
+
+    @Test
+    @DisplayName("Judge 판정이 실패하면 규칙의 SUSPICIOUS 를 유지한다")
+    void judgeFailureKeepsRuleSuspicious() {
+        CombinedSignal combined = combined(SecurityLevel.SUSPICIOUS, false, false, false);
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.securityLevel()).isEqualTo(SecurityLevel.SUSPICIOUS);
+        assertThat(decision.generationMode()).isEqualTo(GenerationMode.GUARDED);
+        assertThat(decision.requireOutputGuard())
+                .as("판정을 못 받았으면 보호를 유지한다")
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("규칙이 놓친 인젝션을 Judge 가 잡으면 가드가 켜진다")
+    void judgeRaisesWhatRulesMissed() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.SUSPICIOUS, List.of("obfuscated"), true),
+                RiskVerdict.clearLow(), 0.8);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.securityLevel())
+                .as("이 경로가 없으면 Judge 보안 판정은 파싱만 되고 버려진다 (#262)")
+                .isEqualTo(SecurityLevel.SUSPICIOUS);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Judge 는 ATTACK 까지 올리지 못한다 — 거절 확정은 규칙만")
+    void judgeCannotCauseSecurityRefusal() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.ATTACK, List.of("injection"), true),
+                RiskVerdict.clearLow(), 0.95);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.action())
+                .as("LLM 판정만으로 대화를 끊으면 오탐 비용이 너무 크다")
+                .isNotEqualTo(DecisionAction.SECURITY_REFUSAL);
+        assertThat(decision.securityLevel()).isEqualTo(SecurityLevel.SUSPICIOUS);
+    }
+
+    // ── 이슈 #262 후속: 가드 요구 필드도 소비되는지 ────────────────────
+
+    @Test
+    @DisplayName("Judge 가 가드를 요구하면 LOW 턴도 가드 경로로 올린다")
+    void judgeGuardRequestUpgradesLowTurn() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.CLEAN, List.of(), true),
+                new RiskVerdict(RiskLevel.LOW, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false),
+                0.9);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.requireOutputGuard()).isTrue();
+        assertThat(decision.deliveryMode())
+                .as("플래그만 켜면 아무 일도 안 일어난다 — SPECULATIVE 분기에는 사후 가드가 없다")
+                .isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+    }
+
+    @Test
+    @DisplayName("safety 가드 요구만 있어도 가드 경로로 올린다")
+    void safetyGuardAloneUpgradesDelivery() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.CLEAN, List.of(), false),
+                new RiskVerdict(RiskLevel.LOW, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, true),
+                0.9);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+    }
+
+    @Test
+    @DisplayName("가드 요구가 없으면 기존대로 SPECULATIVE 를 유지한다")
+    void noGuardRequestKeepsSpeculative() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.CLEAN, List.of(), false),
+                new RiskVerdict(RiskLevel.LOW, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false),
+                0.9);
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.deliveryMode())
+                .as("가드 승격이 남발되면 모든 턴이 느려진다")
+                .isEqualTo(DeliveryMode.SPECULATIVE);
+        assertThat(decision.requireOutputGuard()).isFalse();
+    }
+
+    @Test
+    @DisplayName("판정 실패한 Judge 의 가드 플래그는 근거로 쓰지 않는다")
+    void failedJudgeGuardFlagsAreIgnored() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.deliveryMode())
+                .as("폴백의 플래그는 모델이 준 값이 아니라 우리가 채운 값이다")
+                .isEqualTo(DeliveryMode.SPECULATIVE);
     }
 }

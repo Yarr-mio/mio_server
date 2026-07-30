@@ -19,8 +19,28 @@ public record CombinedSignal(
         boolean l0Flagged,
         boolean requiresJudge,
         SafetyL1Result l1Result,
-        double confidence
+        double confidence,
+        boolean securityEvidenceUnverifiableByJudge
 ) {
+    /** 원문 근거 개념 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #262). */
+    public CombinedSignal(
+            SecurityLevel securityLevel,
+            AttackKind attackKind,
+            boolean hardCrisis,
+            boolean hardCrisisUnverified,
+            boolean riskCandidate,
+            boolean emotionSpike,
+            boolean repetitiveNegative,
+            boolean dependencyHint,
+            boolean l0Flagged,
+            boolean requiresJudge,
+            SafetyL1Result l1Result,
+            double confidence) {
+        this(securityLevel, attackKind, hardCrisis, hardCrisisUnverified, riskCandidate,
+                emotionSpike, repetitiveNegative, dependencyHint, l0Flagged, requiresJudge,
+                l1Result, confidence, false);
+    }
+
     /** 공격 성격 분리 이전 시그니처 — 기존 호출부 호환용 (이슈 #260). */
     public CombinedSignal(
             SecurityLevel securityLevel,

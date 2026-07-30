@@ -1,5 +1,6 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.moderation.ModerationResult;
@@ -90,7 +91,7 @@ class CrisisDetectionCorpusQaTest {
         safetyL1 = new SafetyL1();
         combiner = new SafetySignalCombiner();
         signalAnalyzer = new UserMessageSignalAnalyzer();
-        policyEngine = new PolicyEngine();
+        policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         evaluated = CORPUS.stream().map(this::evaluate).toList();
     }
 
