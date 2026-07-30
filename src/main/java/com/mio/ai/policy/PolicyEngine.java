@@ -122,28 +122,63 @@ public class PolicyEngine {
                         hints, RiskLevel.MEDIUM);
             }
 
-            // 8. LOW → NORMAL + SPECULATIVE
+            // 8. LOW → NORMAL + SPECULATIVE (Judge 가 가드를 요구하면 가드 경로로 올린다)
             if (riskLevel == RiskLevel.LOW) {
+                boolean guard = judgeRequiresOutputGuard(judgeResult);
                 return build(decisionId, DecisionAction.GENERATE,
-                        GenerationMode.NORMAL, DeliveryMode.SPECULATIVE,
-                        effectiveSecurity, true, true, false,
+                        GenerationMode.NORMAL, deliveryFor(guard),
+                        effectiveSecurity, true, true, guard,
                         generateHints(profile, riskLevel), RiskLevel.LOW);
             }
         }
 
         // 9. L1 약신호 단독 (Judge 생략)
         if (combined.repetitiveNegative() || combined.emotionSpike()) {
+            boolean guard = judgeRequiresOutputGuard(judgeResult);
             return build(decisionId, DecisionAction.GENERATE,
-                    GenerationMode.SUPPORTIVE, DeliveryMode.SPECULATIVE,
-                    effectiveSecurity, true, true, false,
+                    GenerationMode.SUPPORTIVE, deliveryFor(guard),
+                    effectiveSecurity, true, true, guard,
                     generateHints(profile, RiskLevel.LOW), RiskLevel.LOW);
         }
 
         // 10. CLEAR_LOW (기본)
+        boolean guard = judgeRequiresOutputGuard(judgeResult);
         return build(decisionId, DecisionAction.GENERATE,
-                GenerationMode.NORMAL, DeliveryMode.SPECULATIVE,
-                effectiveSecurity, true, true, false,
+                GenerationMode.NORMAL, deliveryFor(guard),
+                effectiveSecurity, true, true, guard,
                 InterventionHints.empty(), RiskLevel.CLEAR_LOW);
+    }
+
+    /**
+     * Judge 가 출력 가드를 요구했는지.
+     *
+     * <p>이 값을 읽지 않으면 {@code require_output_*_guard} 는 파싱만 되고 버려진다 —
+     * 이슈 #262 가 지적한 것과 정확히 같은 구조다. 파서 기본값을 fail-closed(부재 시 true)로
+     * 바꿔도 소비자가 없으면 아무 효과가 없다.
+     *
+     * <p>판정 실패({@code failed})면 무시한다. 폴백 결과의 플래그는 모델이 준 값이 아니라
+     * 우리가 채운 값이라, 그걸 근거로 동작을 바꾸면 없는 판정을 지어내는 셈이다.
+     */
+    private boolean judgeRequiresOutputGuard(InputJudgeResult judgeResult) {
+        if (judgeResult == null || judgeResult.failed()) {
+            return false;
+        }
+        boolean securityGuard = judgeResult.security() != null
+                && judgeResult.security().requireOutputSecurityGuard();
+        boolean safetyGuard = judgeResult.risk() != null
+                && judgeResult.risk().requireOutputSafetyGuard();
+        return securityGuard || safetyGuard;
+    }
+
+    /**
+     * 가드가 필요하면 전달 방식도 함께 올린다.
+     *
+     * <p>{@code requireOutputGuard} 플래그만 켜는 것으로는 아무 일도 일어나지 않는다.
+     * 오케스트레이터에서 그 플래그는 감사 로그에만 쓰이고, 실제 출력 검사는 전달 방식이
+     * 결정한다 — {@code SPECULATIVE} 분기에는 사후 가드가 아예 없다.
+     */
+    private DeliveryMode deliveryFor(boolean requireOutputGuard) {
+        return requireOutputGuard ? DeliveryMode.CAUTIOUS_SPECULATIVE : DeliveryMode.SPECULATIVE;
     }
 
     /** Phase 1 호환 — profile/judge 없이 호출 가능 */
