@@ -3,6 +3,7 @@ package com.mio.ai.memory.consolidation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -98,11 +99,23 @@ public class ExtractorLlmClient {
 
         StringBuilder responseBuilder = new StringBuilder();
         try {
-            llmClient.stream(
+            LlmStreamResult result = llmClient.stream(
                     LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary)
                             .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
                     responseBuilder::append
             );
+            // 잘린 응답은 파싱하지 않는다. "파싱이 실패할 테니 괜찮다"에 기댈 수 없다 —
+            // objectMapper.readTree 는 FAIL_ON_TRAILING_TOKENS 가 기본 off 라서 선행 객체만
+            // 읽고 뒤에 붙은 잘린 내용을 조용히 버린다. 실측 확인:
+            //   {"dominantEmotion":"sadness"} + 잘린 후속 텍스트  → 파싱 성공
+            // 이때 thoughts·episodeType·emotionScore 가 '부재'로 처리되어 아래 파서의
+            // 기본값(List.of() / "regular" / null)으로 채워지고, 그 값이 session_summaries 에
+            // 그대로 저장된다. episodeType 이 "regular" 로 굳으면 위기 세션이 일반 세션으로
+            // 기록되고, 사후 안전망(#256)이 그 세션을 다시 볼 근거도 사라진다.
+            if (result.truncated()) {
+                log.warn("ExtractorLLM 응답이 출력 상한에 걸려 잘렸다 — 부분 추출을 저장하지 않고 비운다");
+                return ExtractorResult.empty();
+            }
             return parseResponse(responseBuilder.toString());
         } catch (Exception e) {
             log.warn("ExtractorLLM failed, returning empty result", e);
