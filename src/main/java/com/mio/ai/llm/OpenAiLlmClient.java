@@ -16,6 +16,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -37,6 +38,9 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private static final String COST_METRIC = "mio.llm.cost.usd";
     private static final String UNPRICED_METRIC = "mio.llm.cost.unpriced";
     private static final String RETRIES_METRIC = "mio.llm.retries";
+    private static final String TRUNCATED_METRIC = "mio.llm.truncated";
+
+    private static final String FINISH_REASON_LENGTH = "length";
 
     private static final String MODE_STREAM = "stream";
     private static final String MODE_COMPLETE_TEXT = "complete_text";
@@ -69,6 +73,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         long startMs = System.currentTimeMillis();
         AtomicLong ttft = new AtomicLong(0);
         AtomicReference<LlmUsage> usage = new AtomicReference<>();
+        AtomicBoolean truncated = new AtomicBoolean(false);
         // 이 호출의 종료(outcome + usage)를 이미 기록했는지. 아래 catch 는 우리가 던진 예외와
         // 청크 핸들러가 던진 예외를 함께 받는데, 전자는 이미 기록돼 있어 표시가 없으면 이중 계상된다.
         //
@@ -117,6 +122,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     // 사용량이 남아 최종 결과에 섞이거나 중복 집계된다.
                     ttft.set(0);
                     usage.set(null);
+                    truncated.set(false);
                     continue;
                 }
 
@@ -140,6 +146,9 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                                 LlmUsage chunkUsage = extractUsage(chunk, request.model());
                                 if (chunkUsage != null) {
                                     usage.set(chunkUsage);
+                                }
+                                if (recordIfTruncated(chunk, request.model(), MODE_STREAM)) {
+                                    truncated.set(true);
                                 }
                                 String content = extractDeltaContent(chunk);
                                 if (content != null && !content.isEmpty()) {
@@ -179,7 +188,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         recordUsage(MODE_STREAM, resolved);
 
         long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
-        return new LlmStreamResult(ttftMs, resolved);
+        return new LlmStreamResult(ttftMs, resolved, truncated.get());
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
@@ -206,6 +215,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         body.put("stream", true);
         // 이걸 켜지 않으면 스트리밍 응답에는 usage 가 아예 오지 않는다.
         body.put("stream_options", Map.of("include_usage", true));
+        putMaxCompletionTokens(body, request);
 
         return objectMapper.writeValueAsString(body);
     }
@@ -250,6 +260,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             // 비스트리밍 응답에는 usage 가 항상 실려 오는데 지금까지 읽지 않고 버렸다.
             // 호출부가 12곳이라 반환 타입은 그대로 두고 메트릭으로만 남긴다.
             LlmUsage usage = extractUsage(root, request.model());
+            recordIfTruncated(root, request.model(), mode);
             recordOutcome(request.model(), mode, "success");
             recordUsage(mode, usage != null ? usage : LlmUsage.unresolved(request.model()));
 
@@ -286,6 +297,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         if (jsonResponse) {
             body.put("response_format", Map.of("type", "json_object"));
         }
+        putMaxCompletionTokens(body, request);
 
         return objectMapper.writeValueAsString(body);
     }
@@ -381,6 +393,36 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         // 임베딩 응답에는 completion_tokens 가 없다. 출력 토큰이 실제로 0 인 경우다.
         return LlmUsage.of(requestedModel, prompt.asLong(),
                 completion.isNumber() ? completion.asLong() : 0L);
+    }
+
+    /**
+     * 출력 토큰 상한을 싣는다. 지정되지 않았으면 아무것도 보내지 않는다 (모델 기본 한도).
+     *
+     * <p>{@code max_tokens} 가 아니라 {@code max_completion_tokens} 를 쓴다. 실제 API 프로브에서
+     * gpt-4o 는 둘 다 받지만, 최신 모델은 전자를 거부하므로 모델을 올릴 때 같이 깨지지 않는 쪽을
+     * 고른다.
+     */
+    private void putMaxCompletionTokens(Map<String, Object> body, LlmRequest request) {
+        if (request.maxCompletionTokens() != null) {
+            body.put("max_completion_tokens", request.maxCompletionTokens());
+        }
+    }
+
+    /**
+     * 상한에 걸려 응답이 잘렸는지 센다.
+     *
+     * <p>이걸 세지 않으면 상한이 너무 빡빡해도 알 방법이 없다. 특히 JSON 모드에서는 절단이
+     * 파싱 실패로 이어져 판정이 통째로 사라지는데, 그건 로그에 "파싱 실패"로만 보이고 원인이
+     * 상한이었다는 사실은 드러나지 않는다.
+     */
+    private boolean recordIfTruncated(JsonNode root, String model, String mode) {
+        String finishReason = root.path("choices").path(0).path("finish_reason").asText(null);
+        if (!FINISH_REASON_LENGTH.equals(finishReason)) {
+            return false;
+        }
+        log.warn("LLM 응답이 출력 토큰 상한에 걸려 잘렸다: model={} mode={}", model, mode);
+        meterRegistry.counter(TRUNCATED_METRIC, "model", model, "mode", mode).increment();
+        return true;
     }
 
     /** 사용량을 못 받았으면 0 짜리 사용량이 아니라 '미상' 으로 만든다. */

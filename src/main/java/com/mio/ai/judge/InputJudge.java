@@ -22,6 +22,9 @@ import java.util.List;
 public class InputJudge {
 
     private static final String JUDGE_MODEL = "gpt-4o-mini";
+    // JSON 판정 출력 상한. 예상 ~130 토큰이지만 여유를 크게 둔다 — JSON 은 잘리면 파싱이
+    // 통째로 실패하고, 그러면 안전 판정이 사라진다 (fallback CLEAR_LOW + failed).
+    private static final int JUDGE_MAX_COMPLETION_TOKENS = 500;
 
     private static final String SYSTEM_PROMPT = """
             You are a safety classifier for a mental health coaching app.
@@ -64,7 +67,8 @@ public class InputJudge {
     public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile) {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt);
+            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt)
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {

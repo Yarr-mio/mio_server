@@ -16,6 +16,8 @@ import java.util.List;
 public class ReportNarrativeService {
 
     private static final String MODEL = "gpt-4o-mini";
+    // 리포트 서술 출력 상한. 프롬프트가 3문장·100자를 요구한다.
+    private static final int MAX_COMPLETION_TOKENS = 400;
 
     private static final String SYSTEM_PROMPT = """
             당신은 CBT 기반 심리 코칭 전문가입니다.
@@ -41,7 +43,8 @@ public class ReportNarrativeService {
                                     List<DistortionDto> distortionTop3) {
         String userMessage = buildUserMessage(periodLabel, checkinCount, avgEmotionScore, distortionTop3);
         try {
-            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
+            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
             return parseResponse(response);
         } catch (Exception e) {
             log.warn("ReportNarrative generation failed: period={} error={}", periodLabel, e.getClass().getSimpleName());

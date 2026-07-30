@@ -3,6 +3,7 @@ package com.mio.ai.memory.consolidation;
 import com.mio.ai.AiCacheKeys;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionCheckpoint;
@@ -39,6 +40,8 @@ public class ConversationCheckpointService {
 
     static final int CHECKPOINT_INTERVAL = 20;
     private static final String CHECKPOINT_MODEL = "gpt-4o-mini";
+    // 체크포인트 요약 출력 상한. 프롬프트가 200자를 요구한다 (~142 토큰).
+    private static final int CHECKPOINT_MAX_COMPLETION_TOKENS = 400;
     private static final String CHECKPOINT_SYSTEM_PROMPT = """
             당신은 CBT 코칭 대화의 중간 요약 전문가입니다.
             아래 대화를 200자 이내로 간결하게 요약하세요.
@@ -164,10 +167,18 @@ public class ConversationCheckpointService {
     private String generateSummary(List<String> lines) {
         StringBuilder sb = new StringBuilder();
         try {
-            llmClient.stream(
-                    LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines)),
+            LlmStreamResult result = llmClient.stream(
+                    LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines))
+                            .withMaxCompletionTokens(CHECKPOINT_MAX_COMPLETION_TOKENS),
                     sb::append
             );
+            // 잘린 요약은 저장하지 않는다. 체크포인트는 이후 턴의 프롬프트에 그대로 실리므로,
+            // 문장 중간에서 끊긴 텍스트를 정본으로 남기면 그 사실이 데이터에 남지 않은 채
+            // 계속 재사용된다. 없는 편이 낫다 — 호출부가 null 을 이미 건너뛴다.
+            if (result.truncated()) {
+                log.warn("ConversationCheckpointService: 요약이 출력 상한에 걸려 잘려 저장하지 않는다");
+                return null;
+            }
         } catch (Exception e) {
             log.warn("ConversationCheckpointService: summary generation failed", e);
             return null;

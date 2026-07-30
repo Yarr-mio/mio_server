@@ -18,6 +18,8 @@ import java.util.List;
 public class CbtMetadataClassifier {
 
     private static final String MODEL = "gpt-4o-mini";
+    // JSON 분류 출력 상한. 예상 ~90 토큰.
+    private static final int MAX_COMPLETION_TOKENS = 400;
 
     private static final String SYSTEM_PROMPT = """
             You classify CBT Socratic intervention state for a mental health coaching chat.
@@ -64,7 +66,8 @@ public class CbtMetadataClassifier {
                     userMessage,
                     assistantResponse,
                     userSignal,
-                    socraticQuestionsUsed));
+                    socraticQuestionsUsed))
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
             return parse(responseJson, CbtInterventionState.fromWireValue(previousState), userSignal);
         } catch (Exception e) {

@@ -20,6 +20,8 @@ import java.util.UUID;
 public class CheckinAiResponseGenerator {
 
     private static final String MODEL = "gpt-4o-mini";
+    // 체크인 응답 출력 상한. 프롬프트가 150자를 요구한다 (~107 토큰).
+    private static final int MAX_COMPLETION_TOKENS = 400;
     private static final String SYSTEM_PROMPT = """
             당신은 감정 코칭 AI 캐릭터입니다.
             사용자의 현재 감정 상태와 강도를 바탕으로 따뜻하고 공감적인 짧은 코멘트를 작성하세요.
@@ -38,7 +40,8 @@ public class CheckinAiResponseGenerator {
     public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay) {
         try {
             String userMessage = buildPrompt(emotionType, conditionScore, timeOfDay);
-            String response = llmClient.completeText(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
+            String response = llmClient.completeText(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
 
             if (response == null || response.isBlank()) {
                 log.debug("[CheckinAiResponseGenerator] no response for checkinId={}", checkinId);

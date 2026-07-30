@@ -87,6 +87,9 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ConversationOrchestrator {
 
     private static final String LLM_MODEL = "gpt-4o";
+    // 출력 상한. 프롬프트가 "2-4문장"을 요구하고 실측 출력이 49~150 토큰이라 2.7배 여유다.
+    // 상한이 없으면 폭주 응답 하나가 턴당 비용을 8.1배로 올린다 (기준선 문서 §5.7 R-1).
+    private static final int LLM_MAX_COMPLETION_TOKENS = 400;
     private static final int EARLY_PREFILTER_THRESHOLD = 200;
 
     private final InputNormalizer inputNormalizer;
@@ -278,7 +281,8 @@ public class ConversationOrchestrator {
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
-                LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage);
+                LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage)
+                        .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS);
                 StringBuilder contentBuilder = new StringBuilder();
 
                 DeliveryMode deliveryMode = decision.deliveryMode();
