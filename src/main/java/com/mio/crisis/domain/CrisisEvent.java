@@ -56,11 +56,21 @@ public class CrisisEvent {
     @Column(name = "operator_note")
     private String operatorNote;
 
+    /** no_action_needed / user_contacted / escalated */
+    @Column(name = "review_action")
+    private String reviewAction;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
     @PrePersist
     protected void onCreate() {
         createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    public void review(String action, String note) {
+        this.reviewAction = action;
+        this.operatorNote = note;
+        this.operatorReviewed = true;
     }
 }

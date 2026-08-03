@@ -27,4 +27,6 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
     List<Message> findRecentBySessionAndRole(@Param("sessionId") UUID sessionId,
                                              @Param("role") MessageRole role,
                                              Pageable pageable);
+
+    List<Message> findBySession_IdOrderByCreatedAtAsc(UUID sessionId);
 }

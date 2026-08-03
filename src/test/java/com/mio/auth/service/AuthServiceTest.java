@@ -2,6 +2,7 @@ package com.mio.auth.service;
 
 import com.mio.auth.dto.*;
 import com.mio.auth.provider.SocialAuthProvider;
+import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
@@ -35,6 +36,7 @@ class AuthServiceTest {
     @Mock private UserDeviceRepository userDeviceRepository;
     @Mock private JwtTokenService jwtTokenService;
     @Mock private RefreshTokenService refreshTokenService;
+    @Mock private AuditLogService auditLogService;
 
     private AuthService authService;
 
@@ -49,7 +51,7 @@ class AuthServiceTest {
                 .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
-                userDeviceRepository, jwtTokenService, refreshTokenService
+                userDeviceRepository, jwtTokenService, refreshTokenService, auditLogService
         );
     }
 

@@ -31,7 +31,11 @@ public class SecurityConfig {
             "/v1/auth/**",
             "/api-docs/**",
             "/swagger-ui/**",
-            "/swagger-ui.html"
+            "/swagger-ui.html",
+            // Sprint01 범위 결정: 내부 개발팀 전용 축소판, 인증 계층 미포함 (이슈 #277).
+            // Nginx 가 8080 을 프록시하므로 인터넷에 노출된다 — Admin 로그인 시스템이 생기면
+            // 반드시 이 줄부터 걷어내고 인증을 앞단에 둔다.
+            "/v1/admin/**"
     };
 
     /**
