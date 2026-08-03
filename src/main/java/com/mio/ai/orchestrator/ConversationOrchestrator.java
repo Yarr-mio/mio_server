@@ -63,6 +63,7 @@ import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -140,6 +141,10 @@ public class ConversationOrchestrator {
         // 결말이 이미 저장됐는지. done 을 보내기 전에 저장하는 것이 이 작업의 핵심 순서다.
         AtomicBoolean turnPersisted = new AtomicBoolean(false);
         String outboundMsgId = "msg_out_" + shortId();
+
+        // CloudWatch 등 원시 로그를 session_id 로 교차 검색하기 위한 상관관계 키 (Sprint01, 이슈 #277).
+        // TraceIdFilter 의 traceId 는 요청 단위라 세션 단위 상관관계를 주지 않는다.
+        MDC.put("sessionId", sessionId.toString());
 
         try {
             Session session = sessionRepository.findById(sessionId)
@@ -514,6 +519,8 @@ public class ConversationOrchestrator {
             //    보낼 대상이 없다. 저장이 보장 대상이고 전송은 최선 노력이다.
             sendFallbackDone(emitter, outboundMsgId);
             emitter.completeWithError(e);
+        } finally {
+            MDC.remove("sessionId");
         }
     }
 

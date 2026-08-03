@@ -56,6 +56,10 @@ public class CrisisEvent {
     @Column(name = "operator_note")
     private String operatorNote;
 
+    /** no_action_needed / user_contacted / escalated */
+    @Column(name = "review_action")
+    private String reviewAction;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 

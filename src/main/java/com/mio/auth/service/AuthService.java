@@ -2,6 +2,7 @@ package com.mio.auth.service;
 
 import com.mio.auth.dto.*;
 import com.mio.auth.provider.SocialAuthProvider;
+import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
@@ -20,6 +21,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -35,6 +37,9 @@ public class AuthService {
     private final UserDeviceRepository userDeviceRepository;
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
+    private final AuditLogService auditLogService;
+
+    private static final int WITHDRAW_RETENTION_DAYS = 30;
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
@@ -148,6 +153,11 @@ public class AuthService {
                 .toList();
         userConsentRepository.saveAll(consents);
 
+        auditLogService.record(userId, "CONSENT_AGREED", "user_consent", userId.toString(), Map.of(
+                "consent_types", request.consents().stream().map(ConsentRequest.ConsentItem::type).toList(),
+                "marketing_agreed", marketingAgreed
+        ));
+
         return new ConsentResponse(user.getSignupStep());
     }
 
@@ -205,6 +215,11 @@ public class AuthService {
         // PII 비식별화 정책 — social_id를 해시로 대체해 재가입 방지 키만 유지
         String anonymizedSocialId = sha256(user.getSocialId());
         user.softDelete(anonymizedSocialId);
+
+        auditLogService.record(userId, "USER_WITHDRAW", "user", userId.toString(), Map.of(
+                "anonymized_at", user.getDeletedAt().toString(),
+                "hard_delete_scheduled_at", user.getDeletedAt().plusDays(WITHDRAW_RETENTION_DAYS).toString()
+        ));
 
         return new WithdrawResponse(user.getDeletedAt());
     }
