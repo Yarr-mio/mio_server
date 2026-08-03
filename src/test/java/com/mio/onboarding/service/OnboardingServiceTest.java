@@ -52,7 +52,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("1단계 제출 성공 시 onboarding_step이 1을 반환한다")
     void submitStep1_success_returnsStep1() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -209,6 +209,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("캐릭터 선택 성공 시 preferred_character_id와 signup_step을 반환한다")
     void selectCharacter_success_returnsResponse() {
+        mockUser.completeProfile("테스트", null, null, null);
         mockUser.updateOnboardingStep(3);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
 
@@ -273,7 +274,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("이미 완료한 단계를 다시 제출해도 onboarding_step은 낮아지지 않는다")
     void submitStep1_resubmit_doesNotRegressStep() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         mockUser.updateOnboardingStep(2);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
@@ -287,7 +288,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("step 1 skip 성공 시 onboarding_step이 1을 반환한다")
     void skipStep1_success_returnsStep1() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));

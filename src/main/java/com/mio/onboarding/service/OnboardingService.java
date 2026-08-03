@@ -115,7 +115,9 @@ public class OnboardingService {
         }
 
         User user = findUser(userId);
-        if (user.getOnboardingStep() < 3) {
+        // 2026-08 개편(이슈 #282): 온보딩 step1~3 완료가 더 이상 캐릭터 선택의 진입 조건이 아니다.
+        // 프로필 완료 직후 바로 캐릭터를 고를 수 있다 — step1~3은 선택적 레거시 경로로 남는다.
+        if (user.getSignupStep().ordinal() < SignupStep.PROFILE_COMPLETED.ordinal()) {
             throw new BusinessException(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED);
         }
 

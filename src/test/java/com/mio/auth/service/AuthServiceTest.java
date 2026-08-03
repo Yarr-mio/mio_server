@@ -323,6 +323,6 @@ class AuthServiceTest {
     }
 
     private SignupCompleteRequest buildCompleteRequest(String nickname) {
-        return new SignupCompleteRequest(nickname, "20대", "male");
+        return new SignupCompleteRequest(nickname, "20대", "male", "job_seeker");
     }
 }
