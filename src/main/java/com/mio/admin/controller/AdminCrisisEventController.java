@@ -18,8 +18,7 @@ import java.util.UUID;
 /**
  * 운영자용 위기 이벤트 검토 처리.
  *
- * <p><b>인증 미포함 — Sprint01 범위 밖 결정.</b> 내부 개발팀 전용 전제. Admin 로그인 시스템이
- * 생기면 이 위에 인증 필터만 얹는 구조로 지금부터 설계해둔다.
+ * <p>{@code ROLE_ADMIN} 필요 (이슈 #279).
  */
 @RestController
 @RequestMapping("/v1/admin/crisis-events")
