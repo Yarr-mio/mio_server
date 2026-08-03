@@ -233,6 +233,39 @@ class OnboardingServiceTest {
     }
 
     @Test
+    @DisplayName("이미 ONBOARDING_COMPLETED인 사용자가 다시 선택하면 COMPLETED로 강등되지 않고 예외를 발생시킨다")
+    void selectCharacter_alreadyOnboardingCompleted_throwsAndDoesNotDowngrade() {
+        mockUser.completeProfile("테스트", null, null, null);
+        mockUser.completeOnboarding("mio");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.selectCharacter(
+                userId, new CharacterSelectRequest("bau")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
+        assertThat(mockUser.getPreferredCharacterId()).isEqualTo("mio");
+    }
+
+    @Test
+    @DisplayName("이미 COMPLETED인 사용자가 다시 선택하면 ONBOARDING_COMPLETED로 강등되지 않고 예외를 발생시킨다")
+    void selectCharacter_alreadyCompleted_throwsAndDoesNotDowngrade() {
+        mockUser.completeProfile("테스트", null, null, null);
+        mockUser.completeOnboarding("mio");
+        mockUser.finalizeSignup();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.selectCharacter(
+                userId, new CharacterSelectRequest("bau")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
+        assertThat(mockUser.getSignupStep()).isEqualTo(SignupStep.COMPLETED);
+    }
+
+    @Test
     @DisplayName("캐릭터 선택은 3단계 미완료 시 ONBOARDING_STEP_NOT_COMPLETED 예외를 발생시킨다")
     void selectCharacter_step3NotCompleted_throws() {
         mockUser.updateOnboardingStep(2);
