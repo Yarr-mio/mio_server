@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +24,15 @@ public class AuditLogService {
     private final AuditLogRepository auditLogRepository;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 호출자 트랜잭션과 분리된 독립 트랜잭션으로 기록한다.
+     *
+     * <p>같은 트랜잭션에서 실행하면, 여기서 예외를 잡아 삼켜도 JPA 구현체가 이미 트랜잭션을
+     * rollback-only 로 표시해뒀을 수 있다 — 그러면 감사 로그 실패가 호출자의 실제 작업(탈퇴 등)
+     * 커밋까지 {@code UnexpectedRollbackException} 으로 무너뜨린다. 감사 기록 실패가 원 작업을
+     * 막아서는 안 되므로 REQUIRES_NEW 로 분리한다.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void record(UUID userId, String action, String resourceType, String resourceId,
                         Map<String, Object> details) {
         try {

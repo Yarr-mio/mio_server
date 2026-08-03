@@ -25,11 +25,10 @@ public class AdminCrisisEventService {
         CrisisEvent event = crisisEventRepository.findById(eventId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.CRISIS_EVENT_NOT_FOUND));
 
-        if (event.isOperatorReviewed()) {
+        int updated = crisisEventRepository.reviewIfNotAlready(eventId, request.action(), request.note());
+        if (updated == 0) {
             throw new BusinessException(ErrorCode.CRISIS_EVENT_ALREADY_REVIEWED);
         }
-
-        event.review(request.action(), request.note());
 
         auditLogService.record(
                 event.getUser().getId(),

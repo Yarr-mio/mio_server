@@ -67,10 +67,4 @@ public class CrisisEvent {
     protected void onCreate() {
         createdAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
-
-    public void review(String action, String note) {
-        this.reviewAction = action;
-        this.operatorNote = note;
-        this.operatorReviewed = true;
-    }
 }
