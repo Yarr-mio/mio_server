@@ -173,7 +173,7 @@ public class AuthService {
             throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
         }
 
-        user.completeProfile(request.nickname(), request.ageRange(), request.gender());
+        user.completeProfile(request.nickname(), request.ageRange(), request.gender(), request.employmentStatus());
 
         return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
     }
