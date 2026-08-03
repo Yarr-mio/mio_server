@@ -31,11 +31,7 @@ public class SecurityConfig {
             "/v1/auth/**",
             "/api-docs/**",
             "/swagger-ui/**",
-            "/swagger-ui.html",
-            // Sprint01 범위 결정: 내부 개발팀 전용 축소판, 인증 계층 미포함 (이슈 #277).
-            // Nginx 가 8080 을 프록시하므로 인터넷에 노출된다 — Admin 로그인 시스템이 생기면
-            // 반드시 이 줄부터 걷어내고 인증을 앞단에 둔다.
-            "/v1/admin/**"
+            "/swagger-ui.html"
     };
 
     /**
@@ -75,6 +71,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        // 이슈 #279: users.is_admin 플래그로 발급된 JWT(scope에 "admin" 포함)만 통과.
+                        // 플래그는 셀프서비스 승격 경로 없이 DB에서 직접 세운다.
+                        .requestMatchers("/v1/admin/**").hasAuthority("ROLE_ADMIN")
                         .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 

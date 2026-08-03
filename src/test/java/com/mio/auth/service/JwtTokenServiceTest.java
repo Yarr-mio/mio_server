@@ -26,7 +26,7 @@ class JwtTokenServiceTest {
     @Test
     @DisplayName("발급된 토큰에서 userId, deviceId, is_minor claim을 올바르게 추출한다")
     void generateAndParse_returnsCorrectClaims() {
-        String token = jwtTokenService.generateAccessToken("user-123", "device-abc", false);
+        String token = jwtTokenService.generateAccessToken("user-123", "device-abc", false, false);
 
         Claims claims = jwtTokenService.parseToken(token);
 
@@ -39,7 +39,7 @@ class JwtTokenServiceTest {
     @Test
     @DisplayName("미성년자 플래그가 true인 경우 is_minor claim이 true다")
     void generateToken_minorUser_isMinorTrue() {
-        String token = jwtTokenService.generateAccessToken("user-minor", "device-1", true);
+        String token = jwtTokenService.generateAccessToken("user-minor", "device-1", true, false);
 
         Claims claims = jwtTokenService.parseToken(token);
 
@@ -50,7 +50,7 @@ class JwtTokenServiceTest {
     @DisplayName("만료된 토큰 파싱 시 ExpiredJwtException을 던진다")
     void parseToken_expiredToken_throwsExpiredJwtException() {
         JwtTokenService shortLived = new JwtTokenService(SECRET, -1);
-        String expiredToken = shortLived.generateAccessToken("user-123", "device-abc", false);
+        String expiredToken = shortLived.generateAccessToken("user-123", "device-abc", false, false);
 
         assertThatThrownBy(() -> jwtTokenService.parseToken(expiredToken))
                 .isInstanceOf(ExpiredJwtException.class);
@@ -60,7 +60,7 @@ class JwtTokenServiceTest {
     @DisplayName("서명이 다른 토큰 파싱 시 JwtException을 던진다")
     void parseToken_wrongSignature_throwsJwtException() {
         JwtTokenService otherService = new JwtTokenService("other-secret-key-minimum-32-chars!!", 900);
-        String foreignToken = otherService.generateAccessToken("user-123", "device-abc", false);
+        String foreignToken = otherService.generateAccessToken("user-123", "device-abc", false, false);
 
         assertThatThrownBy(() -> jwtTokenService.parseToken(foreignToken))
                 .isInstanceOf(JwtException.class);

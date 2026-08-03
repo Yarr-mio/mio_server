@@ -41,7 +41,7 @@ public class RefreshTokenService {
 
         checkUserStatus(user);
 
-        return jwtTokenService.generateAccessToken(info.userId(), info.deviceId(), user.isMinor());
+        return jwtTokenService.generateAccessToken(info.userId(), info.deviceId(), user.isMinor(), user.isAdmin());
     }
 
     public void logout(String userId, String deviceId) {

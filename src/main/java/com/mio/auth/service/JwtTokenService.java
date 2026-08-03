@@ -28,15 +28,16 @@ public class JwtTokenService {
         this.expirySeconds = expirySeconds;
     }
 
-    public String generateAccessToken(String userId, String deviceId, boolean isMinor) {
+    public String generateAccessToken(String userId, String deviceId, boolean isMinor, boolean isAdmin) {
         Instant now = Instant.now();
+        List<String> scope = isAdmin ? List.of("user", "admin") : List.of("user");
         return Jwts.builder()
                 .subject(userId)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expirySeconds)))
                 .claim("device_id", deviceId)
                 .claim("is_minor", isMinor)
-                .claim("scope", List.of("user"))
+                .claim("scope", scope)
                 .signWith(signingKey)
                 .compact();
     }

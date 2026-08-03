@@ -89,7 +89,7 @@ public class AuthService {
         );
 
         String accessToken = jwtTokenService.generateAccessToken(
-                user.getId().toString(), request.deviceId(), user.isMinor());
+                user.getId().toString(), request.deviceId(), user.isMinor(), user.isAdmin());
         String refreshToken = refreshTokenService.issue(
                 user.getId().toString(), request.deviceId(),
                 user.getSocialProvider(), user.getSignupStep());

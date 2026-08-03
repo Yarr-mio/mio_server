@@ -43,7 +43,8 @@ public class DevAuthController {
         String token = jwtTokenService.generateAccessToken(
                 user.getId().toString(),
                 DEV_DEVICE_ID,
-                user.isMinor()
+                user.isMinor(),
+                user.isAdmin()
         );
 
         return ResponseEntity.ok(ApiResponse.ok(new DevTokenResponse(token, EXPIRES_IN)));

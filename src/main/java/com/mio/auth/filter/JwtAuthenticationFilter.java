@@ -46,12 +46,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if ("/error".equals(request.getRequestURI())) {
             return true;
         }
-        // Sprint01 범위 결정: 내부 개발팀 전용 축소판, 인증 계층 미포함 (이슈 #277).
-        // SecurityConfig.PUBLIC_ENDPOINTS 와 별개로 이 필터가 먼저 실행되므로 여기서도 제외해야
-        // 한다. Admin 로그인 시스템이 생기면 이 조건부터 걷어내고 인증을 앞단에 둔다.
-        if (request.getRequestURI().startsWith("/v1/admin/")) {
-            return true;
-        }
         String key = request.getMethod() + " " + request.getRequestURI();
         return WHITELIST.contains(key);
     }
@@ -74,11 +68,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String userId = claims.getSubject();
             String deviceId = claims.get("device_id", String.class);
 
+            List<?> scope = claims.get("scope", List.class);
+            List<SimpleGrantedAuthority> authorities = scope != null && scope.contains("admin")
+                    ? List.of(new SimpleGrantedAuthority("ROLE_USER"), new SimpleGrantedAuthority("ROLE_ADMIN"))
+                    : List.of(new SimpleGrantedAuthority("ROLE_USER"));
+
             // principal=userId, credentials=deviceId — 컨트롤러에서 @AuthenticationPrincipal로 userId 접근
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                     userId,
                     deviceId,
-                    List.of(new SimpleGrantedAuthority("ROLE_USER"))
+                    authorities
             );
             SecurityContextHolder.getContext().setAuthentication(authentication);
             filterChain.doFilter(request, response);

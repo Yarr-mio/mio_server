@@ -82,6 +82,11 @@ public class User {
     @Column(name = "is_minor", nullable = false)
     private boolean isMinor;
 
+    /** Admin 엔드포인트(/v1/admin/**) 접근 권한. DB에서 직접 플래그를 세운다 — 셀프서비스 승격 경로 없음 (이슈 #279). */
+    @Column(name = "is_admin", nullable = false)
+    @Builder.Default
+    private boolean isAdmin = false;
+
     /** PENDING / ACTIVE / SUSPENDED / DELETED */
     @Column(name = "status", nullable = false)
     @Builder.Default
