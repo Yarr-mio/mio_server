@@ -25,6 +25,7 @@ public class ReactiveOntologyEligibility {
                                           PolicyDecision decision) {
         return allowsTriggerActivation(signal, combined)
                 && decision.action() == DecisionAction.GENERATE
+                && decision.securityLevel() == SecurityLevel.CLEAN
                 && decision.judgeStatus() != JudgeStatus.FAILED
                 && isEligibleRisk(decision.riskLevel());
     }

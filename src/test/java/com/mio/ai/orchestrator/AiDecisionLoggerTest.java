@@ -282,8 +282,7 @@ class AiDecisionLoggerTest {
     @Test
     @DisplayName("Input Judge 실패 상태를 정책 결정 트레이스에 남긴다")
     void logPersistsFailedInputJudgeStatus() {
-        PolicyDecision decision = generateDecision("pd_judge_failed")
-                .withJudgeStatus(JudgeStatus.FAILED);
+        PolicyDecision decision = failedJudgeDecision("pd_judge_failed");
 
         logger.log(
                 UUID.randomUUID(),
@@ -426,6 +425,24 @@ class AiDecisionLoggerTest {
                 RiskLevel.CLEAR_LOW,
                 null,
                 JudgeStatus.SKIPPED
+        );
+    }
+
+    private PolicyDecision failedJudgeDecision(String decisionId) {
+        return new PolicyDecision(
+                decisionId,
+                DecisionAction.GENERATE,
+                GenerationMode.GUARDED,
+                DeliveryMode.BUFFER,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                true,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.MEDIUM,
+                null,
+                JudgeStatus.FAILED
         );
     }
 }

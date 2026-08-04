@@ -32,6 +32,12 @@ public record PolicyDecision(
 
     public PolicyDecision {
         Objects.requireNonNull(judgeStatus, "judgeStatus");
+        if (judgeStatus == JudgeStatus.FAILED
+                && action == DecisionAction.GENERATE
+                && (deliveryMode != DeliveryMode.BUFFER || !requireOutputGuard)) {
+            throw new IllegalArgumentException(
+                    "FAILED Judge decisions that generate output require BUFFER and OutputGuard");
+        }
     }
 
     public PolicyDecision withInterventionHints(InterventionHints hints) {
@@ -42,11 +48,4 @@ public record PolicyDecision(
         );
     }
 
-    public PolicyDecision withJudgeStatus(JudgeStatus status) {
-        return new PolicyDecision(
-                decisionId, action, generationMode, deliveryMode, securityLevel,
-                allowGeneration, allowStreaming, requireOutputGuard, interventionHints,
-                policyVersion, riskLevel, crisisTrigger, status
-        );
-    }
 }

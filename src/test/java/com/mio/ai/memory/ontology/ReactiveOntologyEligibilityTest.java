@@ -77,8 +77,11 @@ class ReactiveOntologyEligibilityTest {
 
     private PolicyDecision decision(RiskLevel riskLevel, JudgeStatus judgeStatus,
                                     SecurityLevel securityLevel) {
-        return new PolicyDecision("decision", DecisionAction.GENERATE, GenerationMode.NORMAL,
-                DeliveryMode.SPECULATIVE, securityLevel, true, true, false,
+        boolean failed = judgeStatus == JudgeStatus.FAILED;
+        return new PolicyDecision("decision", DecisionAction.GENERATE,
+                failed ? GenerationMode.GUARDED : GenerationMode.NORMAL,
+                failed ? DeliveryMode.BUFFER : DeliveryMode.SPECULATIVE,
+                securityLevel, true, true, failed,
                 InterventionHints.empty(), "test", riskLevel, null, judgeStatus);
     }
 }
