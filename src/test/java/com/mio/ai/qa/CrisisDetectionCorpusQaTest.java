@@ -182,11 +182,11 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
-    @DisplayName("자모·구두점 표기 우회 6건은 전부 즉시 위기로 복원한다 (#258)")
-    void jamoAndPunctuationObfuscationAlwaysImmediate() {
+    @DisplayName("자모·구두점 표기 우회 6건은 전부 안전 경로로 포착한다 (#258)")
+    void jamoAndPunctuationObfuscationAlwaysDetected() {
         List<Evaluated> obfuscated = inCategory("FN-자모우회");
         List<Evaluated> missed = obfuscated.stream()
-                .filter(e -> e.outcome() != Outcome.IMMEDIATE_CRISIS)
+                .filter(e -> e.outcome() == Outcome.PASS_THROUGH)
                 .toList();
 
         assertThat(obfuscated).hasSize(6);
@@ -196,14 +196,14 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
-    @DisplayName("자모·Unicode 구분자 결합 우회 11건은 전부 즉시 위기로 복원한다 (#258)")
-    void combinedObfuscationAlwaysImmediate() {
+    @DisplayName("자모·Unicode·HARD 위기어 교차 우회 20건은 전부 안전 경로로 포착한다 (#258)")
+    void combinedObfuscationAlwaysDetected() {
         List<Evaluated> combined = inCategory("FN-교차우회");
         List<Evaluated> missed = combined.stream()
-                .filter(e -> e.outcome() != Outcome.IMMEDIATE_CRISIS)
+                .filter(e -> e.outcome() == Outcome.PASS_THROUGH)
                 .toList();
 
-        assertThat(combined).hasSize(11);
+        assertThat(combined).hasSize(20);
         assertThat(missed)
                 .as("복원하지 못한 결합 우회:%n  %s", describe(missed))
                 .isEmpty();
@@ -518,7 +518,16 @@ class CrisisDetectionCorpusQaTest {
                 "죽.고싶다",
                 "ㅈ.ㅜ.ㄱ.고싶다",
                 "ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ",
-                "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ");
+                "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ",
+                "죽\u00A8고싶다",
+                "죽\u00AF고싶다",
+                "죽\u00B4고싶다",
+                "자.살 생각중",
+                "자.해하고싶다",
+                "목숨을.끊고싶다",
+                "sui.cide",
+                "kill.myself",
+                "self.harm");
 
         add(c, "FN-완곡어", Truth.HARD_CRISIS,
                 "죽고시퍼",

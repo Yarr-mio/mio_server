@@ -49,7 +49,7 @@ class SafetyL1Test {
         assertThat(result.hardCrisis()).isTrue();
     }
 
-    @ParameterizedTest(name = "표기 우회도 hardCrisis로 복원: {0}")
+    @ParameterizedTest(name = "표기 우회는 즉시 위기 또는 검증 대기로 포착: {0}")
     @ValueSource(strings = {
             "ㅈㅜㄱ고싶다",
             "죽.고.싶.다",
@@ -63,10 +63,11 @@ class SafetyL1Test {
     void crisisObfuscationIsCanonicalizedBeforeMatching(String message) {
         var result = safetyL1.check(input(message));
 
-        assertThat(result.hardCrisis()).isTrue();
+        assertThat(result.hardCrisis() || result.hardCrisisUnverified()).isTrue();
+        assertThat(result.hasAnySignal()).isTrue();
     }
 
-    @ParameterizedTest(name = "자모·Unicode 구분자 결합 우회도 hardCrisis로 복원: {0}")
+    @ParameterizedTest(name = "자모·Unicode 구분자 결합 우회도 안전 경로로 포착: {0}")
     @ValueSource(strings = {
             "ㅈ.ㅜ.ㄱ.고.싶.다",
             "ㅈ\u200Bㅜ\u200Bㄱ고싶다",
@@ -78,10 +79,33 @@ class SafetyL1Test {
             "죽.고싶다",
             "ㅈ.ㅜ.ㄱ.고싶다",
             "ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ",
-            "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ"
+            "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ",
+            "죽\u00A8고싶다",
+            "죽\u00AF고싶다",
+            "죽\u00B4고싶다"
     })
     void combinedCrisisObfuscationIsCanonicalized(String message) {
-        assertThat(safetyL1.check(input(message)).hardCrisis()).isTrue();
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis() || result.hardCrisisUnverified()).isTrue();
+    }
+
+    @ParameterizedTest(name = "모든 HARD 위기어 계열의 가시 구분자 우회는 Judge 검증으로 포착: {0}")
+    @ValueSource(strings = {
+            "자.살 생각중",
+            "자.해하고싶다",
+            "목숨을.끊고싶다",
+            "sui.cide",
+            "kill.myself",
+            "self.harm"
+    })
+    void visibleSeparatorObfuscationRequiresJudge(String message) {
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.hardCrisisUnverified()).isTrue();
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("crisis_obfuscated_keyword:"));
     }
 
     @ParameterizedTest(name = "문법적 구두점 경계는 위기 키워드로 합치지 않음: {0}")
@@ -92,7 +116,11 @@ class SafetyL1Test {
             "자, 살, 돈, 집"
     })
     void naturalPunctuationBoundaryDoesNotCreateHardCrisis(String message) {
-        assertThat(safetyL1.check(input(message)).hardCrisis()).isFalse();
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.hardCrisisUnverified()).isFalse();
+        assertThat(result.riskCandidate()).isFalse();
     }
 
     @Test

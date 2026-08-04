@@ -28,19 +28,19 @@ class InputNormalizerTest {
     }
 
     @Test
-    @DisplayName("안전 매칭 정규화는 어휘 사이 구두점과 반복 기호를 제거한다")
-    void safetyNormalizationRemovesInsertedPunctuation() {
+    @DisplayName("안전 매칭 정규화는 가시 구두점을 보존해 정책 레이어가 판정하게 한다")
+    void safetyNormalizationPreservesVisiblePunctuation() {
         assertThat(normalizer.normalizeForSafetyMatching("죽.고.싶.다"))
-                .isEqualTo("죽고싶다");
+                .isEqualTo("죽.고.싶.다");
         assertThat(normalizer.normalizeForSafetyMatching("죽~~고~~싶~~다"))
-                .isEqualTo("죽고싶다");
+                .isEqualTo("죽~~고~~싶~~다");
     }
 
     @Test
     @DisplayName("안전 매칭 정규화는 자모와 Unicode 구분자를 결합한 우회를 복원한다")
     void safetyNormalizationHandlesCombinedJamoObfuscation() {
         assertThat(normalizer.normalizeForSafetyMatching("ㅈ.ㅜ.ㄱ.고.싶.다"))
-                .isEqualTo("죽고싶다");
+                .isEqualTo("죽.고.싶.다");
         assertThat(normalizer.normalizeForSafetyMatching("ㅈ\u200Bㅜ\u200Bㄱ고싶다"))
                 .isEqualTo("죽고싶다");
         assertThat(normalizer.normalizeForSafetyMatching("죽\uFE0F고\uFE0F싶\uFE0F다"))
@@ -54,13 +54,24 @@ class InputNormalizerTest {
         assertThat(normalizer.normalizeForSafetyMatching("죽\u2028고싶다"))
                 .isEqualTo("죽고싶다");
         assertThat(normalizer.normalizeForSafetyMatching("죽.고싶다"))
-                .isEqualTo("죽고싶다");
+                .isEqualTo("죽.고싶다");
         assertThat(normalizer.normalizeForSafetyMatching("ㅈ.ㅜ.ㄱ.고싶다"))
-                .isEqualTo("죽고싶다");
+                .isEqualTo("죽.고싶다");
         assertThat(normalizer.normalizeForSafetyMatching("ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ"))
                 .isEqualTo("자살");
         assertThat(normalizer.normalizeForSafetyMatching("ᄌ.ᅡ.ᄉ.ᅡ.ᆯ"))
                 .isEqualTo("자살");
+    }
+
+    @Test
+    @DisplayName("NFKC가 새로 만든 결합문자와 공백도 같은 호출에서 제거한다")
+    void safetyNormalizationRemovesPostNfkcSeparators() {
+        assertThat(normalizer.normalizeForSafetyMatching("죽\u00A8고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\u00AF고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\u00B4고싶다"))
+                .isEqualTo("죽고싶다");
     }
 
     @Test
@@ -78,8 +89,11 @@ class InputNormalizerTest {
     @DisplayName("안전 매칭 정규화는 반복 적용해도 결과가 바뀌지 않는다")
     void safetyNormalizationIsIdempotent() {
         String once = normalizer.normalizeForSafetyMatching("ㅈ.ㅏ.ㅅ.ㅏ.ㄹ 생각중");
+        String compatibilitySymbol = normalizer.normalizeForSafetyMatching("죽\u00A8고싶다");
 
         assertThat(normalizer.normalizeForSafetyMatching(once)).isEqualTo(once);
+        assertThat(normalizer.normalizeForSafetyMatching(compatibilitySymbol))
+                .isEqualTo(compatibilitySymbol);
     }
 
     @Test
