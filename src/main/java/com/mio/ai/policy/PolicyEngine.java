@@ -33,6 +33,7 @@ public class PolicyEngine {
             SessionDelta sessionDelta) {
 
         String decisionId = "pd_" + decisionSuffix();
+        JudgeStatus judgeStatus = resolveJudgeStatus(judgeResult);
 
         // 0. 규칙 판정과 Judge 판정을 합친다 (이슈 #262).
         //
@@ -50,23 +51,24 @@ public class PolicyEngine {
         // 보안 필터를 우회할 수 있다. 성격이 다른 입력만 분기시킨다.
         if (effectiveSecurity == SecurityLevel.ATTACK) {
             if (combined.selfHarmInquiry()) {
-                return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.SELF_HARM_INQUIRY);
+                return crisisFlow(decisionId, effectiveSecurity,
+                        CrisisTrigger.SELF_HARM_INQUIRY, judgeStatus);
             }
             return build(decisionId, DecisionAction.SECURITY_REFUSAL,
                     GenerationMode.CRISIS, DeliveryMode.SECURITY_REFUSAL,
                     effectiveSecurity, false, false, false,
-                    InterventionHints.empty(), RiskLevel.ATTACK);
+                    InterventionHints.empty(), RiskLevel.ATTACK, judgeStatus);
         }
 
         // 2. L0 self-harm/intent + L1 hardCrisis
         if (combined.hardCrisis()) {
-            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD, judgeStatus);
         }
 
         // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
         // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
         if (combined.hardCrisisUnverified() && !crisisClearedByJudge(judgeResult)) {
-            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD, judgeStatus);
         }
 
         // 3. Security SUSPICIOUS → GUARDED + OutputGuard 활성
@@ -74,12 +76,12 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
                     effectiveSecurity, true, true, true,
-                    InterventionHints.empty(), RiskLevel.LOW);
+                    InterventionHints.empty(), RiskLevel.LOW, judgeStatus);
         }
 
         // 4. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
         if (combined.l0Flagged() && combined.l1Result().moderationFlagged()) {
-            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.MODERATION);
+            return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.MODERATION, judgeStatus);
         }
 
         // 5. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
@@ -87,19 +89,30 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
                     effectiveSecurity, true, true, true,
-                    InterventionHints.empty(), RiskLevel.MEDIUM);
+                    InterventionHints.empty(), RiskLevel.MEDIUM, judgeStatus);
+        }
+
+        // 5b. Input Judge 호출 실패 — 정상 CLEAR_LOW와 합치지 않는다 (이슈 #289).
+        // fallback 결과 안의 추천값·가드 플래그는 실제 모델 판정이 아니므로 읽지 않고,
+        // PolicyEngine이 보수적 운영 위험도와 완전 버퍼링을 직접 결정한다.
+        if (judgeStatus == JudgeStatus.FAILED) {
+            return build(decisionId, DecisionAction.GENERATE,
+                    GenerationMode.GUARDED, DeliveryMode.BUFFER,
+                    effectiveSecurity, true, false, true,
+                    InterventionHints.empty(), RiskLevel.MEDIUM, judgeStatus);
         }
 
         // InputJudge 결과 기반 분기 (6~8)
         if (judgeResult != null) {
             RiskLevel riskLevel = judgeResult.risk().riskLevel();
 
-            // 5b. Judge가 위기로 판정 → CRISIS_FLOW.
+            // 5c. Judge가 위기로 판정 → CRISIS_FLOW.
             // 현재 InputJudge 프롬프트는 HARD_CRISIS를 선택지로 제시하지 않지만, 스키마가 확장되거나
             // 다른 판정원이 붙었을 때 이 값이 아래 분기에 걸리지 않고 CLEAR_LOW 기본값으로
             // 조용히 떨어지는 것을 막는다.
             if (riskLevel == RiskLevel.HARD_CRISIS) {
-                return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.INPUT_JUDGE);
+                return crisisFlow(decisionId, effectiveSecurity,
+                        CrisisTrigger.INPUT_JUDGE, judgeStatus);
             }
 
             // 6. HIGH → GUARDED + BUFFER
@@ -107,7 +120,7 @@ public class PolicyEngine {
                 return build(decisionId, DecisionAction.GENERATE,
                         GenerationMode.GUARDED, DeliveryMode.BUFFER,
                         effectiveSecurity, true, true, true,
-                        generateHints(profile, riskLevel), RiskLevel.HIGH);
+                        generateHints(profile, riskLevel), RiskLevel.HIGH, judgeStatus);
             }
 
             // 7. MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE
@@ -120,7 +133,7 @@ public class PolicyEngine {
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
                         effectiveSecurity, true, true, true,
-                        hints, RiskLevel.MEDIUM);
+                        hints, RiskLevel.MEDIUM, judgeStatus);
             }
 
             // 8. LOW → NORMAL + SPECULATIVE (Judge 가 가드를 요구하면 가드 경로로 올린다)
@@ -129,7 +142,7 @@ public class PolicyEngine {
                 return build(decisionId, DecisionAction.GENERATE,
                         GenerationMode.NORMAL, deliveryFor(guard),
                         effectiveSecurity, true, true, guard,
-                        generateHints(profile, riskLevel), RiskLevel.LOW);
+                        generateHints(profile, riskLevel), RiskLevel.LOW, judgeStatus);
             }
         }
 
@@ -139,7 +152,7 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.SUPPORTIVE, deliveryFor(guard),
                     effectiveSecurity, true, true, guard,
-                    generateHints(profile, RiskLevel.LOW), RiskLevel.LOW);
+                    generateHints(profile, RiskLevel.LOW), RiskLevel.LOW, judgeStatus);
         }
 
         // 10. CLEAR_LOW (기본)
@@ -147,7 +160,7 @@ public class PolicyEngine {
         return build(decisionId, DecisionAction.GENERATE,
                 GenerationMode.NORMAL, deliveryFor(guard),
                 effectiveSecurity, true, true, guard,
-                InterventionHints.empty(), RiskLevel.CLEAR_LOW);
+                InterventionHints.empty(), RiskLevel.CLEAR_LOW, judgeStatus);
     }
 
     /**
@@ -157,8 +170,8 @@ public class PolicyEngine {
      * 이슈 #262 가 지적한 것과 정확히 같은 구조다. 파서 기본값을 fail-closed(부재 시 true)로
      * 바꿔도 소비자가 없으면 아무 효과가 없다.
      *
-     * <p>판정 실패({@code failed})면 무시한다. 폴백 결과의 플래그는 모델이 준 값이 아니라
-     * 우리가 채운 값이라, 그걸 근거로 동작을 바꾸면 없는 판정을 지어내는 셈이다.
+     * <p>판정 실패({@code failed})의 폴백 플래그는 모델이 준 값이 아니므로 여기서는 무시한다.
+     * 실패 자체는 이 메서드보다 앞의 전용 분기에서 BUFFER + 출력 가드로 처리한다 (이슈 #289).
      */
     private boolean judgeRequiresOutputGuard(InputJudgeResult judgeResult) {
         if (judgeResult == null || judgeResult.failed()) {
@@ -210,12 +223,13 @@ public class PolicyEngine {
      * 경로를 결정에 실어 보내면 {@code CrisisFlowService} 가 신호를 역추론할 필요가 없다 (이슈 #260).
      */
     private PolicyDecision crisisFlow(String decisionId, SecurityLevel effectiveSecurity,
-                                      CrisisTrigger trigger) {
+                                      CrisisTrigger trigger, JudgeStatus judgeStatus) {
         return new PolicyDecision(
                 decisionId, DecisionAction.CRISIS_FLOW,
                 GenerationMode.CRISIS, DeliveryMode.CRISIS_FLOW,
                 effectiveSecurity, false, false, false,
-                InterventionHints.empty(), POLICY_VERSION, RiskLevel.HARD_CRISIS, trigger
+                InterventionHints.empty(), POLICY_VERSION, RiskLevel.HARD_CRISIS, trigger,
+                judgeStatus
         );
     }
 
@@ -250,12 +264,20 @@ public class PolicyEngine {
             boolean allowStreaming,
             boolean requireOutputGuard,
             InterventionHints hints,
-            RiskLevel riskLevel) {
+            RiskLevel riskLevel,
+            JudgeStatus judgeStatus) {
         return new PolicyDecision(
                 decisionId, action, generationMode, deliveryMode,
                 securityLevel, allowGeneration, allowStreaming, requireOutputGuard,
-                hints, POLICY_VERSION, riskLevel
+                hints, POLICY_VERSION, riskLevel, null, judgeStatus
         );
+    }
+
+    private JudgeStatus resolveJudgeStatus(InputJudgeResult judgeResult) {
+        if (judgeResult == null) {
+            return JudgeStatus.SKIPPED;
+        }
+        return judgeResult.failed() ? JudgeStatus.FAILED : JudgeStatus.SUCCEEDED;
     }
 
     private String decisionSuffix() {
