@@ -51,7 +51,9 @@ class AiDecisionLoggerTest {
                 false,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.CLEAR_LOW
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED
         );
 
         logger.log(
@@ -106,7 +108,8 @@ class AiDecisionLoggerTest {
                 InterventionHints.empty(),
                 "test-policy",
                 RiskLevel.HARD_CRISIS,
-                CrisisTrigger.SELF_HARM_INQUIRY
+                CrisisTrigger.SELF_HARM_INQUIRY,
+                JudgeStatus.SKIPPED
         );
 
         logger.log(
@@ -161,7 +164,9 @@ class AiDecisionLoggerTest {
                 true,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.LOW
+                RiskLevel.LOW,
+                null,
+                JudgeStatus.SKIPPED
         );
         assertThat(generateDecision.crisisTrigger()).isNull();
 
@@ -415,7 +420,9 @@ class AiDecisionLoggerTest {
                 false,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.CLEAR_LOW
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED
         );
     }
 }

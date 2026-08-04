@@ -71,23 +71,27 @@ public class PolicyEngine {
             return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD, judgeStatus);
         }
 
-        // 3. Security SUSPICIOUS → GUARDED + OutputGuard 활성
-        if (effectiveSecurity == SecurityLevel.SUSPICIOUS) {
-            return build(decisionId, DecisionAction.GENERATE,
-                    GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
-                    effectiveSecurity, true, true, true,
-                    InterventionHints.empty(), RiskLevel.LOW, judgeStatus);
-        }
-
-        // 4. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
+        // 3. L0 self-harm + L1 모두 flagged → CRISIS_FLOW
+        // 보안 SUSPICIOUS보다 먼저 판정한다. 조작 의심 신호가 함께 있어도 확정적 자해 신호를
+        // 일반 가드 경로로 낮추면 안 된다.
         if (combined.l0Flagged() && combined.l1Result().moderationFlagged()) {
             return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.MODERATION, judgeStatus);
+        }
+
+        // 4. Security SUSPICIOUS → GUARDED + OutputGuard 활성
+        if (effectiveSecurity == SecurityLevel.SUSPICIOUS) {
+            return build(decisionId, DecisionAction.GENERATE,
+                    GenerationMode.GUARDED,
+                    deliveryWithJudgeFailureFloor(DeliveryMode.CAUTIOUS_SPECULATIVE, judgeStatus),
+                    effectiveSecurity, true, true, true,
+                    InterventionHints.empty(), RiskLevel.LOW, judgeStatus);
         }
 
         // 5. L0 self-harm flagged (L1 미감지) → GUARDED + OutputGuard
         if (combined.l0Flagged() && !combined.hardCrisis() && !combined.l1Result().moderationFlagged()) {
             return build(decisionId, DecisionAction.GENERATE,
-                    GenerationMode.GUARDED, DeliveryMode.CAUTIOUS_SPECULATIVE,
+                    GenerationMode.GUARDED,
+                    deliveryWithJudgeFailureFloor(DeliveryMode.CAUTIOUS_SPECULATIVE, judgeStatus),
                     effectiveSecurity, true, true, true,
                     InterventionHints.empty(), RiskLevel.MEDIUM, judgeStatus);
         }
@@ -98,7 +102,7 @@ public class PolicyEngine {
         if (judgeStatus == JudgeStatus.FAILED) {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.BUFFER,
-                    effectiveSecurity, true, false, true,
+                    effectiveSecurity, true, true, true,
                     InterventionHints.empty(), RiskLevel.MEDIUM, judgeStatus);
         }
 
@@ -193,6 +197,15 @@ public class PolicyEngine {
      */
     private DeliveryMode deliveryFor(boolean requireOutputGuard) {
         return requireOutputGuard ? DeliveryMode.CAUTIOUS_SPECULATIVE : DeliveryMode.SPECULATIVE;
+    }
+
+    /**
+     * 기존 규칙 경로가 이미 보수적이어도 Judge 실패 시에는 응답 전체 검사 전 전달을 막는다.
+     * 실패가 기존 신호보다 낮은 보호 수준을 선택하는 보호 역전을 방지한다.
+     */
+    private DeliveryMode deliveryWithJudgeFailureFloor(
+            DeliveryMode normalDelivery, JudgeStatus judgeStatus) {
+        return judgeStatus == JudgeStatus.FAILED ? DeliveryMode.BUFFER : normalDelivery;
     }
 
     /** Phase 1 호환 — profile/judge 없이 호출 가능 */

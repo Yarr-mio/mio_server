@@ -2,6 +2,7 @@ package com.mio.ai.memory.ontology;
 
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.policy.DecisionAction;
+import com.mio.ai.policy.JudgeStatus;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.UserMessageSignal;
@@ -24,6 +25,7 @@ public class ReactiveOntologyEligibility {
                                           PolicyDecision decision) {
         return allowsTriggerActivation(signal, combined)
                 && decision.action() == DecisionAction.GENERATE
+                && decision.judgeStatus() != JudgeStatus.FAILED
                 && isEligibleRisk(decision.riskLevel());
     }
 
