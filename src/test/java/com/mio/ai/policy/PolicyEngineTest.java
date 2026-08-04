@@ -172,6 +172,40 @@ class PolicyEngineTest {
     }
 
     @Test
+    @DisplayName("Input Judge 스키마 밖 ATTACK risk는 성공 저위험으로 처리하지 않고 fail-closed 한다")
+    void unsupportedJudgeAttackRiskFailsClosed() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                SecurityVerdict.clean(),
+                new RiskVerdict(RiskLevel.ATTACK, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.MEDIUM);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("성공으로 표시됐어도 risk verdict가 없으면 fail-closed 한다")
+    void missingJudgeRiskVerdictFailsClosed() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                SecurityVerdict.clean(), null, 0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
     @DisplayName("InputJudge MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE")
     void input_judge_medium_returns_cautious_speculative() {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
