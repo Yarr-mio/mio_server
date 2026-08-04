@@ -127,6 +127,7 @@ class SafetyL1Test {
             "목숨을, 끊임없이 소중히 여기고 싶어요",
             "자, 살, 돈, 집",
             "자, 살을 빼는 방법을 알아봐요",
+            "자, 살이 빠지는 원리를 알아봐요",
             "자, 해가 뜨는 원리를 설명해줘"
     })
     void naturalPunctuationBoundaryDoesNotCreateHardCrisis(String message) {
