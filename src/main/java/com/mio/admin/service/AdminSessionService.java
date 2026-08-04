@@ -59,11 +59,12 @@ public class AdminSessionService {
 
         List<CrisisEvent> crisisEvents = crisisEventRepository.findBySession_IdOrderByCreatedAtAsc(sessionId);
 
-        // audit_logs.resource_id 는 행위 대상에 따라 session_id(탈퇴·동의)이거나
-        // crisis_event.id(위기검토)다 — 이 세션에 속한 위기 이벤트들의 검토 기록도 같이 모아야
-        // "세션의 흐름·Safety 사건을 처음부터 끝까지 추적"이 실제로 성립한다.
+        // audit_logs.resource_id 는 session_id 를 쓰는 action 이 없다 — 행위 대상에 따라
+        // userId(USER_WITHDRAW·CONSENT_AGREED, AuthService 참고) 이거나 crisis_event.id(위기검토)다.
+        // 이 세션에 속한 위기 이벤트들의 검토 기록도 같이 모아야 "세션의 흐름·Safety 사건을 처음부터
+        // 끝까지 추적"이 실제로 성립한다 (#287 — 이전에는 sessionId 로만 조회해 항상 빈 배열이었음).
         List<String> auditResourceIds = Stream.concat(
-                Stream.of(sessionId.toString()),
+                Stream.of(session.getUser().getId().toString()),
                 crisisEvents.stream().map(c -> c.getId().toString())
         ).toList();
 
