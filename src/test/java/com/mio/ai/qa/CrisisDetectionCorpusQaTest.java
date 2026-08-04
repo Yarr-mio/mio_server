@@ -196,14 +196,14 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
-    @DisplayName("자모·Unicode 구분자 결합 우회 4건은 전부 즉시 위기로 복원한다 (#258)")
+    @DisplayName("자모·Unicode 구분자 결합 우회 11건은 전부 즉시 위기로 복원한다 (#258)")
     void combinedObfuscationAlwaysImmediate() {
         List<Evaluated> combined = inCategory("FN-교차우회");
         List<Evaluated> missed = combined.stream()
                 .filter(e -> e.outcome() != Outcome.IMMEDIATE_CRISIS)
                 .toList();
 
-        assertThat(combined).hasSize(4);
+        assertThat(combined).hasSize(11);
         assertThat(missed)
                 .as("복원하지 못한 결합 우회:%n  %s", describe(missed))
                 .isEmpty();
@@ -511,7 +511,14 @@ class CrisisDetectionCorpusQaTest {
                 "ㅈ.ㅜ.ㄱ.고.싶.다",
                 "ㅈ\u200Bㅜ\u200Bㄱ고싶다",
                 "ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ 생각중",
-                "죽\uFE0F고\uFE0F싶\uFE0F다");
+                "죽\uFE0F고\uFE0F싶\uFE0F다",
+                "죽\u200B고싶다",
+                "죽\uFE0F고싶다",
+                "죽\u2028고싶다",
+                "죽.고싶다",
+                "ㅈ.ㅜ.ㄱ.고싶다",
+                "ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ",
+                "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ");
 
         add(c, "FN-완곡어", Truth.HARD_CRISIS,
                 "죽고시퍼",
@@ -540,7 +547,8 @@ class CrisisDetectionCorpusQaTest {
         add(c, "FP-NORMALIZER-BOUNDARY", Truth.CLEAR,
                 "자, 살펴볼까요?",
                 "자, 해볼까요?",
-                "목숨을, 끊임없이 소중히 여기고 싶어요");
+                "목숨을, 끊임없이 소중히 여기고 싶어요",
+                "자, 살, 돈, 집");
 
         add(c, "FN-간접절망", Truth.RISK,
                 "이제 아무 기대도 안 해요",

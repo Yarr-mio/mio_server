@@ -47,6 +47,20 @@ class InputNormalizerTest {
                 .isEqualTo("죽고싶다");
         assertThat(normalizer.normalizeForSafetyMatching("ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ"))
                 .isEqualTo("자살");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\u200B고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\uFE0F고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\u2028고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽.고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("ㅈ.ㅜ.ㄱ.고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ"))
+                .isEqualTo("자살");
+        assertThat(normalizer.normalizeForSafetyMatching("ᄌ.ᅡ.ᄉ.ᅡ.ᆯ"))
+                .isEqualTo("자살");
     }
 
     @Test
@@ -56,6 +70,8 @@ class InputNormalizerTest {
                 .isEqualTo("자,살펴볼까요?");
         assertThat(normalizer.normalizeForSafetyMatching("자, 해볼까요?"))
                 .isEqualTo("자,해볼까요?");
+        assertThat(normalizer.normalizeForSafetyMatching("자, 살, 돈, 집"))
+                .isEqualTo("자,살,돈,집");
     }
 
     @Test

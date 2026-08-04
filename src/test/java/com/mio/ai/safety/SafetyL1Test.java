@@ -71,7 +71,14 @@ class SafetyL1Test {
             "ㅈ.ㅜ.ㄱ.고.싶.다",
             "ㅈ\u200Bㅜ\u200Bㄱ고싶다",
             "ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ 생각중",
-            "죽\uFE0F고\uFE0F싶\uFE0F다"
+            "죽\uFE0F고\uFE0F싶\uFE0F다",
+            "죽\u200B고싶다",
+            "죽\uFE0F고싶다",
+            "죽\u2028고싶다",
+            "죽.고싶다",
+            "ㅈ.ㅜ.ㄱ.고싶다",
+            "ᄌ\u200Bᅡ\u200Bᄉ\u200Bᅡ\u200Bᆯ",
+            "ᄌ.ᅡ.ᄉ.ᅡ.ᆯ"
     })
     void combinedCrisisObfuscationIsCanonicalized(String message) {
         assertThat(safetyL1.check(input(message)).hardCrisis()).isTrue();
@@ -81,7 +88,8 @@ class SafetyL1Test {
     @ValueSource(strings = {
             "자, 살펴볼까요?",
             "자, 해볼까요?",
-            "목숨을, 끊임없이 소중히 여기고 싶어요"
+            "목숨을, 끊임없이 소중히 여기고 싶어요",
+            "자, 살, 돈, 집"
     })
     void naturalPunctuationBoundaryDoesNotCreateHardCrisis(String message) {
         assertThat(safetyL1.check(input(message)).hardCrisis()).isFalse();
