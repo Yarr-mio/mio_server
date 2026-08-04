@@ -54,7 +54,8 @@ public class SafetySignalCombiner {
         // 플로우로 확정되며(이슈 #260) 둘 다 판정 결과가 분기를 바꾸지 않기 때문이다.
         if (security.level() == SecurityLevel.ATTACK) return false;
 
-        // 0. 맥락 마커로 강등된 위기 후보는 반드시 Judge 검증을 거친다 (이슈 #255).
+        // 0. 맥락 마커 또는 가시 구분자 우회로 검증 대기인 위기 후보는 반드시 Judge를 거친다
+        // (이슈 #255, #258).
         // riskCandidate로도 걸리지만, 강등의 전제 조건이므로 명시적으로 둔다.
         if (l1.hardCrisisUnverified()) {
             return true;
