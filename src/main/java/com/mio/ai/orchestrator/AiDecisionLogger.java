@@ -151,6 +151,7 @@ public class AiDecisionLogger {
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
         trace.put("l1_threshold_source", l1ThresholdSource != null ? l1ThresholdSource : "default");
         trace.put("input_judge_called", inputJudgeCalled);
+        trace.put("input_judge_status", decision.judgeStatus().name());
         trace.put("risk_level", decision.riskLevel() != null ? decision.riskLevel().name() : null);
         trace.put("safety_profile_cache_hit", safetyProfileCacheHit);
         // 근거 조회에 실패해 보수적 기본값으로 채운 프로파일인지 (이슈 #261).

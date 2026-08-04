@@ -26,6 +26,10 @@ public record PolicyDecision(
         JudgeStatus judgeStatus
 ) {
 
+    public PolicyDecision {
+        judgeStatus = judgeStatus != null ? judgeStatus : JudgeStatus.SKIPPED;
+    }
+
     /** Judge 상태 도입 이전 전체 시그니처 — 기존 호출부 호환용. */
     public PolicyDecision(
             String decisionId,

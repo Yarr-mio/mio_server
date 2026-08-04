@@ -80,6 +80,7 @@ class PolicyEngineTest {
         assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.SPECULATIVE);
         assertThat(decision.riskLevel()).isEqualTo(RiskLevel.CLEAR_LOW);
         assertThat(decision.allowGeneration()).isTrue();
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.SKIPPED);
     }
 
     // === Phase 2 scenarios ===
@@ -126,6 +127,7 @@ class PolicyEngineTest {
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.NORMAL);
         assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.SPECULATIVE);
         assertThat(decision.riskLevel()).isEqualTo(RiskLevel.LOW);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.SUCCEEDED);
     }
 
     @Test
@@ -299,14 +301,12 @@ class PolicyEngineTest {
 
     @Test
     @DisplayName("Judge 판정 실패 상태를 PolicyDecision에 명시적으로 남긴다")
-    void failedJudgeStatusIsExplicitInPolicyDecision() throws Exception {
+    void failedJudgeStatusIsExplicitInPolicyDecision() {
         CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
 
         PolicyDecision decision =
                 policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
 
-        Object judgeStatus = PolicyDecision.class.getMethod("judgeStatus").invoke(decision);
-
-        assertThat(judgeStatus.toString()).isEqualTo("FAILED");
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
     }
 }
