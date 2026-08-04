@@ -24,6 +24,7 @@ events:
   profile_submitted:
     - age_range
     - gender
+    - employment_status
   signup_completed: []
   onboarding_step_completed:
     - step
