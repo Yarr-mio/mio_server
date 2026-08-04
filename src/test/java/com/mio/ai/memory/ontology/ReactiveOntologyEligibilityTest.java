@@ -53,6 +53,15 @@ class ReactiveOntologyEligibilityTest {
                 .isFalse();
     }
 
+    @Test
+    void rejectsBeliefActivationWhenJudgeRaisesFinalSecurityLevel() {
+        assertThat(eligibility.allowsBeliefActivation(
+                signal("catastrophizing"), combined(SecurityLevel.CLEAN, false, false),
+                decision(RiskLevel.LOW, JudgeStatus.SUCCEEDED, SecurityLevel.SUSPICIOUS)))
+                .as("Judge 이후 최종 보안 판정이 의심이면 장기 belief 근거로 쓰면 안 된다")
+                .isFalse();
+    }
+
     private UserMessageSignal signal(String biasType) {
         return new UserMessageSignal(45, biasType);
     }
@@ -63,8 +72,13 @@ class ReactiveOntologyEligibilityTest {
     }
 
     private PolicyDecision decision(RiskLevel riskLevel, JudgeStatus judgeStatus) {
+        return decision(riskLevel, judgeStatus, SecurityLevel.CLEAN);
+    }
+
+    private PolicyDecision decision(RiskLevel riskLevel, JudgeStatus judgeStatus,
+                                    SecurityLevel securityLevel) {
         return new PolicyDecision("decision", DecisionAction.GENERATE, GenerationMode.NORMAL,
-                DeliveryMode.SPECULATIVE, SecurityLevel.CLEAN, true, true, false,
+                DeliveryMode.SPECULATIVE, securityLevel, true, true, false,
                 InterventionHints.empty(), "test", riskLevel, null, judgeStatus);
     }
 }

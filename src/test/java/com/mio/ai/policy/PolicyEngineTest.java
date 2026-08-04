@@ -108,6 +108,70 @@ class PolicyEngineTest {
     }
 
     @Test
+    @DisplayName("Judge SUSPICIOUS + HIGH는 보안 조기 반환으로 강등되지 않고 BUFFER를 유지한다")
+    void suspiciousSecurityWithHighRiskKeepsHighBufferedPath() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.SUSPICIOUS, List.of("obfuscated"), true),
+                new RiskVerdict(RiskLevel.HIGH, List.of(), GenerationMode.GUARDED,
+                        DeliveryMode.BUFFER, true),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision)
+                .extracting(
+                        PolicyDecision::securityLevel,
+                        PolicyDecision::riskLevel,
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard)
+                .containsExactly(
+                        SecurityLevel.SUSPICIOUS,
+                        RiskLevel.HIGH,
+                        DeliveryMode.BUFFER,
+                        true);
+    }
+
+    @Test
+    @DisplayName("Judge SUSPICIOUS + MEDIUM은 위험도를 LOW로 축약하지 않는다")
+    void suspiciousSecurityWithMediumRiskPreservesMediumRisk() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.SUSPICIOUS, List.of("obfuscated"), true),
+                new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.SUPPORTIVE,
+                        DeliveryMode.CAUTIOUS_SPECULATIVE, true),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.MEDIUM);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("비자해 L0 + Judge HIGH는 L0 조기 반환으로 강등되지 않고 BUFFER를 유지한다")
+    void nonSelfHarmL0WithHighRiskKeepsHighBufferedPath() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, false,
+                List.of("moderation:violence"), 0.7
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, true,
+                false, false, false, true, true, l1, 0.7
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.HIGH), null, null);
+
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HIGH);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
     @DisplayName("InputJudge MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE")
     void input_judge_medium_returns_cautious_speculative() {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
