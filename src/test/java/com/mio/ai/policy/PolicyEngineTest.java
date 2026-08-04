@@ -276,15 +276,37 @@ class PolicyEngineTest {
     }
 
     @Test
-    @DisplayName("판정 실패한 Judge 의 가드 플래그는 근거로 쓰지 않는다")
-    void failedJudgeGuardFlagsAreIgnored() {
+    @DisplayName("Judge 판정 실패는 GUARDED + BUFFER + 출력 가드로 보수적으로 처리한다")
+    void failedJudgeUsesGuardedBufferedPath() {
         CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
 
         PolicyDecision decision =
                 policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
 
-        assertThat(decision.deliveryMode())
-                .as("폴백의 플래그는 모델이 준 값이 아니라 우리가 채운 값이다")
-                .isEqualTo(DeliveryMode.SPECULATIVE);
+        assertThat(decision)
+                .as("판정하지 못한 위험 후보가 정상 CLEAR_LOW 무검사 스트리밍으로 합류하면 안 된다")
+                .extracting(
+                        PolicyDecision::generationMode,
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard,
+                        PolicyDecision::riskLevel)
+                .containsExactly(
+                        GenerationMode.GUARDED,
+                        DeliveryMode.BUFFER,
+                        true,
+                        RiskLevel.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("Judge 판정 실패 상태를 PolicyDecision에 명시적으로 남긴다")
+    void failedJudgeStatusIsExplicitInPolicyDecision() throws Exception {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        Object judgeStatus = PolicyDecision.class.getMethod("judgeStatus").invoke(decision);
+
+        assertThat(judgeStatus.toString()).isEqualTo("FAILED");
     }
 }
