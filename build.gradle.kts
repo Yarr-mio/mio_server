@@ -85,6 +85,12 @@ tasks.withType<Test> {
         systemProperty("llm.scale.sample", it.toString())
     }
 
+    // 평가 실행 아카이브 위치. 기본은 build/eval-runs (커밋 대상 아님).
+    // 기준선으로 저장소에 남길 실행만: ./gradlew test -PevalArchiveDir=docs/eval/runs
+    project.findProperty("evalArchiveDir")?.let {
+        systemProperty("mio.eval.archiveDir", it.toString())
+    }
+
     val envFile = rootProject.file(".env")
     if (envFile.exists()) {
         envFile.forEachLine { line ->
