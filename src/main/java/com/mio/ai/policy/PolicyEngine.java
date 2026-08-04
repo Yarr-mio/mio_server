@@ -67,7 +67,8 @@ public class PolicyEngine {
 
         // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
         // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
-        if (combined.hardCrisisUnverified() && !crisisClearedByJudge(judgeResult)) {
+        if (combined.hardCrisisUnverified()
+                && !crisisClearedByJudge(judgeResult, judgeStatus)) {
             return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD, judgeStatus);
         }
 
@@ -205,11 +206,15 @@ public class PolicyEngine {
      * {@code InputJudge}의 응답 스키마가 모델에게 제시하는 값이 {@code CLEAR_LOW|LOW|MEDIUM|HIGH}
      * 뿐이고 파싱 실패 시 {@code CLEAR_LOW}로 떨어지기 때문이다. 그 조건이면 성공한 모든 판정이
      * 위기를 해제해 게이트가 사실상 무효가 된다. 그래서 위험 없음 쪽으로 명확히 판정된
-     * {@code CLEAR_LOW}·{@code LOW}만 해제하고, {@code MEDIUM} 이상과 판정 부재·호출 실패는
-     * 모두 위기로 유지한다(fail-closed).
+     * {@code CLEAR_LOW}·{@code LOW}만 해제하고, {@code MEDIUM} 이상과 판정 부재·호출 실패,
+     * 필수 verdict 누락은 모두 위기로 유지한다(fail-closed). 위기 해제도 다른 정책 분기와
+     * 동일한 통합 {@link JudgeStatus} 계약을 사용해야 한다.
      */
-    private boolean crisisClearedByJudge(InputJudgeResult judgeResult) {
-        if (judgeResult == null || judgeResult.failed()) {
+    private boolean crisisClearedByJudge(
+            InputJudgeResult judgeResult, JudgeStatus judgeStatus) {
+        if (judgeStatus != JudgeStatus.SUCCEEDED
+                || judgeResult == null
+                || !hasUsableJudgeResult(judgeResult)) {
             return false;
         }
         RiskLevel riskLevel = judgeResult.risk().riskLevel();
