@@ -275,9 +275,7 @@ public class SafetyL1 {
                 .matcher(message.substring(matchEnd)).replaceFirst("");
         return switch (keyword) {
             case "자살" -> startsWithAny(suffix,
-                    "펴", "돈", "을빼", "이빠");
-            case "자해" -> startsWithAny(suffix,
-                    "볼", "가뜨");
+                    "펴", "돈");
             case "목숨을끊" -> suffix.startsWith("임없이");
             default -> false;
         };
