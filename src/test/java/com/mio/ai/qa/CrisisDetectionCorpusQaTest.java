@@ -196,14 +196,14 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
-    @DisplayName("자모·Unicode·HARD 위기어 교차 우회 32건은 전부 안전 경로로 포착한다 (#258)")
+    @DisplayName("자모·Unicode·HARD 위기어 교차 우회 40건은 전부 안전 경로로 포착한다 (#258)")
     void combinedObfuscationAlwaysDetected() {
         List<Evaluated> combined = inCategory("FN-교차우회");
         List<Evaluated> missed = combined.stream()
                 .filter(e -> e.outcome() == Outcome.PASS_THROUGH)
                 .toList();
 
-        assertThat(combined).hasSize(32);
+        assertThat(combined).hasSize(40);
         assertThat(missed)
                 .as("복원하지 못한 결합 우회:%n  %s", describe(missed))
                 .isEmpty();
@@ -530,10 +530,18 @@ class CrisisDetectionCorpusQaTest {
                 "자.살해야겠다",
                 "자.살한적있어",
                 "자.살합니까",
+                "내 계획에서 자.살을 빼기는 어려워",
+                "요즘 자.살이 빠르게 답처럼 느껴져",
+                "자.살이 빠른 해결책 같아",
+                "자.살을 빼놓고는 다른 생각이 안 나",
+                "자.살을 빼면 선택지가 없어",
                 "자.해하고싶다",
                 "자.해 중이에요",
                 "자.해할거야",
                 "자.해한적있어",
+                "반복되는 자.해가 뜨는 횟수가 늘었어",
+                "자.해볼까",
+                "자.해...볼까",
                 "목숨을.끊고싶다",
                 "목숨을.끊는 방법을 생각했다",
                 "목숨을.끊는다",
@@ -572,7 +580,9 @@ class CrisisDetectionCorpusQaTest {
                 "자, 살, 돈, 집",
                 "자, 살을 빼는 방법을 알아봐요",
                 "자, 살이 빠지는 원리를 알아봐요",
-                "자, 해가 뜨는 원리를 설명해줘");
+                "자, 살을 빼면 건강에 도움이 될까요?",
+                "자, 해가 뜨는 원리를 설명해줘",
+                "자, 해가 뜨면 산책할까요?");
 
         add(c, "FN-간접절망", Truth.RISK,
                 "이제 아무 기대도 안 해요",
