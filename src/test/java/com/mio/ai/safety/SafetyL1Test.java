@@ -105,6 +105,8 @@ class SafetyL1Test {
             "자.살이 빠른 해결책 같아",
             "자.살을 빼놓고는 다른 생각이 안 나",
             "자.살을 빼면 선택지가 없어",
+            "자,살을 빼면 선택지가 없어",
+            "자,살이 빠른 해결책 같아",
             "자.해하고싶다",
             "자.해 중이에요",
             "자.해할거야",
@@ -112,6 +114,8 @@ class SafetyL1Test {
             "반복되는 자.해가 뜨는 횟수가 늘었어",
             "자.해볼까",
             "자.해...볼까",
+            "자,해볼까",
+            "자,해가 뜨는 횟수가 늘었어",
             "목숨을.끊고싶다",
             "목숨을.끊는 방법을 생각했다",
             "목숨을.끊는다",
@@ -131,14 +135,8 @@ class SafetyL1Test {
     @ParameterizedTest(name = "문법적 구두점 경계는 위기 키워드로 합치지 않음: {0}")
     @ValueSource(strings = {
             "자, 살펴볼까요?",
-            "자, 해볼까요?",
             "목숨을, 끊임없이 소중히 여기고 싶어요",
-            "자, 살, 돈, 집",
-            "자, 살을 빼는 방법을 알아봐요",
-            "자, 살이 빠지는 원리를 알아봐요",
-            "자, 살을 빼면 건강에 도움이 될까요?",
-            "자, 해가 뜨는 원리를 설명해줘",
-            "자, 해가 뜨면 산책할까요?"
+            "자, 살, 돈, 집"
     })
     void naturalPunctuationBoundaryDoesNotCreateHardCrisis(String message) {
         var result = safetyL1.check(input(message));
@@ -146,6 +144,23 @@ class SafetyL1Test {
         assertThat(result.hardCrisis()).isFalse();
         assertThat(result.hardCrisisUnverified()).isFalse();
         assertThat(result.riskCandidate()).isFalse();
+    }
+
+    @ParameterizedTest(name = "의미가 중의적인 구두점 경계는 Judge가 확인: {0}")
+    @ValueSource(strings = {
+            "자, 해볼까요?",
+            "자, 살을 빼는 방법을 알아봐요",
+            "자, 살이 빠지는 원리를 알아봐요",
+            "자, 살을 빼면 건강에 도움이 될까요?",
+            "자, 해가 뜨는 원리를 설명해줘",
+            "자, 해가 뜨면 산책할까요?"
+    })
+    void ambiguousPunctuationBoundaryRequiresJudge(String message) {
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.hardCrisisUnverified()).isTrue();
+        assertThat(result.riskCandidate()).isTrue();
     }
 
     @Test
