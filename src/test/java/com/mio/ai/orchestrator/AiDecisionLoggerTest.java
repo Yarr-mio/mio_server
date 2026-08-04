@@ -309,6 +309,9 @@ class AiDecisionLoggerTest {
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
 
+        assertThat(captor.getValue().getJudgeStatus())
+                .as("운영상의 MEDIUM 폴백과 실제 MEDIUM 판정을 집계 컬럼에서 구분해야 한다")
+                .isEqualTo("FAILED");
         assertThat(captor.getValue().getTrace())
                 .contains("\"input_judge_status\":\"FAILED\"");
     }
