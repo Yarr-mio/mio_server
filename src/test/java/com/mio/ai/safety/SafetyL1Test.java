@@ -74,6 +74,65 @@ class SafetyL1Test {
         assertThat(result.riskCandidate()).isTrue();
     }
 
+    @ParameterizedTest(name = "계획·수단 표현은 즉시 확정하지 않고 검증 후보로 승격: {0}")
+    @ValueSource(strings = {
+            "약을 조금씩 모아뒀어요",
+            "옥상에 몇 번 올라가봤어요",
+            "유서를 써놨어요",
+            "주변 정리를 다 끝냈어요",
+            "다음 주 화요일로 날짜를 정했어요",
+            "보험을 정리하고 왔어요"
+    })
+    void planAndMeansPhrasesBecomeReviewCandidates(String message) {
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("review_candidate:plan_means:"));
+    }
+
+    @ParameterizedTest(name = "간접 절망 표현은 검증 후보로 승격: {0}")
+    @ValueSource(strings = {
+            "이제 아무 기대도 안 해요",
+            "매일이 그냥 견디는 일이에요",
+            "나아질 거란 생각이 안 들어요",
+            "아무한테도 짐이 되고 싶지 않아요",
+            "내가 왜 여기 있는지 모르겠어요",
+            "웃는 법을 잊어버린 것 같아요"
+    })
+    void indirectHopelessnessBecomesReviewCandidate(String message) {
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("review_candidate:hopelessness:"));
+    }
+
+    @ParameterizedTest(name = "수동적 자살 사고는 검증 후보로 승격: {0}")
+    @ValueSource(strings = {
+            "내일 아침에 안 깨어나도 상관없을 것 같아요",
+            "사고라도 났으면 좋겠다는 생각을 해요",
+            "굳이 살아야 할 이유를 모르겠어요",
+            "잠들면 안 깨고 싶다는 생각을 자주 해요"
+    })
+    void passiveIdeationBecomesReviewCandidate(String message) {
+        var result = safetyL1.check(input(message));
+
+        assertThat(result.hardCrisis()).isFalse();
+        assertThat(result.riskCandidate()).isTrue();
+        assertThat(result.signals()).anyMatch(s -> s.startsWith("review_candidate:passive_ideation:"));
+    }
+
+    @ParameterizedTest(name = "일상 계획 문맥은 검증 후보가 되더라도 즉시 위기로 확정하지 않는다: {0}")
+    @ValueSource(strings = {
+            "여행 날짜를 정했어요",
+            "이사 때문에 주변 정리를 다 끝냈어요",
+            "보험 서류를 정리하고 왔어요"
+    })
+    void ambiguousPlanningContextNeverBecomesImmediateCrisis(String message) {
+        assertThat(safetyL1.check(input(message)).hardCrisis()).isFalse();
+    }
+
     @Test
     @DisplayName("의존 표현은 dependencyHint = true를 반환한다")
     void dependency_phrase_triggers_dependency_hint() {
