@@ -41,6 +41,13 @@ class EventWhitelistTest {
     }
 
     @Test
+    @DisplayName("profile_submitted의 허용 property에 employment_status가 포함된다 (#291)")
+    void allowedProperties_profileSubmitted_includesEmploymentStatus() {
+        assertThat(whitelist.allowedProperties("profile_submitted"))
+                .containsExactlyInAnyOrder("age_range", "gender", "employment_status");
+    }
+
+    @Test
     @DisplayName("property가 없는 이벤트(app_installed)는 빈 집합을 반환한다")
     void allowedProperties_noPropertiesEvent_returnsEmpty() {
         assertThat(whitelist.allowedProperties("app_installed")).isEmpty();
