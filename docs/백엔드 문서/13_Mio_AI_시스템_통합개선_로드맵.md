@@ -95,8 +95,20 @@ Mio는 단순 프롬프트 래퍼보다 훨씬 발전한 프로토타입이다. 
 - 실패 폴백의 운영상 `MEDIUM`과 실제 `MEDIUM` 판정을 구분하도록
   `ai_policy_decisions.judge_status` 집계 컬럼을 추가했고, Judge 실패 턴은 사용자 믿음 활성화
   근거에서 제외했다. 기존 행의 상태는 추정하지 않고 `NULL(unknown)`로 유지한다.
-- 이는 P0-2의 **즉시 수정 범위**만 완료한 것이다. 다른 안전 판정원의 `UNKNOWN` 계약,
-  전체 소비자 전파, 최종 안전 코퍼스와 검증 전 노출 지표는 아직 남아 있다.
+- 같은 결함이 L0 Moderation에 남아 있었다. `ModerationResult.resolved`는 `#263`에서 도입돼
+  fail-open 여부를 값으로 남겼지만 정책 분기는 `flagged`만 읽었고, 판정을 받아오지 못한 턴이
+  `l0Flagged=false`로 축약돼 기본 `CLEAR_LOW` + `SPECULATIVE` 무검사 경로로 흘렀다.
+  이슈 `#294`에서 `ModerationStatus(RESOLVED/UNRESOLVED)`를 `CombinedSignal` →
+  `PolicyEngine` → `PolicyDecision`으로 전파하고, `UNRESOLVED`인 생성 턴에 최소
+  `CAUTIOUS_SPECULATIVE + OutputGuard` 하한을 적용했다. 위험도는 올리지 않는다 — 판정
+  부재는 위험의 근거가 아니라 확인 불가의 근거다. 집계는
+  `ai_policy_decisions.moderation_status`로 남기고 기존 행은 `NULL(unknown)`로 유지한다.
+- 실패 상태별 전달 방식 분포는 `PipelineSignalChainQaTest` SC-16이 계측한다. 현재 기준선은
+  `judge=SKIPPED/l0=RESOLVED → SPECULATIVE`, `judge=SKIPPED/l0=UNRESOLVED →
+  CAUTIOUS_SPECULATIVE`, `judge=FAILED → BUFFER`이며, 판정원이 하나라도 미해결인 턴이
+  무검사 경로로 나가는 조합은 0이다.
+- 남은 것은 안전 판정 외 실패 상태(`RETRIEVAL_TIMEOUT`, `CONTRACT_INVALID`,
+  `MEMORY_PROVENANCE_MISSING`)의 계약과, 실제 사용자 트래픽에서의 노출 지표 기준선이다.
 
 ### 3.2 현재 안전 평가가 보여주는 한계
 
@@ -908,6 +920,21 @@ Judge가 의미를 판정하게 한다.
 아직 P0-2 전체 완료로 보지 않는 이유는 `UNKNOWN`이 Input Judge 밖의 판정원까지 일관된
 계약으로 전파되지 않았고, 실패 상태별 사용자 노출·미탐 지표의 최종 기준선도 없기 때문이다.
 따라서 `#289`가 머지돼도 P0-2 상위 항목은 후속 이슈가 필요하다.
+
+#### P0-2 진행 상태 — 이슈 #294 (L0 판정 부재)
+
+`#289`가 Input Judge에 적용한 계약을 L0 Moderation으로 확장했다.
+
+- `ModerationStatus(RESOLVED/UNRESOLVED)`를 안전 신호 결합부에서 정책 결정까지 전파한다.
+- `UNRESOLVED`인 생성 턴은 최소 `CAUTIOUS_SPECULATIVE + OutputGuard`로 올린다.
+- 위험도(`riskLevel`)는 바꾸지 않는다. 판정 부재로 위험 등급을 만들면 오탐이 늘고, 그
+  등급이 다시 다른 분기의 입력이 된다.
+- `PolicyDecision` 컴팩트 생성자가 `UNRESOLVED + GENERATE + SPECULATIVE` 조합 자체를
+  거부한다. 이후 분기를 추가할 때 같은 결함을 다시 만들 수 없게 하는 것이 목적이다.
+- 집계 컬럼 `ai_policy_decisions.moderation_status`(V46)와 trace `l0_status`를 추가했다.
+
+남은 범위는 안전 판정 밖의 실패 상태다. 검색 타임아웃, 계약 위반, 출처 없는 기억은 아직
+각자의 폴백·노출 방식·메트릭을 갖지 않는다. 이들은 P0-3/P1-2 작업과 함께 정의한다.
 
 P0-3의 초기 범위는 `EMPATHIC_REFLECTION`, `EMOTION_CHECK`, `CLARIFY_CONTEXT`,
 `CRISIS_ASSESSMENT/RESOURCE_HANDOFF`처럼 자유도가 낮고 평가하기 쉬운 경로로 제한한다.
