@@ -6,6 +6,7 @@ import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.memory.working.SessionDelta;
+import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.SecurityLevel;
@@ -41,6 +42,17 @@ class PolicyEngineTest {
         return new CombinedSignal(
                 security, hardCrisis, false, emotionSpike, repetitiveNeg,
                 false, false, false, l1, 0.0
+        );
+    }
+
+    /** 같은 신호에서 L0 판정만 받아오지 못한 상태 (이슈 #294). */
+    private CombinedSignal unresolvedModeration(CombinedSignal base) {
+        return new CombinedSignal(
+                base.securityLevel(), base.attackKind(), base.hardCrisis(),
+                base.hardCrisisUnverified(), base.riskCandidate(), base.emotionSpike(),
+                base.repetitiveNegative(), base.dependencyHint(), base.l0Flagged(),
+                base.requiresJudge(), base.l1Result(), base.confidence(),
+                base.securityEvidenceUnverifiableByJudge(), ModerationStatus.UNRESOLVED
         );
     }
 
@@ -452,5 +464,99 @@ class PolicyEngineTest {
                 policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
 
         assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+    }
+
+    // === L0 Moderation 판정 부재 (이슈 #294) ===
+
+    @Test
+    @DisplayName("L0 판정을 받지 못한 턴은 무검사 SPECULATIVE 로 내려가지 않는다")
+    void unresolvedModerationNeverStreamsWithoutOutputCheck() {
+        CombinedSignal combined = unresolvedModeration(
+                combined(SecurityLevel.CLEAN, false, false, false));
+
+        PolicyDecision decision = policyEngine.decide(combined);
+
+        assertThat(decision)
+                .as("안전 계층 하나가 통째로 빠진 턴을 정상 판정 턴과 같게 처리하면 안 된다")
+                .extracting(
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard,
+                        PolicyDecision::moderationStatus)
+                .containsExactly(
+                        DeliveryMode.CAUTIOUS_SPECULATIVE,
+                        true,
+                        ModerationStatus.UNRESOLVED);
+    }
+
+    @Test
+    @DisplayName("L0 미해결은 Judge 가 LOW 로 판정한 턴도 가드 경로로 올린다")
+    void unresolvedModerationGuardsSucceededLowTurn() {
+        CombinedSignal combined = unresolvedModeration(
+                combined(SecurityLevel.CLEAN, false, true, false));
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.LOW), null, null);
+
+        assertThat(decision.deliveryMode())
+                .as("Judge 는 L0 가 보던 표현을 대신 보지 않는다 — 두 축은 독립이다")
+                .isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.LOW);
+    }
+
+    @Test
+    @DisplayName("L0 미해결은 L1 약신호 단독 경로도 가드 경로로 올린다")
+    void unresolvedModerationGuardsWeakSignalOnlyTurn() {
+        CombinedSignal combined = unresolvedModeration(
+                combinedWithSignals(SecurityLevel.CLEAN, false, false, true));
+
+        PolicyDecision decision = policyEngine.decide(combined);
+
+        assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+    }
+
+    @Test
+    @DisplayName("L0 판정을 받아온 정상 턴의 전달 방식은 바뀌지 않는다")
+    void resolvedModerationKeepsSpeculative() {
+        PolicyDecision decision =
+                policyEngine.decide(combined(SecurityLevel.CLEAN, false, false, false));
+
+        assertThat(decision)
+                .as("가드 승격이 정상 턴까지 번지면 모든 대화가 느려진다")
+                .extracting(
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard,
+                        PolicyDecision::moderationStatus)
+                .containsExactly(
+                        DeliveryMode.SPECULATIVE,
+                        false,
+                        ModerationStatus.RESOLVED);
+    }
+
+    @Test
+    @DisplayName("L0 미해결이 확정 위기 경로를 바꾸지 않는다")
+    void unresolvedModerationDoesNotDowngradeCrisisFlow() {
+        CombinedSignal combined = unresolvedModeration(
+                combined(SecurityLevel.CLEAN, true, false, false));
+
+        PolicyDecision decision = policyEngine.decide(combined);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CRISIS_FLOW);
+        assertThat(decision.moderationStatus()).isEqualTo(ModerationStatus.UNRESOLVED);
+    }
+
+    @Test
+    @DisplayName("L0 미해결이 Judge 실패의 BUFFER 하한을 낮추지 않는다")
+    void unresolvedModerationKeepsFailedJudgeBuffer() {
+        CombinedSignal combined = unresolvedModeration(
+                combined(SecurityLevel.CLEAN, false, true, false));
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+        assertThat(decision.moderationStatus()).isEqualTo(ModerationStatus.UNRESOLVED);
     }
 }

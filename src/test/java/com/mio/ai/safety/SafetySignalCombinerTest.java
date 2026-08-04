@@ -1,6 +1,7 @@
 package com.mio.ai.safety;
 
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.security.SecurityAssessment;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 class SafetySignalCombinerTest {
 
@@ -110,6 +112,33 @@ class SafetySignalCombinerTest {
         );
 
         assertThat(combined.requiresJudge()).isTrue();
+    }
+
+    @Test
+    @DisplayName("L0 판정을 못 받아온 결합 결과는 미해결 상태를 그대로 싣는다")
+    void failOpenModerationIsCarriedAsUnresolved() {
+        CombinedSignal combined = combiner.combine(
+                SecurityAssessment.clean(),
+                SafetyL1Result.clear(),
+                ModerationResult.failOpen(),
+                null
+        );
+
+        assertThat(combined.moderationStatus())
+                .as("판정 부재가 여기서 지워지면 PolicyEngine 은 정상 판정과 구분할 수 없다")
+                .isEqualTo(ModerationStatus.UNRESOLVED);
+        assertThat(combined.l0Flagged()).isFalse();
+    }
+
+    @Test
+    @DisplayName("판정 상태 없이 결합 결과를 만들 수 없다 — 기본값으로 축약하지 않는다")
+    void rejectsMissingModerationStatusInsteadOfAssumingResolved() {
+        assertThatNullPointerException().isThrownBy(() -> new CombinedSignal(
+                com.mio.ai.security.SecurityLevel.CLEAN,
+                com.mio.ai.security.AttackKind.NONE,
+                false, false, false, false, false, false, false, false,
+                SafetyL1Result.clear(), 0.0, false, null
+        ));
     }
 
 }

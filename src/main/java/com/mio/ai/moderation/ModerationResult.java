@@ -43,6 +43,16 @@ public record ModerationResult(
         return new ModerationResult(false, false, Map.of(), Map.of());
     }
 
+    /**
+     * 정책 결정이 읽는 판정 상태 (이슈 #294).
+     *
+     * <p>{@code resolved} 는 trace 에만 남고 정책 분기는 {@code flagged} 만 봤다. 그래서
+     * 판정을 못 받아온 턴이 "위험 신호 없음" 턴과 같은 무검사 경로로 흘렀다.
+     */
+    public ModerationStatus status() {
+        return resolved ? ModerationStatus.RESOLVED : ModerationStatus.UNRESOLVED;
+    }
+
     public boolean isSelfHarmFlagged() {
         return Boolean.TRUE.equals(categories.get("self-harm"))
                 || Boolean.TRUE.equals(categories.get("self-harm/intent"))

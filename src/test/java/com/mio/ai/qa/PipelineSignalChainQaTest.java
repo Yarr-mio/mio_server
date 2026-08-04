@@ -24,15 +24,18 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * QA 시나리오 SC-01 ~ SC-15
+ * QA 시나리오 SC-01 ~ SC-17
  * 실제 메시지가 파이프라인 신호 체인을 올바르게 통과하는지 검증한다.
  * SecurityRuleFilter → SafetyL1 → SafetySignalCombiner → PolicyEngine
  */
@@ -405,5 +408,97 @@ class PipelineSignalChainQaTest {
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
         assertThat(decision.interventionHints()).isNotNull();
         assertThat(decision.interventionHints().suggestedCodes()).isEmpty();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SC-16: 판정원 실패 상태별 전달 방식 (이슈 #289, #294)
+    //
+    // 안전 판정원이 하나라도 판정을 주지 못한 턴은, 신호가 없어 보여도 검사 없는 경로로
+    // 나갈 수 없다. 상태별 전달 방식 분포를 함께 출력해 실패 상태의 노출 기준선을 남긴다.
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("SC-16: 판정원 실패 턴은 검사 없는 SPECULATIVE 로 나가지 않는다")
+    void sc16_unresolvedSafetySignalsNeverStreamUnchecked() {
+        List<String> messages = List.of(
+                "오늘 날씨가 정말 좋네요",
+                "조금 피곤해요",
+                "요즘 모든 게 다 무의미하게 느껴져요",
+                "너랑 얘기 안 하면 하루를 못 버티겠어요"
+        );
+
+        Map<String, Map<DeliveryMode, Integer>> distribution = new LinkedHashMap<>();
+        List<String> offenders = new ArrayList<>();
+
+        for (String message : messages) {
+            for (boolean moderationResolved : List.of(true, false)) {
+                for (boolean judgeFailed : List.of(false, true)) {
+                    String normalized = normalizer.normalize(message);
+                    var moderation = moderationResolved
+                            ? ModerationResult.clear()
+                            : ModerationResult.failOpen();
+                    var l1Result = safetyL1.check(
+                            new SafetyL1Input(normalized, List.of(), moderation));
+                    var combined = combiner.combine(
+                            securityFilter.check(normalized), l1Result, moderation, defaultProfile);
+                    var judge = judgeFailed ? InputJudgeResult.fallback() : null;
+
+                    var decision = policyEngine.decide(combined, judge, defaultProfile, null);
+
+                    String state = "judge=" + decision.judgeStatus()
+                            + " l0=" + decision.moderationStatus();
+                    distribution
+                            .computeIfAbsent(state, k -> new EnumMap<>(DeliveryMode.class))
+                            .merge(decision.deliveryMode(), 1, Integer::sum);
+
+                    boolean anyUnresolved = judgeFailed || !moderationResolved;
+                    boolean unchecked = decision.action() == DecisionAction.GENERATE
+                            && decision.deliveryMode() == DeliveryMode.SPECULATIVE;
+                    if (anyUnresolved && unchecked) {
+                        offenders.add(state + " → " + decision.deliveryMode() + " : " + message);
+                    }
+                }
+            }
+        }
+
+        printFailureStateReport(distribution);
+
+        assertThat(offenders)
+                .as("판정 부재는 CLEAR 가 아니다 — 검사 없는 전달 경로로 합류하면 안 된다")
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("SC-17: L0 판정 부재는 위험도를 올리지 않고 전달 방식만 보수화한다")
+    void sc17_unresolvedModerationRaisesDeliveryNotRisk() {
+        String normalized = normalizer.normalize("오늘 날씨가 정말 좋네요");
+
+        var resolved = policyEngine.decide(combiner.combine(
+                securityFilter.check(normalized),
+                safetyL1.check(new SafetyL1Input(normalized, List.of(), ModerationResult.clear())),
+                ModerationResult.clear(), defaultProfile), null, null, null);
+        var unresolved = policyEngine.decide(combiner.combine(
+                securityFilter.check(normalized),
+                safetyL1.check(new SafetyL1Input(normalized, List.of(), ModerationResult.failOpen())),
+                ModerationResult.failOpen(), defaultProfile), null, null, null);
+
+        assertThat(unresolved.riskLevel())
+                .as("판정 부재는 확인 불가의 근거이지 위험의 근거가 아니다")
+                .isEqualTo(resolved.riskLevel());
+        assertThat(resolved.deliveryMode()).isEqualTo(DeliveryMode.SPECULATIVE);
+        assertThat(unresolved.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        assertThat(unresolved.requireOutputGuard()).isTrue();
+    }
+
+    private void printFailureStateReport(Map<String, Map<DeliveryMode, Integer>> distribution) {
+        StringBuilder out = new StringBuilder();
+        out.append("\n══════════════════════════════════════════════════════════════\n");
+        out.append("  판정원 상태별 전달 방식 분포 (이슈 #289, #294)\n");
+        out.append("══════════════════════════════════════════════════════════════\n");
+        distribution.forEach((state, modes) -> {
+            out.append(String.format("  %-40s", state));
+            modes.forEach((mode, count) -> out.append(String.format(" %s=%d", mode, count)));
+            out.append('\n');
+        });
+        System.out.println(out);
     }
 }
