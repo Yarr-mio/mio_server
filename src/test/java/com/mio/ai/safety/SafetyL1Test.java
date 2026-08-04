@@ -4,6 +4,8 @@ import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.profile.SafetyProfile;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.Map;
@@ -43,6 +45,23 @@ class SafetyL1Test {
     @DisplayName("자해 키워드는 hardCrisis = true를 반환한다")
     void self_harm_keyword_triggers_hard_crisis() {
         var result = safetyL1.check(input("자해하고싶다"));
+        assertThat(result.hardCrisis()).isTrue();
+    }
+
+    @ParameterizedTest(name = "표기 우회도 hardCrisis로 복원: {0}")
+    @ValueSource(strings = {
+            "ㅈㅜㄱ고싶다",
+            "죽.고.싶.다",
+            "ㅈㅏㅅㅏㄹ 생각중",
+            "죽~~고~~싶~~다",
+            "쥭고싶다",
+            "ㅈㅏ해 하고싶어",
+            "죽고시퍼",
+            "kill myself 하고 싶어"
+    })
+    void crisisObfuscationIsCanonicalizedBeforeMatching(String message) {
+        var result = safetyL1.check(input(message));
+
         assertThat(result.hardCrisis()).isTrue();
     }
 

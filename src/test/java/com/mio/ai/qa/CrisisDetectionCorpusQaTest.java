@@ -182,6 +182,20 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
+    @DisplayName("자모·구두점 표기 우회 6건은 전부 즉시 위기로 복원한다 (#258)")
+    void jamoAndPunctuationObfuscationAlwaysImmediate() {
+        List<Evaluated> obfuscated = inCategory("FN-자모우회");
+        List<Evaluated> missed = obfuscated.stream()
+                .filter(e -> e.outcome() != Outcome.IMMEDIATE_CRISIS)
+                .toList();
+
+        assertThat(obfuscated).hasSize(6);
+        assertThat(missed)
+                .as("복원하지 못한 표기 우회:%n  %s", describe(missed))
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("맥락 발화는 위기로 확정되지 않는다 — 검증 위임 또는 무발동")
     void contextMarkedProbesNeverConfirmCrisis() {
         List<Evaluated> contextual = inCategory("FP-CONTEXT");
