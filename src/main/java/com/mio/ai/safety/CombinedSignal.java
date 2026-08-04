@@ -4,6 +4,8 @@ import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.security.AttackKind;
 import com.mio.ai.security.SecurityLevel;
 
+import java.util.Objects;
+
 /**
  * @param attackKind           {@code securityLevel == ATTACK} 일 때 그 성격. 그 외에는 {@link AttackKind#NONE} (이슈 #260)
  * @param hardCrisisUnverified 위기 키워드가 매칭됐으나 맥락 마커 또는 가시 구분자 우회 때문에
@@ -28,7 +30,10 @@ public record CombinedSignal(
         ModerationStatus moderationStatus
 ) {
     public CombinedSignal {
-        moderationStatus = moderationStatus != null ? moderationStatus : ModerationStatus.RESOLVED;
+        // 판정 부재를 안전해 보이는 기본값으로 축약하지 않는 것이 이 필드의 존재 이유다.
+        // null 을 RESOLVED 로 바꾸면 바로 그 결함을 이 생성자가 다시 만든다.
+        // 구 시그니처 호출부는 아래 호환 생성자에서 명시적으로 RESOLVED 를 넣는다.
+        Objects.requireNonNull(moderationStatus, "moderationStatus");
     }
 
     /** L0 판정 상태 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #294). */
