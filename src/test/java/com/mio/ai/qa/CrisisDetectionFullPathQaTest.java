@@ -8,6 +8,7 @@ import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmPricingProperties;
 import com.mio.ai.llm.OpenAiLlmClient;
+import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.JudgeStatus;
@@ -335,11 +336,9 @@ class CrisisDetectionFullPathQaTest {
 
     private String policyVersion() {
         String message = "안녕하세요";
-        var l1 = safetyL1.check(new SafetyL1Input(
-                message, List.of(), com.mio.ai.moderation.ModerationResult.clear()));
+        var l1 = safetyL1.check(new SafetyL1Input(message, List.of(), ModerationResult.clear()));
         return policyEngine.decide(combiner.combine(
-                        securityFilter.check(message), l1,
-                        com.mio.ai.moderation.ModerationResult.clear(), null))
+                        securityFilter.check(message), l1, ModerationResult.clear(), null))
                 .policyVersion();
     }
 }

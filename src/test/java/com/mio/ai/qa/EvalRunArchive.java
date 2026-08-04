@@ -10,7 +10,10 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 평가 실행 결과를 버전과 함께 파일로 남긴다 (이슈 #295).
@@ -34,6 +37,7 @@ final class EvalRunArchive {
 
     private static final String ARCHIVE_DIR_PROPERTY = "mio.eval.archiveDir";
     private static final Path DEFAULT_DIR = Path.of("build", "eval-runs");
+    private static final int GIT_TIMEOUT_SECONDS = 10;
     private static final DateTimeFormatter FILE_STAMP =
             DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
 
@@ -85,21 +89,45 @@ final class EvalRunArchive {
         return commit + (dirty ? " (dirty worktree)" : "");
     }
 
+    /**
+     * git 명령을 짧은 상한 안에서 실행한다.
+     *
+     * <p>출력을 먼저 {@code readAllBytes()} 로 읽으면 프로세스가 stdout 을 닫을 때까지
+     * 무한정 막힌다 — index lock 경합처럼 git 이 멈추는 상황에서 타임아웃이 적용될 기회가
+     * 없다. 그래서 출력은 별도 스레드에서 읽고, 상한을 넘기면 프로세스를 정리한 뒤 포기한다.
+     * 버전 정보를 못 얻는 것은 평가 실행을 막을 이유가 아니므로 실패는 {@code null} 이다.
+     */
     private static String git(String... args) {
+        String[] command = new String[args.length + 1];
+        command[0] = "git";
+        System.arraycopy(args, 0, command, 1, args.length);
+
+        Process process = null;
         try {
-            String[] command = new String[args.length + 1];
-            command[0] = "git";
-            System.arraycopy(args, 0, command, 1, args.length);
-            Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            return process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0
-                    ? output.strip()
-                    : null;
-        } catch (IOException e) {
+            process = new ProcessBuilder(command).redirectErrorStream(true).start();
+            Process running = process;
+            CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return new String(running.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    return null;
+                }
+            });
+
+            if (!process.waitFor(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                return null;
+            }
+            String result = output.get(GIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            return result != null ? result.strip() : null;
+        } catch (IOException | ExecutionException | TimeoutException e) {
             return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return null;
+        } finally {
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
         }
     }
 }
