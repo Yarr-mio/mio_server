@@ -196,14 +196,14 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
-    @DisplayName("자모·Unicode·HARD 위기어 교차 우회 31건은 전부 안전 경로로 포착한다 (#258)")
+    @DisplayName("자모·Unicode·HARD 위기어 교차 우회 32건은 전부 안전 경로로 포착한다 (#258)")
     void combinedObfuscationAlwaysDetected() {
         List<Evaluated> combined = inCategory("FN-교차우회");
         List<Evaluated> missed = combined.stream()
                 .filter(e -> e.outcome() == Outcome.PASS_THROUGH)
                 .toList();
 
-        assertThat(combined).hasSize(31);
+        assertThat(combined).hasSize(32);
         assertThat(missed)
                 .as("복원하지 못한 결합 우회:%n  %s", describe(missed))
                 .isEmpty();
