@@ -8,6 +8,15 @@ services:
       - .env
     environment:
       SPRING_PROFILES_ACTIVE: prod
+    logging:
+      driver: awslogs
+      options:
+        awslogs-region: ap-northeast-2
+        awslogs-group: /mio/app
+        awslogs-stream-prefix: app
+        # 로그 그룹이 미리 없으면 자동 생성 — 이미 있으면 무해한 no-op.
+        # 보존기간(30일)은 aws logs put-retention-policy로 별도 설정 필요 (자동 생성 시 기본이 무기한 보관).
+        awslogs-create-group: "true"
     depends_on:
       postgres:
         condition: service_healthy
