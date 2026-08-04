@@ -12,17 +12,10 @@ public class InputNormalizer {
     private static final String COMPATIBILITY_VOWELS = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ";
     private static final String COMPATIBILITY_TAILS = " ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ";
     private static final String JAMO_CLASS = "ㄱ-ㅎㅏ-ㅣ\\u1100-\\u11FF\\uA960-\\uA97F\\uD7B0-\\uD7FF";
-    private static final String OPTIONAL_VISIBLE_SEPARATOR = "[\\p{P}\\p{S}]*";
     private static final Pattern NON_SEMANTIC_UNICODE_SEPARATOR = Pattern.compile(
             "[\\p{M}\\p{Z}\\p{C}]+");
-    private static final Pattern VISIBLE_SEPARATORS = Pattern.compile("[\\p{P}\\p{S}]+");
     private static final Pattern BETWEEN_JAMO = Pattern.compile(
             "(?<=[" + JAMO_CLASS + "])[\\p{P}\\p{S}]+(?=[" + JAMO_CLASS + "])");
-    private static final Pattern OBFUSCATED_DEATH_WISH = Pattern.compile(
-            "죽" + OPTIONAL_VISIBLE_SEPARATOR
-                    + "고" + OPTIONAL_VISIBLE_SEPARATOR
-                    + "싶" + OPTIONAL_VISIBLE_SEPARATOR
-                    + "(?:다|어|음|은" + OPTIONAL_VISIBLE_SEPARATOR + "데)");
 
     public String normalize(String text) {
         if (text == null) return "";
@@ -37,8 +30,8 @@ public class InputNormalizer {
      * <p>일반 {@link #normalize(String)} 결과는 Judge·메모리·온톨로지에도 전달되므로 구두점과
      * 표현을 보존한다. 자모 조합과 삽입 구분자 복원은 사용자 문장을 훼손하지 않도록 이 별도
      * 뷰에서만 수행한다. 비가시 Unicode 구분자는 위치와 무관하게 제거하지만, 보이는 구두점은
-     * 자모 내부 또는 등록된 위기 어휘 내부에서만 접어 {@code "자, 살펴볼까요"} 같은 실제 문법
-     * 경계를 보존한다.
+     * 자모 내부에서만 접는다. 위기 어휘에 삽입된 가시 구두점 판정은 {@code SafetyL1}의 전체
+     * 키워드 목록과 함께 관리해 이 정규화기가 특정 위기어를 하드코딩하지 않게 한다.
      */
     public String normalizeForSafetyMatching(String text) {
         String unicodeCompacted = NON_SEMANTIC_UNICODE_SEPARATOR
@@ -46,15 +39,11 @@ public class InputNormalizer {
         String jamoJoined = BETWEEN_JAMO.matcher(unicodeCompacted).replaceAll("");
         String composed = composeCompatibilityJamo(jamoJoined);
         String compatibilityNormalized = Normalizer.normalize(composed, Normalizer.Form.NFKC);
-        String crisisTermsRestored = collapseKnownCrisisTerms(compatibilityNormalized);
-        return crisisTermsRestored
+        String stableUnicode = NON_SEMANTIC_UNICODE_SEPARATOR
+                .matcher(compatibilityNormalized).replaceAll("");
+        return stableUnicode
                 .replace("쥭", "죽")
                 .replace("시퍼", "싶어");
-    }
-
-    private String collapseKnownCrisisTerms(String text) {
-        return OBFUSCATED_DEATH_WISH.matcher(text).replaceAll(match ->
-                VISIBLE_SEPARATORS.matcher(match.group()).replaceAll(""));
     }
 
     private String composeCompatibilityJamo(String text) {

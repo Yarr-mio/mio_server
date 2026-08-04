@@ -5,7 +5,8 @@ import com.mio.ai.security.SecurityLevel;
 
 /**
  * @param attackKind           {@code securityLevel == ATTACK} 일 때 그 성격. 그 외에는 {@link AttackKind#NONE} (이슈 #260)
- * @param hardCrisisUnverified 위기 키워드가 매칭됐으나 맥락 마커 때문에 InputJudge 검증이 필요한 상태 (이슈 #255)
+ * @param hardCrisisUnverified 위기 키워드가 매칭됐으나 맥락 마커 또는 가시 구분자 우회 때문에
+ *                             InputJudge 검증이 필요한 상태 (이슈 #255, #258)
  */
 public record CombinedSignal(
         SecurityLevel securityLevel,

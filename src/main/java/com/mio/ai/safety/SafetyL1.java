@@ -6,8 +6,10 @@ import com.mio.ai.profile.SafetyProfile;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Component
 public class SafetyL1 {
@@ -20,6 +22,17 @@ public class SafetyL1 {
             "죽고싶어", "죽고싶은데", "죽고싶음", "suicid", "self-harm", "selfharm",
             "killmyself"
     );
+
+    private static final Pattern VISIBLE_SEPARATOR = Pattern.compile("[\\p{P}\\p{S}]");
+    private static final Pattern LEADING_VISIBLE_SEPARATORS = Pattern.compile("^[\\p{P}\\p{S}]+");
+    private static final List<ObfuscatedCrisisMatcher> OBFUSCATED_CRISIS_MATCHERS =
+            HARD_CRISIS_KEYWORDS.stream()
+                    .map(SafetyL1::withoutVisibleSeparators)
+                    .distinct()
+                    .sorted(Comparator.comparingInt(String::length).reversed())
+                    .map(keyword -> new ObfuscatedCrisisMatcher(
+                            keyword, compileSeparatorTolerant(keyword)))
+                    .toList();
 
     private static final Set<String> RISK_KEYWORDS = Set.of(
             "사라지고싶다", "없어지고싶다", "살기싫다", "살고싶지않다",
@@ -115,6 +128,13 @@ public class SafetyL1 {
                 signals.add("crisis_context_marker:" + contextMarker);
             } else {
                 hardCrisis = true;
+            }
+        } else {
+            ObfuscatedCrisisMatch obfuscated = findObfuscatedCrisis(msg);
+            if (obfuscated != null) {
+                hardCrisisUnverified = true;
+                riskCandidate = true;
+                signals.add("crisis_obfuscated_keyword:" + obfuscated.keyword());
             }
         }
 
@@ -212,6 +232,61 @@ public class SafetyL1 {
         return !Double.isNaN(previousAverage) && previousAverage - currentEmotionScore >= threshold;
     }
 
+    private ObfuscatedCrisisMatch findObfuscatedCrisis(String message) {
+        for (ObfuscatedCrisisMatcher candidate : OBFUSCATED_CRISIS_MATCHERS) {
+            var matcher = candidate.pattern().matcher(message);
+            while (matcher.find()) {
+                if (VISIBLE_SEPARATOR.matcher(matcher.group()).find()
+                        && hasPlausibleObfuscatedContext(
+                        candidate.keyword(), message, matcher.end())) {
+                    return new ObfuscatedCrisisMatch(candidate.keyword());
+                }
+            }
+        }
+        return null;
+    }
+
+    private boolean hasPlausibleObfuscatedContext(
+            String keyword, String message, int matchEnd) {
+        String suffix = LEADING_VISIBLE_SEPARATORS
+                .matcher(message.substring(matchEnd)).replaceFirst("");
+        return switch (keyword) {
+            case "자살" -> suffix.isEmpty() || startsWithAny(suffix,
+                    "생각", "충동", "시도", "방법", "하고", "하려", "하",
+                    "을", "은", "이", "도", "로", "에", "위험", "원");
+            case "자해" -> suffix.isEmpty() || startsWithAny(suffix,
+                    "충동", "시도", "방법", "하고", "하려", "하", "했",
+                    "를", "가", "흔적", "원");
+            case "목숨을끊" -> suffix.isEmpty() || startsWithAny(suffix,
+                    "고", "으", "을", "었", "겠", "자", "어", "기");
+            default -> true;
+        };
+    }
+
+    private boolean startsWithAny(String value, String... prefixes) {
+        for (String prefix : prefixes) {
+            if (value.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String withoutVisibleSeparators(String keyword) {
+        return keyword.replaceAll("[\\p{P}\\p{S}]", "");
+    }
+
+    private static Pattern compileSeparatorTolerant(String keyword) {
+        StringBuilder regex = new StringBuilder();
+        keyword.codePoints().forEach(codePoint -> {
+            if (!regex.isEmpty()) {
+                regex.append("[\\p{P}\\p{S}]*");
+            }
+            regex.append(Pattern.quote(new String(Character.toChars(codePoint))));
+        });
+        return Pattern.compile(regex.toString());
+    }
+
     private boolean isRepetitiveNegative(
             String currentBiasType,
             List<SafetyL1HistoryMessage> history,
@@ -233,5 +308,11 @@ public class SafetyL1 {
         private String signal() {
             return "review_candidate:" + category + ":" + phrase;
         }
+    }
+
+    private record ObfuscatedCrisisMatcher(String keyword, Pattern pattern) {
+    }
+
+    private record ObfuscatedCrisisMatch(String keyword) {
     }
 }
