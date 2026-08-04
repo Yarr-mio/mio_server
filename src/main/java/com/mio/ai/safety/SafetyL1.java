@@ -34,6 +34,32 @@ public class SafetyL1 {
             "전부엉망인것만", "의미가없는것같", "아무것도의미없", "좋은건하나도없"
     );
 
+    /**
+     * 단독으로 위기를 확정할 수는 없지만 Judge가 의미를 확인해야 하는 고위험 후보 표현.
+     *
+     * <p>계획·수단 표현은 여행·이사·보험 같은 정상 문맥과 겹칠 수 있으므로
+     * {@code hardCrisis}가 아니라 복구 가능한 {@code riskCandidate}로만 승격한다.
+     * 절망·수동적 사고도 동일하게 룰이 최종 위험도를 단정하지 않는다.
+     */
+    private static final List<ReviewCandidateRule> REVIEW_CANDIDATE_RULES = List.of(
+            new ReviewCandidateRule("plan_means", "약을조금씩모아"),
+            new ReviewCandidateRule("plan_means", "옥상에몇번올라가"),
+            new ReviewCandidateRule("plan_means", "유서를써"),
+            new ReviewCandidateRule("plan_means", "주변정리를다끝냈"),
+            new ReviewCandidateRule("plan_means", "날짜를정했"),
+            new ReviewCandidateRule("plan_means", "보험을정리하고왔"),
+            new ReviewCandidateRule("hopelessness", "아무기대도안해"),
+            new ReviewCandidateRule("hopelessness", "매일이그냥견디는일"),
+            new ReviewCandidateRule("hopelessness", "나아질거란생각이안들"),
+            new ReviewCandidateRule("hopelessness", "짐이되고싶지않"),
+            new ReviewCandidateRule("hopelessness", "내가왜여기있는지모르"),
+            new ReviewCandidateRule("hopelessness", "웃는법을잊어버린"),
+            new ReviewCandidateRule("passive_ideation", "안깨어나도상관없"),
+            new ReviewCandidateRule("passive_ideation", "사고라도났으면좋겠"),
+            new ReviewCandidateRule("passive_ideation", "살아야할이유를모르"),
+            new ReviewCandidateRule("passive_ideation", "잠들면안깨고싶")
+    );
+
     private static final Set<String> DEPENDENCY_PHRASES = Set.of(
             "너밖에없어", "네가없으면", "너만있으면돼", "너한테만말할수있어",
             "다른사람은몰라도너는", "항상네편이잖아",
@@ -107,6 +133,16 @@ public class SafetyL1 {
                 if (msg.contains(keyword)) {
                     riskCandidate = true;
                     signals.add("hopelessness:" + keyword);
+                    break;
+                }
+            }
+        }
+
+        if (!hardCrisis && !riskCandidate) {
+            for (ReviewCandidateRule rule : REVIEW_CANDIDATE_RULES) {
+                if (msg.contains(rule.phrase())) {
+                    riskCandidate = true;
+                    signals.add(rule.signal());
                     break;
                 }
             }
@@ -191,5 +227,11 @@ public class SafetyL1 {
                 .count();
 
         return previousSameBiasCount + 1 >= threshold;
+    }
+
+    private record ReviewCandidateRule(String category, String phrase) {
+        private String signal() {
+            return "review_candidate:" + category + ":" + phrase;
+        }
     }
 }

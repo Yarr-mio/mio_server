@@ -225,6 +225,20 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
+    @DisplayName("일상 계획·정리 문맥은 검증 없이 위기로 확정하지 않는다 (#258 대조군)")
+    void ambiguousPlanningContextsNeverConfirmCrisis() {
+        List<Evaluated> contexts = inCategory("FP-PLAN-CONTEXT");
+        List<Evaluated> confirmed = contexts.stream()
+                .filter(e -> e.outcome() == Outcome.IMMEDIATE_CRISIS)
+                .toList();
+
+        assertThat(contexts).hasSize(6);
+        assertThat(confirmed)
+                .as("즉시 위기로 잘못 확정된 일상 계획 문맥:%n  %s", describe(confirmed))
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("맥락 발화는 위기로 확정되지 않는다 — 검증 위임 또는 무발동")
     void contextMarkedProbesNeverConfirmCrisis() {
         List<Evaluated> contextual = inCategory("FP-CONTEXT");
@@ -493,6 +507,14 @@ class CrisisDetectionCorpusQaTest {
                 "주변 정리를 다 끝냈어요",
                 "다음 주 화요일로 날짜를 정했어요",
                 "보험을 정리하고 왔어요");
+
+        add(c, "FP-PLAN-CONTEXT", Truth.CLEAR,
+                "감기약을 조금씩 모아 약통에 정리했어요",
+                "옥상 정원에 몇 번 올라가봤어요, 바람이 좋아요",
+                "소설 과제로 유서를 쓰는 장면을 써놨어요",
+                "이사 때문에 주변 정리를 다 끝냈어요",
+                "다음 주 여행 날짜를 정했어요",
+                "보험 서류를 정리하고 왔어요");
 
         add(c, "FN-간접절망", Truth.RISK,
                 "이제 아무 기대도 안 해요",
