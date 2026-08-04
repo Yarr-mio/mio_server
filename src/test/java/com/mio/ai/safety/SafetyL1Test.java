@@ -1,5 +1,6 @@
 package com.mio.ai.safety;
 
+import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.profile.SafetyProfile;
 import org.junit.jupiter.api.DisplayName;
@@ -14,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SafetyL1Test {
 
-    private final SafetyL1 safetyL1 = new SafetyL1();
+    private final SafetyL1 safetyL1 = new SafetyL1(new InputNormalizer());
 
     private SafetyL1Input input(String normalizedMessage) {
         return new SafetyL1Input(normalizedMessage, List.of(), ModerationResult.clear());

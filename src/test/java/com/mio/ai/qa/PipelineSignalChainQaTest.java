@@ -50,7 +50,7 @@ class PipelineSignalChainQaTest {
     void setUp() {
         normalizer = new InputNormalizer();
         securityFilter = new SecurityRuleFilter();
-        safetyL1 = new SafetyL1();
+        safetyL1 = new SafetyL1(normalizer);
         combiner = new SafetySignalCombiner();
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         defaultProfile = new SafetyProfile(

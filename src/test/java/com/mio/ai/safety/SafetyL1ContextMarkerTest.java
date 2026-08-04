@@ -1,5 +1,6 @@
 package com.mio.ai.safety;
 
+import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.moderation.ModerationResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -19,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class SafetyL1ContextMarkerTest {
 
-    private final SafetyL1 safetyL1 = new SafetyL1();
+    private final SafetyL1 safetyL1 = new SafetyL1(new InputNormalizer());
 
     private SafetyL1Result check(String message) {
         return safetyL1.check(new SafetyL1Input(

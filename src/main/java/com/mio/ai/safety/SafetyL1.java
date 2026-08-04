@@ -1,5 +1,6 @@
 package com.mio.ai.safety;
 
+import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.profile.SafetyProfile;
 import org.springframework.stereotype.Component;
@@ -11,10 +12,13 @@ import java.util.Set;
 @Component
 public class SafetyL1 {
 
+    private final InputNormalizer inputNormalizer;
+
     private static final Set<String> HARD_CRISIS_KEYWORDS = Set.of(
             "자살", "자해", "죽고싶다", "죽을거야", "목숨을끊", "스스로목숨",
             "자살하고싶", "자해하고싶", "죽어버리고", "자살을생각", "숨지고싶",
-            "죽고싶어", "죽고싶은데", "죽고싶음", "suicid", "self-harm", "selfharm"
+            "죽고싶어", "죽고싶은데", "죽고싶음", "suicid", "self-harm", "selfharm",
+            "killmyself"
     );
 
     private static final Set<String> RISK_KEYWORDS = Set.of(
@@ -42,8 +46,12 @@ public class SafetyL1 {
     private static final int DEFAULT_REPETITION_THRESHOLD = 3;
     private static final int DEFAULT_BURST_THRESHOLD = 10;
 
+    public SafetyL1(InputNormalizer inputNormalizer) {
+        this.inputNormalizer = inputNormalizer;
+    }
+
     public SafetyL1Result check(SafetyL1Input input) {
-        String msg = input.normalizedMessage().replaceAll("\\s+", "");
+        String msg = inputNormalizer.normalizeForSafetyMatching(input.normalizedMessage());
         List<SafetyL1HistoryMessage> history = input.recentMessages();
         ModerationResult moderation = input.moderationResult();
         SafetyProfile profile = input.profile();
