@@ -275,7 +275,21 @@ public class PolicyEngine {
         if (judgeResult == null) {
             return JudgeStatus.SKIPPED;
         }
-        return judgeResult.failed() ? JudgeStatus.FAILED : JudgeStatus.SUCCEEDED;
+        return judgeResult.failed() || !hasUsableJudgeResult(judgeResult)
+                ? JudgeStatus.FAILED
+                : JudgeStatus.SUCCEEDED;
+    }
+
+    /**
+     * 성공 상태라도 필수 verdict가 없거나 Input Judge 계약 밖 위험도면 판정 실패로 취급한다.
+     * {@code ATTACK}은 보안 축의 값이며 risk 축에서 기본 저위험 경로로 떨어지면 안 된다.
+     */
+    private boolean hasUsableJudgeResult(InputJudgeResult judgeResult) {
+        return judgeResult.security() != null
+                && judgeResult.security().level() != null
+                && judgeResult.risk() != null
+                && judgeResult.risk().riskLevel() != null
+                && judgeResult.risk().riskLevel() != RiskLevel.ATTACK;
     }
 
     private RiskLevel succeededJudgeRisk(

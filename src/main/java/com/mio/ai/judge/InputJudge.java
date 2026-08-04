@@ -148,7 +148,12 @@ public class InputJudge {
      */
     private RiskLevel parseRiskLevel(String value) {
         try {
-            return RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+            RiskLevel parsed = RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+            return switch (parsed) {
+                case CLEAR_LOW, LOW, MEDIUM, HIGH -> parsed;
+                case HARD_CRISIS, ATTACK -> throw new IllegalStateException(
+                        "InputJudge risk 스키마 밖 RiskLevel 을 반환했다: " + value);
+            };
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException("InputJudge 가 알 수 없는 RiskLevel 을 반환했다: " + value, e);
         }
