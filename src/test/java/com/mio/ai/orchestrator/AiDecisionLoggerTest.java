@@ -13,6 +13,7 @@ import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
+import com.mio.ai.policy.JudgeStatus;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
 import com.mio.ai.safety.SafetyL1Result;
@@ -271,6 +272,40 @@ class AiDecisionLoggerTest {
         assertThat(captor.getValue().getTrace())
                 .contains("\"l0_resolved\":true")
                 .contains("\"safety_profile_degraded\":false");
+    }
+
+    @Test
+    @DisplayName("Input Judge 실패 상태를 정책 결정 트레이스에 남긴다")
+    void logPersistsFailedInputJudgeStatus() {
+        PolicyDecision decision = generateDecision("pd_judge_failed")
+                .withJudgeStatus(JudgeStatus.FAILED);
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                ModerationResult.clear(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                true,
+                null,
+                null,
+                "default",
+                false,
+                false,
+                false,
+                null,
+                null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace())
+                .contains("\"input_judge_status\":\"FAILED\"");
     }
 
     @Test
