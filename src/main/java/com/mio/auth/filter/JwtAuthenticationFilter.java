@@ -35,7 +35,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "POST /v1/auth/refresh",
             "POST /v1/auth/dev/token",
             // actuator 는 관리 포트로 분리됐다. 8080 의 liveness 는 HealthController 가 담당한다.
-            "GET /health"
+            "GET /health",
+            // 이슈 #285: 성장분석 이벤트 수집 API. SecurityConfig.PUBLIC_ENDPOINTS 와 별개로
+            // 이 필터가 먼저 실행되므로 여기서도 제외해야 한다.
+            "POST /v1/events"
     );
 
     private final JwtTokenService jwtTokenService;

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <include resource="org/springframework/boot/logging/logback/console-appender.xml"/>
+
+    <!--
+        이슈 #285: 성장분석 이벤트 전용 로거. #281의 앱 일반 로그(콘솔 → /mio/app)와
+        물리적으로 분리한다 — additivity=false로 루트/콘솔 appender에 전파되지 않는다.
+        경로는 환경별로 다르다 (강민석 인프라 명세 §4-B "app.log와 같은 파일 금지" 참고):
+          local/test → ./logs/journey-events.jsonl
+          prod       → /var/log/mio/journey-events.jsonl (docker-compose.prod.yml에서 지정)
+    -->
+    <springProperty scope="context" name="journeyEventsLogFile"
+                     source="events.log-file-path" defaultValue="./logs/journey-events.jsonl"/>
+
+    <appender name="JOURNEY_EVENTS" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${journeyEventsLogFile}</file>
+        <encoder>
+            <!-- 순수 JSON 한 줄만 — 접두 타임스탬프·로그레벨 문자열 금지 (명세 §5 ①) -->
+            <pattern>%msg%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${journeyEventsLogFile}.%d{yyyy-MM-dd}</fileNamePattern>
+            <maxHistory>3</maxHistory>
+            <totalSizeCap>100MB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <logger name="journey-events" level="INFO" additivity="false">
+        <appender-ref ref="JOURNEY_EVENTS"/>
+    </logger>
+
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

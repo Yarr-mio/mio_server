@@ -31,7 +31,9 @@ public class SecurityConfig {
             "/v1/auth/**",
             "/api-docs/**",
             "/swagger-ui/**",
-            "/swagger-ui.html"
+            "/swagger-ui.html",
+            // 이슈 #285: 로그인 전 익명 이벤트도 받아야 하는 성장분석 수집 API.
+            "/v1/events"
     };
 
     /**

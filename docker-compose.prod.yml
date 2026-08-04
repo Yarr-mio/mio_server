@@ -8,6 +8,13 @@ services:
       - .env
     environment:
       SPRING_PROFILES_ACTIVE: prod
+      # 이슈 #285 — 강민석 인프라 명세 §1 EVENT_FILE 그대로. 컨테이너 안에서만 쓰면 호스트의
+      # CloudWatch Agent가 못 읽으므로 아래 volumes로 호스트 경로에 마운트한다.
+      EVENTS_LOG_FILE_PATH: /var/log/mio/journey-events.jsonl
+    volumes:
+      # 호스트에 /var/log/mio 디렉터리·권한이 먼저 준비돼 있어야 한다
+      # (강민석 인프라 명세 §4-B: mkdir + 앱 실행 유저 소유 + cwagent 그룹 추가).
+      - /var/log/mio:/var/log/mio
     logging:
       driver: awslogs
       options:
