@@ -31,7 +31,9 @@ public class SafetySignalCombiner {
                 requiresJudge,
                 l1,
                 confidence,
-                security.unverifiableByJudge()
+                security.unverifiableByJudge(),
+                // 판정을 못 받아온 L0 는 flagged=false 로 축약되면 정상 판정과 구분할 수 없다 (이슈 #294).
+                moderation.status()
         );
     }
 

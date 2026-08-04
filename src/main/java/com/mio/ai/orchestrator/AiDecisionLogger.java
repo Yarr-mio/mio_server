@@ -75,6 +75,7 @@ public class AiDecisionLogger {
                     .securityLevel(decision.securityLevel().name())
                     .riskLevel(decision.riskLevel() != null ? decision.riskLevel().name() : null)
                     .judgeStatus(decision.judgeStatus().name())
+                    .moderationStatus(decision.moderationStatus().name())
                     .generationMode(decision.generationMode().name())
                     .deliveryMode(decision.deliveryMode().name())
                     .action(decision.action().name())
@@ -147,6 +148,8 @@ public class AiDecisionLogger {
         // l0_flagged=false 가 "안전 판정"인지 "판정을 못 받아온 것"인지 구분한다.
         // 이게 없으면 안전 계층 하나가 통째로 빠진 채 처리된 턴을 사후에 식별할 수 없다 (이슈 #263).
         trace.put("l0_resolved", moderation.resolved());
+        // 정책 결정이 실제로 읽은 L0 상태. 위 raw 값과 달리 이 값은 전달 방식의 하한을 만든다 (이슈 #294).
+        trace.put("l0_status", decision.moderationStatus().name());
         trace.put("l0_category_scores", moderation.categoryScores());
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
