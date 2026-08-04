@@ -66,6 +66,27 @@ class SafetyL1Test {
         assertThat(result.hardCrisis()).isTrue();
     }
 
+    @ParameterizedTest(name = "자모·Unicode 구분자 결합 우회도 hardCrisis로 복원: {0}")
+    @ValueSource(strings = {
+            "ㅈ.ㅜ.ㄱ.고.싶.다",
+            "ㅈ\u200Bㅜ\u200Bㄱ고싶다",
+            "ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ 생각중",
+            "죽\uFE0F고\uFE0F싶\uFE0F다"
+    })
+    void combinedCrisisObfuscationIsCanonicalized(String message) {
+        assertThat(safetyL1.check(input(message)).hardCrisis()).isTrue();
+    }
+
+    @ParameterizedTest(name = "문법적 구두점 경계는 위기 키워드로 합치지 않음: {0}")
+    @ValueSource(strings = {
+            "자, 살펴볼까요?",
+            "자, 해볼까요?",
+            "목숨을, 끊임없이 소중히 여기고 싶어요"
+    })
+    void naturalPunctuationBoundaryDoesNotCreateHardCrisis(String message) {
+        assertThat(safetyL1.check(input(message)).hardCrisis()).isFalse();
+    }
+
     @Test
     @DisplayName("위험 키워드는 riskCandidate = true를 반환한다")
     void risk_keyword_triggers_risk_candidate() {

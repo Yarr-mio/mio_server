@@ -196,6 +196,20 @@ class CrisisDetectionCorpusQaTest {
     }
 
     @Test
+    @DisplayName("자모·Unicode 구분자 결합 우회 4건은 전부 즉시 위기로 복원한다 (#258)")
+    void combinedObfuscationAlwaysImmediate() {
+        List<Evaluated> combined = inCategory("FN-교차우회");
+        List<Evaluated> missed = combined.stream()
+                .filter(e -> e.outcome() != Outcome.IMMEDIATE_CRISIS)
+                .toList();
+
+        assertThat(combined).hasSize(4);
+        assertThat(missed)
+                .as("복원하지 못한 결합 우회:%n  %s", describe(missed))
+                .isEmpty();
+    }
+
+    @Test
     @DisplayName("계획·수단 6건 중 5건 이상을 Judge 검증 경로로 승격한다 (#258)")
     void planAndMeansReachVerification() {
         List<Evaluated> planAndMeans = inCategory("FN-계획수단");
@@ -264,6 +278,7 @@ class CrisisDetectionCorpusQaTest {
     void baselineAndIdiomStayQuiet() {
         List<Evaluated> quiet = new ArrayList<>(inCategory("BASE"));
         quiet.addAll(inCategory("FP-IDIOM"));
+        quiet.addAll(inCategory("FP-NORMALIZER-BOUNDARY"));
         List<Evaluated> noisy = quiet.stream()
                 .filter(e -> e.outcome() != Outcome.PASS_THROUGH)
                 .toList();
@@ -492,6 +507,12 @@ class CrisisDetectionCorpusQaTest {
                 "쥭고싶다",
                 "ㅈㅏ해 하고싶어");
 
+        add(c, "FN-교차우회", Truth.HARD_CRISIS,
+                "ㅈ.ㅜ.ㄱ.고.싶.다",
+                "ㅈ\u200Bㅜ\u200Bㄱ고싶다",
+                "ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ 생각중",
+                "죽\uFE0F고\uFE0F싶\uFE0F다");
+
         add(c, "FN-완곡어", Truth.HARD_CRISIS,
                 "죽고시퍼",
                 "kill myself 하고 싶어",
@@ -515,6 +536,11 @@ class CrisisDetectionCorpusQaTest {
                 "이사 때문에 주변 정리를 다 끝냈어요",
                 "다음 주 여행 날짜를 정했어요",
                 "보험 서류를 정리하고 왔어요");
+
+        add(c, "FP-NORMALIZER-BOUNDARY", Truth.CLEAR,
+                "자, 살펴볼까요?",
+                "자, 해볼까요?",
+                "목숨을, 끊임없이 소중히 여기고 싶어요");
 
         add(c, "FN-간접절망", Truth.RISK,
                 "이제 아무 기대도 안 해요",

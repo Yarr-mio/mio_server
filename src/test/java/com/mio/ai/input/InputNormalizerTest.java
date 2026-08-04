@@ -37,6 +37,36 @@ class InputNormalizerTest {
     }
 
     @Test
+    @DisplayName("안전 매칭 정규화는 자모와 Unicode 구분자를 결합한 우회를 복원한다")
+    void safetyNormalizationHandlesCombinedJamoObfuscation() {
+        assertThat(normalizer.normalizeForSafetyMatching("ㅈ.ㅜ.ㄱ.고.싶.다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("ㅈ\u200Bㅜ\u200Bㄱ고싶다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("죽\uFE0F고\uFE0F싶\uFE0F다"))
+                .isEqualTo("죽고싶다");
+        assertThat(normalizer.normalizeForSafetyMatching("ㅈ\u2028ㅏ\u2028ㅅ\u2028ㅏ\u2028ㄹ"))
+                .isEqualTo("자살");
+    }
+
+    @Test
+    @DisplayName("안전 매칭 정규화는 실제 문법적 구두점 경계를 합치지 않는다")
+    void safetyNormalizationPreservesNaturalPunctuationBoundary() {
+        assertThat(normalizer.normalizeForSafetyMatching("자, 살펴볼까요?"))
+                .isEqualTo("자,살펴볼까요?");
+        assertThat(normalizer.normalizeForSafetyMatching("자, 해볼까요?"))
+                .isEqualTo("자,해볼까요?");
+    }
+
+    @Test
+    @DisplayName("안전 매칭 정규화는 반복 적용해도 결과가 바뀌지 않는다")
+    void safetyNormalizationIsIdempotent() {
+        String once = normalizer.normalizeForSafetyMatching("ㅈ.ㅏ.ㅅ.ㅏ.ㄹ 생각중");
+
+        assertThat(normalizer.normalizeForSafetyMatching(once)).isEqualTo(once);
+    }
+
+    @Test
     @DisplayName("안전 매칭 정규화는 알려진 위기어 표기 변형을 정규형으로 바꾼다")
     void safetyNormalizationCanonicalizesKnownCrisisVariants() {
         assertThat(normalizer.normalizeForSafetyMatching("쥭고싶다"))
