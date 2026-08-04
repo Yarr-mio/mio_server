@@ -187,9 +187,53 @@ class PolicyEngineTest {
 
         assertThat(decision.securityLevel()).isEqualTo(SecurityLevel.SUSPICIOUS);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.GUARDED);
+        assertThat(decision.deliveryMode())
+                .as("Judge 실패가 SUSPICIOUS의 부분 스트리밍 경로보다 낮은 보호 수준으로 처리되면 안 된다")
+                .isEqualTo(DeliveryMode.BUFFER);
         assertThat(decision.requireOutputGuard())
                 .as("판정을 못 받았으면 보호를 유지한다")
                 .isTrue();
+    }
+
+    @Test
+    @DisplayName("SUSPICIOUS여도 자해 moderation 교집합이면 위기 플로우를 우선한다")
+    void suspiciousSelfHarmModerationRoutesToCrisisBeforeSecurityGuard() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, true,
+                List.of("moderation:self-harm"), 0.9
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.SUSPICIOUS, false, true,
+                false, false, false, true, true, l1, 0.9
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.action())
+                .as("보안 의심 경로가 확정적 자해 신호를 가려서는 안 된다")
+                .isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.crisisTrigger()).isEqualTo(com.mio.ai.crisis.CrisisTrigger.MODERATION);
+    }
+
+    @Test
+    @DisplayName("Judge 실패는 비자해 L0 플래그도 완전 버퍼링한다")
+    void failedJudgeBuffersNonSelfHarmL0Signal() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, false,
+                List.of("moderation:violence"), 0.7
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, true,
+                false, false, false, true, true, l1, 0.7
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
     }
 
     @Test
@@ -290,11 +334,13 @@ class PolicyEngineTest {
                 .extracting(
                         PolicyDecision::generationMode,
                         PolicyDecision::deliveryMode,
+                        PolicyDecision::allowStreaming,
                         PolicyDecision::requireOutputGuard,
                         PolicyDecision::riskLevel)
                 .containsExactly(
                         GenerationMode.GUARDED,
                         DeliveryMode.BUFFER,
+                        true,
                         true,
                         RiskLevel.MEDIUM);
     }
