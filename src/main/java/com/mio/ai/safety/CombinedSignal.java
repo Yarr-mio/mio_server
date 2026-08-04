@@ -1,5 +1,6 @@
 package com.mio.ai.safety;
 
+import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.security.AttackKind;
 import com.mio.ai.security.SecurityLevel;
 
@@ -7,6 +8,8 @@ import com.mio.ai.security.SecurityLevel;
  * @param attackKind           {@code securityLevel == ATTACK} 일 때 그 성격. 그 외에는 {@link AttackKind#NONE} (이슈 #260)
  * @param hardCrisisUnverified 위기 키워드가 매칭됐으나 맥락 마커 또는 가시 구분자 우회 때문에
  *                             InputJudge 검증이 필요한 상태 (이슈 #255, #258)
+ * @param moderationStatus     L0 판정을 실제로 받아왔는지. {@code l0Flagged=false} 하나로는
+ *                             "위험 없음"과 "판정 부재"가 구분되지 않는다 (이슈 #294)
  */
 public record CombinedSignal(
         SecurityLevel securityLevel,
@@ -21,8 +24,34 @@ public record CombinedSignal(
         boolean requiresJudge,
         SafetyL1Result l1Result,
         double confidence,
-        boolean securityEvidenceUnverifiableByJudge
+        boolean securityEvidenceUnverifiableByJudge,
+        ModerationStatus moderationStatus
 ) {
+    public CombinedSignal {
+        moderationStatus = moderationStatus != null ? moderationStatus : ModerationStatus.RESOLVED;
+    }
+
+    /** L0 판정 상태 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #294). */
+    public CombinedSignal(
+            SecurityLevel securityLevel,
+            AttackKind attackKind,
+            boolean hardCrisis,
+            boolean hardCrisisUnverified,
+            boolean riskCandidate,
+            boolean emotionSpike,
+            boolean repetitiveNegative,
+            boolean dependencyHint,
+            boolean l0Flagged,
+            boolean requiresJudge,
+            SafetyL1Result l1Result,
+            double confidence,
+            boolean securityEvidenceUnverifiableByJudge) {
+        this(securityLevel, attackKind, hardCrisis, hardCrisisUnverified, riskCandidate,
+                emotionSpike, repetitiveNegative, dependencyHint, l0Flagged, requiresJudge,
+                l1Result, confidence, securityEvidenceUnverifiableByJudge,
+                ModerationStatus.RESOLVED);
+    }
+
     /** 원문 근거 개념 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #262). */
     public CombinedSignal(
             SecurityLevel securityLevel,
