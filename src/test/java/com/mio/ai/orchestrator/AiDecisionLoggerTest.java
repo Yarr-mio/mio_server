@@ -13,6 +13,7 @@ import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
+import com.mio.ai.policy.JudgeStatus;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
 import com.mio.ai.safety.SafetyL1Result;
@@ -50,7 +51,9 @@ class AiDecisionLoggerTest {
                 false,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.CLEAR_LOW
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED
         );
 
         logger.log(
@@ -105,7 +108,8 @@ class AiDecisionLoggerTest {
                 InterventionHints.empty(),
                 "test-policy",
                 RiskLevel.HARD_CRISIS,
-                CrisisTrigger.SELF_HARM_INQUIRY
+                CrisisTrigger.SELF_HARM_INQUIRY,
+                JudgeStatus.SKIPPED
         );
 
         logger.log(
@@ -160,7 +164,9 @@ class AiDecisionLoggerTest {
                 true,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.LOW
+                RiskLevel.LOW,
+                null,
+                JudgeStatus.SKIPPED
         );
         assertThat(generateDecision.crisisTrigger()).isNull();
 
@@ -274,6 +280,42 @@ class AiDecisionLoggerTest {
     }
 
     @Test
+    @DisplayName("Input Judge 실패 상태를 정책 결정 트레이스에 남긴다")
+    void logPersistsFailedInputJudgeStatus() {
+        PolicyDecision decision = failedJudgeDecision("pd_judge_failed");
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                ModerationResult.clear(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                true,
+                null,
+                null,
+                "default",
+                false,
+                false,
+                false,
+                null,
+                null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getJudgeStatus())
+                .as("운영상의 MEDIUM 폴백과 실제 MEDIUM 판정을 집계 컬럼에서 구분해야 한다")
+                .isEqualTo("FAILED");
+        assertThat(captor.getValue().getTrace())
+                .contains("\"input_judge_status\":\"FAILED\"");
+    }
+
+    @Test
     @DisplayName("LLM을 호출하지 않은 턴은 모델·비용을 null로 남긴다 — 하드코딩된 gpt-4o/0.0이 아니다")
     void logLeavesLlmFieldsNullWhenNoLlmCall() {
         logAndCapture(new LlmCostCalculator(pricedProperties()), null);
@@ -380,7 +422,27 @@ class AiDecisionLoggerTest {
                 false,
                 InterventionHints.empty(),
                 "test-policy",
-                RiskLevel.CLEAR_LOW
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED
+        );
+    }
+
+    private PolicyDecision failedJudgeDecision(String decisionId) {
+        return new PolicyDecision(
+                decisionId,
+                DecisionAction.GENERATE,
+                GenerationMode.GUARDED,
+                DeliveryMode.BUFFER,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                true,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.MEDIUM,
+                null,
+                JudgeStatus.FAILED
         );
     }
 }

@@ -62,6 +62,35 @@ class PolicyEngineCrisisVerificationTest {
     }
 
     @Test
+    @DisplayName("risk verdict가 누락된 판정은 위기를 유지한다")
+    void missingRiskVerdictKeepsCrisis() {
+        InputJudgeResult incomplete = new InputJudgeResult(
+                SecurityVerdict.clean(), null, 0.9);
+
+        var decision = policyEngine.decide(unverified(), incomplete, null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("security verdict가 누락된 저위험 판정은 위기를 해제하지 않는다")
+    void missingSecurityVerdictCannotClearCrisis() {
+        InputJudgeResult incomplete = new InputJudgeResult(
+                null,
+                new RiskVerdict(RiskLevel.LOW, List.of(),
+                        GenerationMode.NORMAL, DeliveryMode.SPECULATIVE, false),
+                0.9);
+
+        var decision = policyEngine.decide(unverified(), incomplete, null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+    }
+
+    @Test
     @DisplayName("InputJudge가 HARD_CRISIS로 확인하면 위기 플로우로 간다")
     void judgeConfirmsCrisis() {
         var decision = policyEngine.decide(unverified(), judged(RiskLevel.HARD_CRISIS), null, null);

@@ -80,6 +80,7 @@ class PolicyEngineTest {
         assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.SPECULATIVE);
         assertThat(decision.riskLevel()).isEqualTo(RiskLevel.CLEAR_LOW);
         assertThat(decision.allowGeneration()).isTrue();
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.SKIPPED);
     }
 
     // === Phase 2 scenarios ===
@@ -107,6 +108,104 @@ class PolicyEngineTest {
     }
 
     @Test
+    @DisplayName("Judge SUSPICIOUS + HIGH는 보안 조기 반환으로 강등되지 않고 BUFFER를 유지한다")
+    void suspiciousSecurityWithHighRiskKeepsHighBufferedPath() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.SUSPICIOUS, List.of("obfuscated"), true),
+                new RiskVerdict(RiskLevel.HIGH, List.of(), GenerationMode.GUARDED,
+                        DeliveryMode.BUFFER, true),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision)
+                .extracting(
+                        PolicyDecision::securityLevel,
+                        PolicyDecision::riskLevel,
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard)
+                .containsExactly(
+                        SecurityLevel.SUSPICIOUS,
+                        RiskLevel.HIGH,
+                        DeliveryMode.BUFFER,
+                        true);
+    }
+
+    @Test
+    @DisplayName("Judge SUSPICIOUS + MEDIUM은 위험도를 LOW로 축약하지 않는다")
+    void suspiciousSecurityWithMediumRiskPreservesMediumRisk() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                new SecurityVerdict(SecurityLevel.SUSPICIOUS, List.of("obfuscated"), true),
+                new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.SUPPORTIVE,
+                        DeliveryMode.CAUTIOUS_SPECULATIVE, true),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.MEDIUM);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("비자해 L0 + Judge HIGH는 L0 조기 반환으로 강등되지 않고 BUFFER를 유지한다")
+    void nonSelfHarmL0WithHighRiskKeepsHighBufferedPath() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, false,
+                List.of("moderation:violence"), 0.7
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, true,
+                false, false, false, true, true, l1, 0.7
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.HIGH), null, null);
+
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HIGH);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("Input Judge 스키마 밖 ATTACK risk는 성공 저위험으로 처리하지 않고 fail-closed 한다")
+    void unsupportedJudgeAttackRiskFailsClosed() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                SecurityVerdict.clean(),
+                new RiskVerdict(RiskLevel.ATTACK, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false),
+                0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.MEDIUM);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
+    @DisplayName("성공으로 표시됐어도 risk verdict가 없으면 fail-closed 한다")
+    void missingJudgeRiskVerdictFailsClosed() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+        InputJudgeResult judge = new InputJudgeResult(
+                SecurityVerdict.clean(), null, 0.9
+        );
+
+        PolicyDecision decision = policyEngine.decide(combined, judge, null, null);
+
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+    }
+
+    @Test
     @DisplayName("InputJudge MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE")
     void input_judge_medium_returns_cautious_speculative() {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
@@ -126,6 +225,7 @@ class PolicyEngineTest {
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.NORMAL);
         assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.SPECULATIVE);
         assertThat(decision.riskLevel()).isEqualTo(RiskLevel.LOW);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.SUCCEEDED);
     }
 
     @Test
@@ -185,9 +285,53 @@ class PolicyEngineTest {
 
         assertThat(decision.securityLevel()).isEqualTo(SecurityLevel.SUSPICIOUS);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.GUARDED);
+        assertThat(decision.deliveryMode())
+                .as("Judge 실패가 SUSPICIOUS의 부분 스트리밍 경로보다 낮은 보호 수준으로 처리되면 안 된다")
+                .isEqualTo(DeliveryMode.BUFFER);
         assertThat(decision.requireOutputGuard())
                 .as("판정을 못 받았으면 보호를 유지한다")
                 .isTrue();
+    }
+
+    @Test
+    @DisplayName("SUSPICIOUS여도 자해 moderation 교집합이면 위기 플로우를 우선한다")
+    void suspiciousSelfHarmModerationRoutesToCrisisBeforeSecurityGuard() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, true,
+                List.of("moderation:self-harm"), 0.9
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.SUSPICIOUS, false, true,
+                false, false, false, true, true, l1, 0.9
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.action())
+                .as("보안 의심 경로가 확정적 자해 신호를 가려서는 안 된다")
+                .isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.crisisTrigger()).isEqualTo(com.mio.ai.crisis.CrisisTrigger.MODERATION);
+    }
+
+    @Test
+    @DisplayName("Judge 실패는 비자해 L0 플래그도 완전 버퍼링한다")
+    void failedJudgeBuffersNonSelfHarmL0Signal() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, false,
+                List.of("moderation:violence"), 0.7
+        );
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, true,
+                false, false, false, true, true, l1, 0.7
+        );
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.BUFFER);
+        assertThat(decision.requireOutputGuard()).isTrue();
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
     }
 
     @Test
@@ -276,15 +420,37 @@ class PolicyEngineTest {
     }
 
     @Test
-    @DisplayName("판정 실패한 Judge 의 가드 플래그는 근거로 쓰지 않는다")
-    void failedJudgeGuardFlagsAreIgnored() {
+    @DisplayName("Judge 판정 실패는 GUARDED + BUFFER + 출력 가드로 보수적으로 처리한다")
+    void failedJudgeUsesGuardedBufferedPath() {
         CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
 
         PolicyDecision decision =
                 policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
 
-        assertThat(decision.deliveryMode())
-                .as("폴백의 플래그는 모델이 준 값이 아니라 우리가 채운 값이다")
-                .isEqualTo(DeliveryMode.SPECULATIVE);
+        assertThat(decision)
+                .as("판정하지 못한 위험 후보가 정상 CLEAR_LOW 무검사 스트리밍으로 합류하면 안 된다")
+                .extracting(
+                        PolicyDecision::generationMode,
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::allowStreaming,
+                        PolicyDecision::requireOutputGuard,
+                        PolicyDecision::riskLevel)
+                .containsExactly(
+                        GenerationMode.GUARDED,
+                        DeliveryMode.BUFFER,
+                        true,
+                        true,
+                        RiskLevel.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("Judge 판정 실패 상태를 PolicyDecision에 명시적으로 남긴다")
+    void failedJudgeStatusIsExplicitInPolicyDecision() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, InputJudgeResult.fallback(), null, null);
+
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
     }
 }

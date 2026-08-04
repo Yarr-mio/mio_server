@@ -180,6 +180,8 @@ class InputJudgeTest {
             "{\"security\":{\"level\":\"CLEAN\"}}",
             "{\"risk\":{}}",
             "{\"risk\":{\"risk_level\":null}}",
+            "{\"security\":{\"level\":\"CLEAN\"},\"risk\":{\"risk_level\":\"ATTACK\"}}",
+            "{\"security\":{\"level\":\"CLEAN\"},\"risk\":{\"risk_level\":\"HARD_CRISIS\"}}",
             "{\"risk\":{\"risk_level\":\"MODERATE\"}}",
             "{\"risk\":{\"risk_level\":\"\"}}"
     })
