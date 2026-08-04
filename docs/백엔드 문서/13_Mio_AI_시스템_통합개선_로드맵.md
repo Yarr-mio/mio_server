@@ -90,7 +90,8 @@ Mio는 단순 프롬프트 래퍼보다 훨씬 발전한 프로토타입이다. 
 - 이슈 `#289` / PR `#290`에서는 `JudgeStatus(SKIPPED/SUCCEEDED/FAILED)`를 정책 결정에
   명시하고, `FAILED`인 모든 생성 경로에 `BUFFER + OutputGuard` 보호 하한을 적용했다.
   리뷰 과정에서 `SUSPICIOUS`·비자해 L0 분기가 실패 전용 분기보다 먼저 실행되던 보호 역전과,
-  `SUSPICIOUS`가 확정적 자해 moderation 신호를 가리던 우선순위도 함께 수정했다.
+  `SUSPICIOUS`가 확정적 자해 moderation 신호를 가리던 우선순위도 함께 수정했다. 성공한
+  Judge의 `HARD_CRISIS/HIGH` 역시 `SUSPICIOUS`·비자해 L0 조기 반환으로 강등되지 않게 했다.
 - 실패 폴백의 운영상 `MEDIUM`과 실제 `MEDIUM` 판정을 구분하도록
   `ai_policy_decisions.judge_status` 집계 컬럼을 추가했고, Judge 실패 턴은 사용자 믿음 활성화
   근거에서 제외했다. 기존 행의 상태는 추정하지 않고 `NULL(unknown)`로 유지한다.
@@ -870,8 +871,10 @@ P0는 하나의 대형 프로젝트가 아니다. 완료 시점을 과장하지 
 
 - Input Judge의 `SKIPPED`, `SUCCEEDED`, `FAILED`를 정책·JSON trace·집계 컬럼에서 구분한다.
 - Judge 실패 뒤 생성하는 모든 응답은 기존 보안·L0 분기와 무관하게 최소 `BUFFER`로 전달한다.
+- 성공한 Judge의 `HARD_CRISIS/HIGH`는 비종결 보안·L0 가드보다 높은 보호 상한으로 유지한다.
 - 자해 moderation 교집합은 `SUSPICIOUS` 가드보다 먼저 `CRISIS_FLOW`로 전환한다.
-- 실패 폴백으로 만든 운영 위험도는 사용자 믿음의 장기 활성화 근거로 사용하지 않는다.
+- 실패 폴백 또는 최종 보안 판정 `SUSPICIOUS`인 턴은 사용자 믿음의 장기 활성화 근거로
+  사용하지 않는다.
 
 아직 P0-2 전체 완료로 보지 않는 이유는 `UNKNOWN`이 Input Judge 밖의 판정원까지 일관된
 계약으로 전파되지 않았고, 실패 상태별 사용자 노출·미탐 지표의 최종 기준선도 없기 때문이다.

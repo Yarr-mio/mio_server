@@ -42,8 +42,9 @@ P0 — 안전 기준선과 검증 전 노출 통제
 #289 / PR #290가 담당하는 실제 경계
 ├─ JudgeStatus: SKIPPED / SUCCEEDED / FAILED
 ├─ FAILED 생성 경로의 최소 전달 수준: BUFFER + OutputGuard
+├─ 성공한 HARD_CRISIS / HIGH의 교차 신호 보호 상한
 ├─ 자해 moderation > SUSPICIOUS 가드 우선순위
-├─ FAILED 턴의 belief activation 차단
+├─ FAILED·최종 SUSPICIOUS 턴의 belief activation 차단
 └─ ai_policy_decisions.judge_status 집계 컬럼
 
 후속 P0-2
@@ -173,6 +174,8 @@ flowchart TD
 
 - Input Judge의 호출 상태는 정책 결정, trace, 집계 컬럼에서 분리된다.
 - 실패 상태는 모든 생성 분기에서 `BUFFER` 보호 하한을 가지며 믿음 활성화에 사용되지 않는다.
+- 성공한 `HARD_CRISIS/HIGH`는 `SUSPICIOUS`·비자해 L0 조기 반환보다 우선한다.
+- belief 활성화는 Judge까지 반영된 최종 보안 판정이 `CLEAN`인 턴으로 제한된다.
 - 이 증분은 Input Judge에 한정되며 시스템 전체의 `UNKNOWN` 통합은 후속 범위다.
 
 전환 방향:
