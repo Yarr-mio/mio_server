@@ -238,7 +238,8 @@ public class SafetyL1 {
             while (matcher.find()) {
                 if (VISIBLE_SEPARATOR.matcher(matcher.group()).find()
                         && !isKnownBenignBoundary(
-                        candidate.keyword(), message, matcher.end())) {
+                        candidate.keyword(), matcher.group(), message,
+                        matcher.start(), matcher.end())) {
                     return new ObfuscatedCrisisMatch(candidate.keyword());
                 }
             }
@@ -251,10 +252,25 @@ public class SafetyL1 {
      *
      * <p>위험 표현의 활용형을 허용 목록으로 관리하면 누락된 접미사가 안전 경로를
      * 우회한다. 따라서 알 수 없는 접미사는 Judge 후보로 보존하고, 테스트로 고정된
-     * 정상 어휘만 이 경계에서 해제한다.
+     * 정상 어휘만 이 경계에서 해제한다. 접미사가 같아도 문장 중간이거나 쉼표 외의
+     * 구분자를 쓴 경우는 모호하므로 Judge 후보를 유지한다.
      */
     private boolean isKnownBenignBoundary(
-            String keyword, String message, int matchEnd) {
+            String keyword,
+            String matchedText,
+            String message,
+            int matchStart,
+            int matchEnd) {
+        String discourseMarker = switch (keyword) {
+            case "자살" -> "자,살";
+            case "자해" -> "자,해";
+            case "목숨을끊" -> "목숨을,끊";
+            default -> null;
+        };
+        if (matchStart != 0 || !matchedText.equals(discourseMarker)) {
+            return false;
+        }
+
         String suffix = LEADING_VISIBLE_SEPARATORS
                 .matcher(message.substring(matchEnd)).replaceFirst("");
         return switch (keyword) {
