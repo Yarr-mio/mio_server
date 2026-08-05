@@ -1,5 +1,6 @@
 package com.mio.events.service;
 
+import com.mio.events.config.EventSchemaProperties;
 import com.mio.events.config.EventWhitelist;
 import com.mio.events.dto.EventEnvelope;
 import com.mio.events.dto.EventsIngestResponse;
@@ -29,7 +30,7 @@ class EventIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        eventIngestService = new EventIngestService(eventWhitelist, eventLogWriter);
+        eventIngestService = new EventIngestService(eventWhitelist, eventLogWriter, new EventSchemaProperties());
     }
 
     private EventEnvelope validEvent(String eventId) {
@@ -59,7 +60,18 @@ class EventIngestServiceTest {
         assertThat(response.acceptedCount()).isZero();
         assertThat(response.rejected()).hasSize(1);
         assertThat(response.rejected().get(0).reason()).isEqualTo("UNKNOWN_EVENT_NAME");
-        verifyNoInteractions(eventLogWriter);
+        verify(eventLogWriter, never()).write(any(), any());
+    }
+
+    @Test
+    @DisplayName("#326 — 거부된 이벤트는 원본 payload가 index·reason과 함께 rejected 전용 로거로 넘어간다")
+    void ingest_rejectedEvent_writesToRejectedLogger() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(false);
+        EventEnvelope event = validEvent("e1");
+
+        eventIngestService.ingest(List.of(event), "req-1");
+
+        verify(eventLogWriter).writeRejected(event, 0, "UNKNOWN_EVENT_NAME", "req-1");
     }
 
     @Test
@@ -75,14 +87,59 @@ class EventIngestServiceTest {
     }
 
     @Test
-    @DisplayName("schema_version이 3이 아니면 INVALID_SCHEMA_VERSION으로 거부된다")
-    void ingest_wrongSchemaVersion_rejected() {
+    @DisplayName("#324 — rejected 항목에 배치 내 index가 정확히 포함된다")
+    void ingest_rejectedEvent_includesBatchIndex() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope valid = validEvent("e0");
+        EventEnvelope missingId = new EventEnvelope(null, "chat_message_sent", 3, VALID_TS,
+                "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(valid, missingId), "req-1");
+
+        assertThat(response.rejected().get(0).index()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("#324 — 배치 내 event_id 중복은 첫 건만 기록되고 DUPLICATE_IN_BATCH로 통지된다")
+    void ingest_duplicateEventIdInBatch_secondNotified() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope first = validEvent("dup-1");
+        EventEnvelope duplicate = validEvent("dup-1");
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(first, duplicate), "req-1");
+
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).hasSize(1);
+        assertThat(response.rejected().get(0).index()).isEqualTo(1);
+        assertThat(response.rejected().get(0).reason()).isEqualTo("DUPLICATE_IN_BATCH");
+        verify(eventLogWriter, times(1)).write(any(), eq("req-1"));
+    }
+
+    @Test
+    @DisplayName("#322 — schema_version이 허용 집합 밖이어도 거부하지 않고 그대로 수락한다")
+    void ingest_schemaVersionMismatch_stillAccepted() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
         EventEnvelope event = new EventEnvelope("e1", "chat_message_sent", 2, VALID_TS,
                 "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
 
         EventsIngestResponse response = eventIngestService.ingest(List.of(event), "req-1");
 
-        assertThat(response.rejected().get(0).reason()).isEqualTo("INVALID_SCHEMA_VERSION");
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).isEmpty();
+        verify(eventLogWriter).write(event, "req-1");
+    }
+
+    @Test
+    @DisplayName("#322 — schema_version이 null이어도(필수 5종 아님) 거부하지 않고 수락한다")
+    void ingest_nullSchemaVersion_stillAccepted() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope event = new EventEnvelope("e1", "chat_message_sent", null, VALID_TS,
+                "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(event), "req-1");
+
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).isEmpty();
     }
 
     @Test

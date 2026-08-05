@@ -1,0 +1,92 @@
+# 강민석 "mio 이벤트 로그 명세" 카탈로그 — 사람이 읽는 참조용 소스 (이슈 #326-7).
+#
+# event-whitelist.yml은 런타임 검증(타입/enum 도메인)을 위한 설정이고, 이 파일은 이벤트
+# 카탈로그 자체(어떤 이벤트가 있고 어떤 속성을 갖는지)를 스펙 관점에서 따로 유지한다.
+# 파일이 둘로 나뉘어 있으면 한쪽만 고치고 다른 쪽을 깜빡하는 드리프트가 생기므로,
+# EventCatalogConsistencyTest가 이벤트 이름·property 키 집합이 두 파일에서 완전히
+# 일치하는지 CI에서 강제한다. 이벤트나 속성을 추가/삭제할 때는 반드시 두 파일을 함께 고친다.
+
+events:
+  # §4-A 세션 백본
+  app_session_started:
+    properties: [entry_point, is_first_session, days_since_last_session]
+  app_session_ended:
+    properties: [last_screen, duration_ms, screen_count]
+  screen_viewed:
+    properties: [screen_name, referrer_screen]
+  app_installed:
+    properties: []
+
+  # §4-B 가입·온보딩 퍼널
+  consent_agreed:
+    properties: [consent_version, marketing_agree, sensitive_info_agreed]
+  profile_submitted:
+    properties: [age_range, gender, employment_status]
+  signup_completed:
+    properties: []
+  onboarding_step_completed:
+    properties: [step, selected_emotion, concern_types, preferred_style]
+  onboarding_step_skipped:
+    properties: [step]
+  character_selected:
+    properties: [character_id, is_auto_assigned]
+  onboarding_completed:
+    properties: []
+  push_permission_prompted:
+    properties: [trigger]
+  push_permission_result:
+    properties: [granted, trigger]
+  identify:
+    properties: [previous_anonymous_id, user_id]
+  login_succeeded:
+    properties: [provider, is_new_user, is_new_device]
+
+  # §4-C Core Action 5종 (최우선)
+  checkin_completed:
+    properties: [condition_score, has_memo, emotion_type, time_of_day]
+  chat_message_sent:
+    properties: [chat_session_id, message_index, char_count, ai_emotion_score, is_socratic, cbt_intervention_state, is_crisis_flagged]
+  session_summary_viewed:
+    properties: [chat_session_id]
+  todo_checked_in:
+    properties: [todo_id, task_status, chat_session_id, emotion_before, emotion_after, emotion_delta, has_feedback, days_since_suggested]
+  report_viewed:
+    properties: [period]
+
+  # §4-D 대화 세션 부속 (session_summarized·todo_suggested는 서버 발행)
+  session_summarized:
+    properties: [chat_session_id, duration_seconds, message_count, bias_types_detected, socratic_count, problem_type, classifier_version, dominant_emotion, cbt_intervened, avg_emotion_score, todo_suggested_count]
+  todo_suggested:
+    properties: [chat_session_id, count, categories, difficulty_avg]
+  chat_session_created:
+    properties: [chat_session_id]
+  chat_session_ended:
+    properties: [duration_ms, message_count, chat_session_id, completion_reason, socratic_count]
+  emotion_score_recorded:
+    properties: [score, chat_session_id, reconstruction_id, score_before, score_delta]
+
+  # §4-E 알림·보조 기능
+  notification_opened:
+    properties: [notification_type]
+  account_withdrawn:
+    properties: []
+  logout:
+    properties: []
+  checkin_started:
+    properties: []
+  checkin_updated:
+    properties: []
+  todo_list_viewed:
+    properties: [todo_count]
+  emotion_trend_viewed:
+    properties: [period, days]
+  daily_test_viewed:
+    properties: []
+  daily_test_answered:
+    properties: [test_id]
+  notification_settings_changed:
+    properties: [setting_key, enabled]
+  character_changed:
+    properties: [from_id, to_id]
+  crisis_flow_triggered:
+    properties: []

@@ -7,7 +7,8 @@ public enum EventRejectionReason {
     MISSING_TS_CLIENT,
     MISSING_ANONYMOUS_ID,
     MISSING_APP_SESSION_ID,
-    INVALID_SCHEMA_VERSION,
     TS_CLIENT_INVALID_FORMAT,
-    UNKNOWN_EVENT_NAME
+    UNKNOWN_EVENT_NAME,
+    /** 이슈 #324 — 거부가 아니라 통지. 지표는 투영 dedup으로 안전하다. */
+    DUPLICATE_IN_BATCH
 }

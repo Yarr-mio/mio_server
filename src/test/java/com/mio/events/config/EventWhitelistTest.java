@@ -58,4 +58,77 @@ class EventWhitelistTest {
     void allowedProperties_unknownEvent_returnsEmpty() {
         assertThat(whitelist.allowedProperties("totally_made_up_event")).isEmpty();
     }
+
+    @Test
+    @DisplayName("#320 — enum 값이 도메인 안이면 유효하다")
+    void isValidPropertyValue_enumInDomain_returnsTrue() {
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "employment_status", "job_seeker")).isTrue();
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "age_range", "40대+")).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 — enum 값이 도메인 밖이면 무효하다 (오타·구표기 등)")
+    void isValidPropertyValue_enumOutOfDomain_returnsFalse() {
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "employment_status", "JOB_SEEKER")).isFalse();
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "age_range", "50대+")).isFalse();
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "age_range", "40대")).isFalse();
+    }
+
+    @Test
+    @DisplayName("#320 — null 값은 nullable property에서 항상 통과한다")
+    void isValidPropertyValue_nullValue_alwaysValid() {
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "ai_emotion_score", null)).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 — 타입이 안 맞으면(int 자리에 문자열) 무효하다")
+    void isValidPropertyValue_wrongType_returnsFalse() {
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", "not-a-number")).isFalse();
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", 3)).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 — 카탈로그에 없는 키는 무효하다")
+    void isValidPropertyValue_unknownKey_returnsFalse() {
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "totally_made_up_key", "x")).isFalse();
+    }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — INT는 Integer/Long만 허용, Double은 거부한다")
+    void isValidPropertyValue_intField_rejectsDouble() {
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", 3.5)).isFalse();
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", 3L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — STRING은 실제 문자열만 허용, 중첩 객체/배열은 거부한다")
+    void isValidPropertyValue_stringField_rejectsNestedStructures() {
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", java.util.Map.of("a", 1))).isFalse();
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", java.util.List.of("a"))).isFalse();
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", "home")).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — ENUM은 문자열 강제 변환 없이 실제 문자열만 비교한다")
+    void isValidPropertyValue_enumField_rejectsNonStringCoercion() {
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "gender", true)).isFalse();
+    }
+
+    @Test
+    @DisplayName("#326 — 카탈로그에 있는 키는 known으로 판정한다")
+    void isKnownProperty_catalogued_returnsTrue() {
+        assertThat(whitelist.isKnownProperty("chat_message_sent", "message_index")).isTrue();
+    }
+
+    @Test
+    @DisplayName("#326 — 카탈로그에 없는 키는 unknown으로 판정한다 (값 도메인과 무관)")
+    void isKnownProperty_uncatalogued_returnsFalse() {
+        assertThat(whitelist.isKnownProperty("profile_submitted", "totally_made_up_key")).isFalse();
+    }
+
+    @Test
+    @DisplayName("#326 — 모르는 이벤트의 프로퍼티는 항상 unknown이다")
+    void isKnownProperty_unknownEvent_returnsFalse() {
+        assertThat(whitelist.isKnownProperty("totally_made_up_event", "message_index")).isFalse();
+    }
 }

@@ -6,11 +6,9 @@ import com.mio.onboarding.dto.*;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserOnboardingAnswer;
-import com.mio.onboarding.event.OnboardingCompletedEvent;
 import com.mio.user.repository.UserOnboardingAnswerRepository;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,7 +37,6 @@ public class OnboardingService {
     private final UserRepository userRepository;
     private final UserOnboardingAnswerRepository onboardingAnswerRepository;
     private final CharacterRecommender characterRecommender;
-    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional
     public OnboardingStepResponse submitStep1(UUID userId, OnboardingStep1Request request) {
@@ -127,7 +124,6 @@ public class OnboardingService {
         }
 
         user.completeOnboarding(characterId);
-        eventPublisher.publishEvent(new OnboardingCompletedEvent(userId));
         return new CharacterSelectResponse(user.getPreferredCharacterId(), user.getSignupStep());
     }
 

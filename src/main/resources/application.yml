@@ -142,3 +142,9 @@ events:
   # 성장분석 이벤트 전용 로그 파일 경로 (이슈 #285). prod는 docker-compose.prod.yml에서
   # /var/log/mio/journey-events.jsonl로 덮어쓴다 — 강민석 인프라 명세 §1 EVENT_FILE 그대로.
   log-file-path: ${EVENTS_LOG_FILE_PATH:./logs/journey-events.jsonl}
+  # 이슈 #326 — 거부 이벤트 원본 로그 파일. journey-events와 물리적으로 분리해
+  # 정상 지표 집계 파이프라인에 섞여 들어가지 않게 한다.
+  rejected-log-file-path: ${EVENTS_REJECTED_LOG_FILE_PATH:./logs/journey-events-rejected.jsonl}
+  # 이슈 #322 — 앱 버전 혼재 시 구버전이 영구 소실되는 걸 막기 위해 거부가 아니라
+  # 통과+태깅으로 처리한다. 명세 개정 시 [3, 4]로 잠시 병행한다.
+  accepted-schema-versions: [3]

@@ -17,6 +17,7 @@ import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -36,6 +37,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class SessionService {
 
@@ -56,6 +58,7 @@ public class SessionService {
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
+    private final SessionMessageLock sessionMessageLock;
     private final WorkingMemory workingMemory;
     private final ApplicationEventPublisher eventPublisher;
     private final ContextPreWarmer contextPreWarmer;
@@ -229,9 +232,83 @@ public class SessionService {
         return EmotionScoreResponse.from(sessionRepository.save(session));
     }
 
+    /**
+     * 같은 세션의 턴을 하나씩 처리하도록 락을 잡는다 (이슈 #243).
+     *
+     * <p>요청마다 독립 virtual thread 에서 실행되므로, 락이 없으면 같은 세션의 LLM 응답 생성과
+     * 메시지 저장·WorkingMemory 갱신이 서로 경쟁한다. 대화 순서가 뒤섞이거나 한쪽 턴이 다른
+     * 쪽의 세션 상태를 덮어쓴다.
+     *
+     * <p><b>SSE 스트림을 열기 전에</b> 호출해야 한다. 스트림이 시작된 뒤에는 상태 코드를 바꿀 수
+     * 없어, 사용자는 이유를 알 수 없는 끊긴 스트림만 보게 된다.
+     */
+    public String acquireTurnLock(UUID sessionId, String idempotencyKey) {
+        // 이미 완료된 턴의 재생 요청은 아무것도 바꾸지 않는다. 저장된 응답을 다시 보낼 뿐이라
+        // 직렬화가 필요 없고, 다른 턴이 진행 중이라는 이유로 409 를 주면 재접속한 클라이언트가
+        // 자기 응답을 받지 못한다.
+        if (isCompletedTurnReplay(sessionId, idempotencyKey)) {
+            return null;
+        }
+        String token = sessionMessageLock.tryAcquire(sessionId);
+        if (token == null) {
+            throw new BusinessException(ErrorCode.SESSION_MESSAGE_IN_PROGRESS);
+        }
+        return token;
+    }
+
+    private boolean isCompletedTurnReplay(UUID sessionId, String idempotencyKey) {
+        if (idempotencyKey == null) {
+            return false;
+        }
+        return sessionMessagePersistenceService.findTurn(sessionId, idempotencyKey)
+                .filter(turn -> turn.getStatus() == TurnStatus.COMPLETED)
+                .isPresent();
+    }
+
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
-                              SseEmitter emitter, String idempotencyKey) {
-        conversationOrchestrator.handle(userId, sessionId, request.content(), emitter, idempotencyKey);
+                              SseEmitter emitter, String idempotencyKey, String lockToken) {
+        Thread renewer = startLeaseRenewer(sessionId, lockToken);
+        try {
+            conversationOrchestrator.handle(userId, sessionId, request.content(), emitter, idempotencyKey);
+        } finally {
+            if (renewer != null) {
+                renewer.interrupt();
+            }
+            sessionMessageLock.release(sessionId, lockToken);
+        }
+    }
+
+    /**
+     * 처리가 도는 동안 락 임대를 연장한다 (이슈 #243 리뷰 반영).
+     *
+     * <p>임대만 길게 잡고 갱신하지 않으면, LLM 429 재시도가 겹쳐 한 턴이 임대보다 오래 걸릴 때
+     * 락이 먼저 풀린다. 그러면 같은 세션의 다음 요청이 통과해 <b>직렬화가 조용히 깨진다</b> —
+     * 이 PR 이 막으려는 상황이 실패 조건에서 그대로 재현되는 셈이다. SSE 타임아웃(60초)은
+     * 클라이언트 스트림만 닫을 뿐 서버 처리를 중단시키지 않으므로 상한이 되지 못한다.
+     *
+     * <p>{@code TurnHeartbeat} 가 DB 턴 리스에 하는 것과 같은 방식이다.
+     */
+    private Thread startLeaseRenewer(UUID sessionId, String lockToken) {
+        if (lockToken == null) {
+            return null;
+        }
+        long intervalMs = SessionMessageLock.renewInterval().toMillis();
+        return Thread.ofVirtual().start(() -> {
+            try {
+                while (true) {
+                    Thread.sleep(intervalMs);
+                    if (!sessionMessageLock.renew(sessionId, lockToken)) {
+                        // 이미 다른 요청이 같은 세션을 잡았다. 되돌릴 수는 없지만 사후에
+                        // 확인할 수 있어야 한다.
+                        log.error("SessionMessageLock: lease lost while turn was running sessionId={}",
+                                sessionId);
+                        return;
+                    }
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
     }
 
     private void checkMessageRateLimit(UUID userId) {

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
+import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
@@ -97,6 +98,7 @@ public class SessionConsolidator {
     private final OntologyValidator ontologyValidator;
     private final TodoRecommendationService todoRecommendationService;
     private final SummaryStatusWriter summaryStatusWriter;
+    private final CrisisEpisodePromoter crisisEpisodePromoter;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -134,6 +136,18 @@ public class SessionConsolidator {
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
         // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
         if (enrichInput != null) {
+            // 실시간 하네스가 놓친 위기를 사후 승격한다 (이슈 #256).
+            // 요약 트랜잭션이 커밋된 뒤 best-effort 로 실행한다 — 승격 경로의 실패가 이미 성공한
+            // 요약을 롤백시키면, 사용자는 LLM 비용을 치른 요약을 영구히 받지 못한다 (이슈 #219와
+            // 같은 계열의 사고다).
+            try {
+                crisisEpisodePromoter.promoteIfCrisis(
+                        enrichInput.userId(), enrichInput.sessionId(), enrichInput.episodeType());
+            } catch (Exception e) {
+                log.error("SessionConsolidator: crisis promotion failed but summary preserved sessionId={}",
+                        event.sessionId(), e);
+            }
+
             try {
                 self.getObject().enrichMemory(enrichInput);
             } catch (Exception e) {
@@ -241,8 +255,9 @@ public class SessionConsolidator {
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
 
+
         return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes,
-                extracted.triggerTags(), summaryText);
+                extracted.triggerTags(), summaryText, extracted.episodeType());
     }
 
     /**
@@ -287,7 +302,8 @@ public class SessionConsolidator {
             String dominantEmotion,
             List<String> distortionCodes,
             List<String> triggerTags,
-            String summaryText
+            String summaryText,
+            String episodeType
     ) {}
 
     // ── 대화 컨텍스트 구성 ────────────────────────────────────────
