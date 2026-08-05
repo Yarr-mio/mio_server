@@ -1,5 +1,7 @@
 package com.mio.ai.prompt;
 
+import com.mio.ai.plan.ResponseAct;
+import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
 import org.springframework.stereotype.Component;
@@ -66,7 +68,20 @@ public class PromptBuilder {
 
     public String buildSystemPrompt(GenerationMode mode, InterventionHints hints,
                                     String memoryContext, String characterId, String checkpointSummary) {
-        String base = resolveBasePrompt(characterId) + buildModeInstruction(mode);
+        return buildSystemPrompt(mode, hints, memoryContext, characterId, checkpointSummary, null);
+    }
+
+    /**
+     * 응답 계약을 프롬프트 지시로 옮긴다 (이슈 #303).
+     *
+     * <p>계약을 검사만 하고 지시하지 않으면 위반이 정상 경로가 된다 — 모델은 제약을 모른 채
+     * 쓰고, 서버는 그걸 사후에 거른다. 상한을 먼저 알려야 위반율이 실제로 떨어진다.
+     */
+    public String buildSystemPrompt(GenerationMode mode, InterventionHints hints,
+                                    String memoryContext, String characterId, String checkpointSummary,
+                                    ResponsePlan plan) {
+        String base = resolveBasePrompt(characterId) + buildModeInstruction(mode)
+                + buildPlanInstruction(plan);
         if (hints != null && !hints.suggestedCodes().isEmpty()) {
             base += buildHintsInstruction(hints);
         }
@@ -92,6 +107,29 @@ public class PromptBuilder {
             case NORMAL -> "";
             case CRISIS -> "";
         };
+    }
+
+    private String buildPlanInstruction(ResponsePlan plan) {
+        if (plan == null || plan.responseAct() == ResponseAct.UNPLANNED) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("\n\n[응답 계약] ");
+        sb.append(switch (plan.responseAct()) {
+            case EMPATHIC_REFLECTION -> "감정을 인정하고 반영하는 응답만 하세요.";
+            case EMOTION_CHECK -> "감정과 그 강도를 확인하는 응답을 하세요.";
+            case CLARIFY_CONTEXT -> "무슨 일이 있었는지 맥락을 확인하는 응답을 하세요.";
+            default -> "";
+        });
+        sb.append(" 질문은 최대 ").append(plan.maxQuestions()).append("개, ");
+        sb.append("전체 ").append(plan.maxSentences()).append("문장 이내로 씁니다.");
+        if (plan.forbiddenElements().contains("advice")) {
+            sb.append(" 조언·제안은 하지 마세요.");
+        }
+        if (plan.forbiddenElements().contains("cbt_intervention")) {
+            sb.append(" 생각의 근거를 따지거나 다르게 해석해보자는 제안은 하지 마세요.");
+        }
+        sb.append(" 진단·단정·결과 보장 표현을 쓰지 마세요.");
+        return sb.toString();
     }
 
     private String buildHintsInstruction(InterventionHints hints) {

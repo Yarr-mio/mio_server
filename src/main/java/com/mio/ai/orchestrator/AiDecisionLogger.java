@@ -9,6 +9,8 @@ import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.plan.ResponseContractResult;
+import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
 import com.mio.ai.safety.SafetyL1Result;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.ToLongFunction;
@@ -56,7 +59,8 @@ public class AiDecisionLogger {
             boolean memoryCacheHit,
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage) {
+            LlmUsage llmUsage,
+            ResponseContractResult contractResult) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -64,7 +68,7 @@ public class AiDecisionLogger {
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
-                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage);
+                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -76,6 +80,7 @@ public class AiDecisionLogger {
                     .riskLevel(decision.riskLevel() != null ? decision.riskLevel().name() : null)
                     .judgeStatus(decision.judgeStatus().name())
                     .moderationStatus(decision.moderationStatus().name())
+                    .responseAct(decision.responsePlan().responseAct().name())
                     .generationMode(decision.generationMode().name())
                     .deliveryMode(decision.deliveryMode().name())
                     .action(decision.action().name())
@@ -89,6 +94,33 @@ public class AiDecisionLogger {
         } catch (Exception e) {
             log.error("Failed to persist AI decision", e);
         }
+    }
+
+    /** 응답 계약 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #303). */
+    public void log(
+            UUID userId,
+            UUID sessionId,
+            PolicyDecision decision,
+            ModerationResult moderation,
+            SafetyL1Result l1Result,
+            SecurityAssessment securityAssessment,
+            long totalPipelineMs,
+            long llmTtftMs,
+            boolean crisisFlowTriggered,
+            boolean inputJudgeCalled,
+            OutputPreFilterResult preFilterResult,
+            OutputJudgeResult outputJudgeResult,
+            String l1ThresholdSource,
+            boolean safetyProfileCacheHit,
+            boolean memoryCacheHit,
+            boolean safetyProfileDegraded,
+            CrisisTrigger appliedCrisisTrigger,
+            LlmUsage llmUsage) {
+        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
+                totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
+                preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
+                memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
+                ResponseContractResult.notApplicable());
     }
 
     /** Phase 1 호환 오버로드 */
@@ -106,7 +138,8 @@ public class AiDecisionLogger {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
-                "default", false, false, false, decision.crisisTrigger(), null);
+                "default", false, false, false, decision.crisisTrigger(), null,
+                ResponseContractResult.notApplicable());
     }
 
     private Map<String, Object> buildTrace(
@@ -124,7 +157,8 @@ public class AiDecisionLogger {
             boolean memoryCacheHit,
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage) {
+            LlmUsage llmUsage,
+            ResponseContractResult contractResult) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -176,6 +210,13 @@ public class AiDecisionLogger {
         trace.put("llm_completion_tokens", resolvedTokens(llmUsage, LlmUsage::completionTokens));
         trace.put("llm_cost_usd", costUsd(llmUsage));
         trace.put("delivery_mode", decision.deliveryMode().name().toLowerCase());
+        // 응답 계약 (이슈 #303). 계약 위반과 의미 판단 실패를 나눠 기록해야 둘의 비율을 볼 수 있다.
+        ResponsePlan plan = decision.responsePlan();
+        trace.put("response_act", plan.responseAct().name());
+        trace.put("generation_freedom", plan.generationFreedom().name());
+        trace.put("contract_result", contractResult != null
+                ? contractResult.logValue() : ResponseContractResult.notApplicable().logValue());
+        trace.put("contract_violations", contractResult != null ? contractResult.violations() : List.of());
         trace.put("output_pre_filter_result", preFilterResult != null
                 ? (preFilterResult.passed() ? "PASS" : "FAIL") : null);
         trace.put("output_pre_filter_fail_reasons", preFilterResult != null
