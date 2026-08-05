@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
@@ -86,6 +87,7 @@ class SessionConsolidatorTest {
                 mock(OntologyValidator.class),
                 todoRecommendationService,
                 summaryStatusWriter,
+                mock(CrisisEpisodePromoter.class),
                 selfProvider
         );
     }

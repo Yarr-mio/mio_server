@@ -17,6 +17,9 @@ public interface CrisisEventRepository extends JpaRepository<CrisisEvent, UUID> 
 
     List<CrisisEvent> findBySession_IdOrderByCreatedAtAsc(UUID sessionId);
 
+    /** 세션에 위기 이벤트가 이미 있는지 (이슈 #256). 사후 승격이 같은 위기를 두 번 세지 않게 한다. */
+    boolean existsBySession_Id(UUID sessionId);
+
     /**
      * 원자적 조건부 검토 처리 (이슈 #277 리뷰 반영).
      *

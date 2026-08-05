@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
+import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
@@ -97,6 +98,7 @@ public class SessionConsolidator {
     private final OntologyValidator ontologyValidator;
     private final TodoRecommendationService todoRecommendationService;
     private final SummaryStatusWriter summaryStatusWriter;
+    private final CrisisEpisodePromoter crisisEpisodePromoter;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -240,6 +242,10 @@ public class SessionConsolidator {
 
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
+
+        // ExtractorLLM 이 위기로 판정했는데 실시간 하네스가 놓친 세션을 사후 승격한다 (이슈 #256).
+        // 요약 영속화가 끝난 뒤에 한다 — 승격이 실패해도 요약은 남아야 한다.
+        crisisEpisodePromoter.promoteIfCrisis(user, session, extracted.episodeType());
 
         return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes,
                 extracted.triggerTags(), summaryText);
