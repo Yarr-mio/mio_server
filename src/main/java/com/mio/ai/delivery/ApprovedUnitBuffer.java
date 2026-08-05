@@ -20,10 +20,17 @@ public final class ApprovedUnitBuffer {
      *
      * <p>무한정 모으면 긴 문단 하나가 전부 끝날 때까지 사용자가 아무것도 못 본다. 검사 없이
      * 내보내는 것과 검사 후 늦게 내보내는 것 중에서는 후자를 택하되, 그 지연에 상한을 둔다.
+     *
+     * <p>값은 최악의 대기 시간에서 역산했다. {@code DeliveryExposureQaTest} 실측 기준 정상
+     * 응답의 첫 단위는 11~22자라 이 상한에 닿지 않는다. 상한이 실제로 발동하는 것은 종결
+     * 부호가 없는 비정상 출력뿐이고, 그때 사용자는 이 길이만큼을 빈 화면으로 기다린다.
+     * 한국어 스트리밍이 초당 30자 수준이므로 160자는 5초가 넘는다 — 그래서 80자로 둔다.
+     * 단위가 짧아져 검사 횟수는 늘지만 검사는 정규식이라 비용이 낮고, 보장은 그대로다.
      */
-    private static final int DEFAULT_MAX_UNIT_CHARS = 160;
+    private static final int DEFAULT_MAX_UNIT_CHARS = 80;
 
-    private static final String SENTENCE_END = ".!?。！？\n";
+    /** 종결 부호. 홑화살 줄임표(…)도 한국어 대화에서 문장 끝으로 쓰인다. */
+    private static final String SENTENCE_END = ".!?。！？…\n";
 
     private final int maxUnitChars;
     private final StringBuilder pending = new StringBuilder();
@@ -81,7 +88,18 @@ public final class ApprovedUnitBuffer {
                 return end;
             }
         }
-        return pending.length() >= maxUnitChars ? maxUnitChars : 0;
+        return pending.length() >= maxUnitChars ? safeCut(maxUnitChars) : 0;
+    }
+
+    /**
+     * 강제 절단 위치를 코드 포인트 경계로 맞춘다.
+     *
+     * <p>Java 문자열은 UTF-16 코드 단위라, 이모지처럼 BMP 밖 문자는 두 개의 char 로 저장된다.
+     * 숫자 인덱스로 그대로 자르면 서로게이트 쌍이 두 단위로 쪼개져 양쪽 다 깨진 문자가 된다.
+     * 종결 부호 기준 절단은 이 문제가 없다 — 종결 부호는 전부 BMP 문자다.
+     */
+    private int safeCut(int index) {
+        return Character.isHighSurrogate(pending.charAt(index - 1)) ? index - 1 : index;
     }
 
     private boolean isTrailing(char c) {

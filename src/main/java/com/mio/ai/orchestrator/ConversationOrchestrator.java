@@ -264,7 +264,7 @@ public class ConversationOrchestrator {
             // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
             // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
             long firstSubstantiveTokenMs = -1;
-            int unverifiedExposedChars = 0;
+            int heldBackChars = 0;
             OutputJudgeResult judgeActionResult = null;
             // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
             // 계약이 있는데 검사 지점이 없는 전달 경로(SPECULATIVE)는 "미검사"로 남는다.
@@ -391,7 +391,7 @@ public class ConversationOrchestrator {
                         throw new RuntimeException(e);
                     }
                     firstSubstantiveTokenMs = holdback.firstSubstantiveTokenMs();
-                    unverifiedExposedChars = holdback.unverifiedExposedChars();
+                    heldBackChars = holdback.heldBackChars(contentBuilder.toString());
                     llmTtftMs = streamResult.ttftMs();
                     llmUsage = streamResult.usage();
 
@@ -539,7 +539,7 @@ public class ConversationOrchestrator {
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, unverifiedExposedChars);
+                    firstSubstantiveTokenMs, heldBackChars);
 
             emitter.complete();
 

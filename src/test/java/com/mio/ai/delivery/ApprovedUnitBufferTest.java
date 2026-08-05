@@ -64,6 +64,27 @@ class ApprovedUnitBufferTest {
     }
 
     @Test
+    @DisplayName("강제 절단이 이모지를 쪼개지 않는다")
+    void forceCutNeverSplitsSurrogatePair() {
+        // 경계 직전까지 채우고 이모지가 정확히 절단 위치에 걸리게 만든다.
+        ApprovedUnitBuffer buffer = new ApprovedUnitBuffer(10);
+        String input = "가나다라마바바바" + "😊" + "아자차";
+
+        List<String> units = new ArrayList<>(buffer.offer(input));
+        units.add(buffer.drain());
+
+        assertThat(String.join("", units)).isEqualTo(input);
+        units.stream().filter(unit -> !unit.isEmpty()).forEach(unit -> {
+            assertThat(Character.isHighSurrogate(unit.charAt(unit.length() - 1)))
+                    .as("단위가 서로게이트 쌍의 앞쪽에서 끊겼다 — 클라이언트에서 깨진 문자로 보인다: %s", unit)
+                    .isFalse();
+            assertThat(Character.isLowSurrogate(unit.charAt(0)))
+                    .as("단위가 서로게이트 쌍의 뒤쪽부터 시작한다: %s", unit)
+                    .isFalse();
+        });
+    }
+
+    @Test
     @DisplayName("드레인 후 버퍼는 비어 있다")
     void drainClearsBuffer() {
         ApprovedUnitBuffer buffer = new ApprovedUnitBuffer();

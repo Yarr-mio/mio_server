@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** 이슈 #306 — 승인된 단위만 사용자에게 열린다. */
 class HoldbackDeliveryTest {
@@ -101,12 +102,45 @@ class HoldbackDeliveryTest {
     }
 
     @Test
-    @DisplayName("검사를 통과하지 않은 채 전달된 문자는 0이다")
-    void noUnverifiedExposure() throws Exception {
+    @DisplayName("전송에 실패한 단위는 전달된 것으로 기록되지 않는다")
+    void failedSendIsNotRecordedAsDelivered() {
+        HoldbackDelivery holdback = new HoldbackDelivery(
+                new ApprovedUnitBuffer(),
+                candidate -> true,
+                unit -> {
+                    throw new java.io.IOException("client disconnected");
+                });
+
+        assertThatThrownBy(() -> holdback.consume(List.of("첫 문장.")))
+                .isInstanceOf(java.io.IOException.class);
+        assertThat(holdback.deliveredContent())
+                .as("전송하지 못한 단위를 전달됨으로 기록하면 이 클래스가 보장한다는 값이 어긋난다")
+                .isEmpty();
+        assertThat(holdback.firstSubstantiveTokenMs()).isEqualTo(-1);
+    }
+
+    @Test
+    @DisplayName("보류된 분량을 실제로 센다")
+    void heldBackCharsReflectWhatWasNotDelivered() throws Exception {
         HoldbackDelivery holdback = delivery(candidate -> !candidate.contains("금지어"));
+        String generated = "안전한 문장. " + "금지어 포함 문장.";
 
         holdback.consume(List.of("안전한 문장. ", "금지어 포함 문장."));
 
-        assertThat(holdback.unverifiedExposedChars()).isZero();
+        assertThat(holdback.approvedChars()).isEqualTo("안전한 문장. ".length());
+        assertThat(holdback.heldBackChars(generated))
+                .as("보류 분량은 세어야 전달 정책의 비용과 효과를 볼 수 있다")
+                .isEqualTo("금지어 포함 문장.".length());
+    }
+
+    @Test
+    @DisplayName("전부 통과하면 보류 분량은 0이다")
+    void nothingHeldBackWhenAllApproved() throws Exception {
+        HoldbackDelivery holdback = delivery(candidate -> true);
+        String generated = "첫 문장. 둘째 문장.";
+
+        holdback.consume(List.of("첫 문장. ", "둘째 문장."));
+
+        assertThat(holdback.heldBackChars(generated)).isZero();
     }
 }

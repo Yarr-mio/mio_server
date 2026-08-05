@@ -62,7 +62,7 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
-            int unverifiedExposedChars) {
+            int heldBackChars) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -71,7 +71,7 @@ public class AiDecisionLogger {
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, unverifiedExposedChars);
+                    firstSubstantiveTokenMs, heldBackChars);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -126,34 +126,6 @@ public class AiDecisionLogger {
                 ResponseContractResult.notApplicable(), -1, 0);
     }
 
-    /** 전달 계측 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #306). */
-    public void log(
-            UUID userId,
-            UUID sessionId,
-            PolicyDecision decision,
-            ModerationResult moderation,
-            SafetyL1Result l1Result,
-            SecurityAssessment securityAssessment,
-            long totalPipelineMs,
-            long llmTtftMs,
-            boolean crisisFlowTriggered,
-            boolean inputJudgeCalled,
-            OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult,
-            String l1ThresholdSource,
-            boolean safetyProfileCacheHit,
-            boolean memoryCacheHit,
-            boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage,
-            ResponseContractResult contractResult) {
-        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
-                totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
-                preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
-                memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
-                contractResult, -1, 0);
-    }
-
     /** Phase 1 호환 오버로드 */
     @Async("aiDecisionLoggerExecutor")
     public void log(
@@ -191,7 +163,7 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
-            int unverifiedExposedChars) {
+            int heldBackChars) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -249,8 +221,8 @@ public class AiDecisionLogger {
                 firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
         trace.put("first_rendered_token_ms",
                 firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
-        // 검사를 통과하지 않은 채 전달된 문자 수. 승인 단위 전달에서는 0 이어야 한다.
-        trace.put("unverified_exposed_chars", unverifiedExposedChars);
+        // 생성됐지만 위반으로 전달되지 않은 문자 수. 전달 정책의 비용과 효과를 함께 보여준다.
+        trace.put("delivery_held_back_chars", heldBackChars);
         trace.put("llm_usage_resolved", llmUsage != null ? llmUsage.resolved() : null);
         trace.put("llm_prompt_tokens", resolvedTokens(llmUsage, LlmUsage::promptTokens));
         trace.put("llm_completion_tokens", resolvedTokens(llmUsage, LlmUsage::completionTokens));

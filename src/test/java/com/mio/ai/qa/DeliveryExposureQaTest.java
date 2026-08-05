@@ -30,6 +30,15 @@ class DeliveryExposureQaTest {
     /** 이전 구현의 사후 검사 간격. 비교 기준으로만 쓴다. */
     private static final int LEGACY_CHECK_INTERVAL = 200;
 
+    /**
+     * 지연 추정을 위한 스트리밍 속도 가정.
+     *
+     * <p>gpt-4o 계열의 한국어 출력은 초당 대략 20~40 토큰이고 한 토큰이 한글 1~2자 수준이다.
+     * 여기서는 보수적으로 초당 30자로 잡는다. 실측이 아니라 **가정**이며, 실제 값은 운영
+     * trace 의 {@code first_substantive_token_ms} 로 대체돼야 한다.
+     */
+    private static final double ASSUMED_CHARS_PER_SECOND = 30.0;
+
     private final OutputPreFilter outputPreFilter = new OutputPreFilter();
 
     private record Scenario(String name, List<String> chunks, boolean violating) {}
@@ -64,6 +73,7 @@ class DeliveryExposureQaTest {
     void noContentIsDeliveredBeforeItPassesTheCheck() throws Exception {
         Map<String, Integer> holdbackExposure = new LinkedHashMap<>();
         Map<String, Integer> legacyExposure = new LinkedHashMap<>();
+        Map<String, Integer> firstUnitChars = new LinkedHashMap<>();
         List<String> leaked = new ArrayList<>();
 
         for (Scenario scenario : SCENARIOS) {
@@ -81,11 +91,15 @@ class DeliveryExposureQaTest {
                 leaked.add("%s → %s".formatted(scenario.name(), deliveredCheck.failReasons()));
             }
 
-            holdbackExposure.put(scenario.name(), holdback.unverifiedExposedChars());
+            // 노출은 상수가 아니라 결과로 잰다 — 전달된 텍스트를 다시 검사해서 통과하지 않는
+            // 내용이 섞였는지 본다. 값이 아니라 결과로 확인해야 게이트를 우회하는 변경을 잡는다.
+            holdbackExposure.put(scenario.name(),
+                    deliveredCheck.passed() ? 0 : delivered.length());
             legacyExposure.put(scenario.name(), legacyExposureOf(scenario));
+            firstUnitChars.put(scenario.name(), firstUnitLengthOf(scenario));
         }
 
-        printReport(holdbackExposure, legacyExposure);
+        printReport(holdbackExposure, legacyExposure, firstUnitChars);
 
         assertThat(leaked)
                 .as("검사를 통과하지 못한 내용이 전달됐다")
@@ -124,7 +138,25 @@ class DeliveryExposureQaTest {
         return Math.min(total, LEGACY_CHECK_INTERVAL);
     }
 
-    private void printReport(Map<String, Integer> holdback, Map<String, Integer> legacy) {
+    /**
+     * 첫 승인 단위의 길이 — 이 구조가 만드는 추가 지연의 크기다.
+     *
+     * <p>이전에는 첫 청크가 도착하는 즉시 화면에 떴다. 이제는 첫 문장이 완성될 때까지
+     * 기다린다. 그 차이를 문자 수로 재고, 가정한 속도로 밀리초 추정을 붙인다.
+     */
+    private int firstUnitLengthOf(Scenario scenario) {
+        ApprovedUnitBuffer buffer = new ApprovedUnitBuffer();
+        for (String chunk : scenario.chunks()) {
+            List<String> units = buffer.offer(chunk);
+            if (!units.isEmpty()) {
+                return units.get(0).length();
+            }
+        }
+        return buffer.drain().length();
+    }
+
+    private void printReport(Map<String, Integer> holdback, Map<String, Integer> legacy,
+                             Map<String, Integer> firstUnit) {
         StringBuilder out = new StringBuilder();
         out.append("\n══════════════════════════════════════════════════════════════\n");
         out.append("  검증 전 노출 문자 수 (이슈 #306)\n");
@@ -133,6 +165,14 @@ class DeliveryExposureQaTest {
         legacy.forEach((name, chars) ->
                 out.append("  %-28s %10d %10d%n".formatted(name, chars, holdback.get(name))));
         out.append("\n  이전 값은 첫 검사(누적 200자) 전에 전달됐을 문자 수를 정의로 계산한 것이다.\n");
+
+        out.append("\n  [추가 지연 추정 — 첫 문장을 기다리는 비용]\n");
+        out.append("  %-28s %10s %12s%n".formatted("시나리오", "첫 단위", "추정 지연"));
+        firstUnit.forEach((name, chars) -> out.append("  %-28s %10d %10.0fms%n"
+                .formatted(name, chars, chars / ASSUMED_CHARS_PER_SECOND * 1000)));
+        out.append("\n  초당 %.0f자 가정. 실측이 아니라 크기 감각을 위한 추정이며,\n"
+                .formatted(ASSUMED_CHARS_PER_SECOND));
+        out.append("  실제 값은 운영 trace 의 first_substantive_token_ms 로 대체돼야 한다.\n");
         out.append("══════════════════════════════════════════════════════════════\n");
         System.out.print(out);
     }
