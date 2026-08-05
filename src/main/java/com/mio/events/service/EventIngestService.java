@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * POST /v1/events 배치 검증 + 기록 (이슈 #285). 부분 성공 모델 — 개별 이벤트 검증 실패는
@@ -29,13 +31,23 @@ public class EventIngestService {
 
     public EventsIngestResponse ingest(List<EventEnvelope> events, String requestId) {
         List<RejectedEvent> rejected = new ArrayList<>();
+        Set<String> seenEventIds = new HashSet<>();
         int acceptedCount = 0;
 
-        for (EventEnvelope event : events) {
+        for (int index = 0; index < events.size(); index++) {
+            EventEnvelope event = events.get(index);
             EventRejectionReason reason = validate(event);
             if (reason != null) {
-                rejected.add(new RejectedEvent(event.eventId(), event.eventName(), reason.name()));
+                rejected.add(new RejectedEvent(index, event.eventId(), event.eventName(), reason.name()));
                 log.warn("journey_event_rejected reason={} event_name={}", reason, event.eventName());
+                continue;
+            }
+            // 이슈 #324 — 배치 안 event_id 중복은 거부가 아니라 통지다. 지표는 투영
+            // dedup으로 안전하지만, 통지 없이 그대로 적재하면 "이벤트 수신 건수" 알람이
+            // 부풀어 계측 생존 판정이 낙관 편향된다.
+            if (!seenEventIds.add(event.eventId())) {
+                rejected.add(new RejectedEvent(index, event.eventId(), event.eventName(),
+                        EventRejectionReason.DUPLICATE_IN_BATCH.name()));
                 continue;
             }
             // 이슈 #322 — 앱 버전은 항상 혼재한다. schema_version이 허용 집합 밖이어도

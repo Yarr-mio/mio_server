@@ -21,4 +21,10 @@ public record EventEnvelope(
         @JsonProperty("os_version") String osVersion,
         Map<String, Object> properties
 ) {
+
+    /** 이슈 #324 — Authorization 토큰의 sub와 대조해 서버 값으로 덮어쓸 때 쓴다. */
+    public EventEnvelope withUserId(String newUserId) {
+        return new EventEnvelope(eventId, eventName, schemaVersion, tsClient, anonymousId, newUserId,
+                appSessionId, appVersion, platform, osVersion, properties);
+    }
 }
