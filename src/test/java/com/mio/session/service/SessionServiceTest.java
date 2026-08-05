@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doNothing;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -63,6 +64,7 @@ class SessionServiceTest {
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private ContextPreWarmer contextPreWarmer;
     @Mock private StringRedisTemplate redisTemplate;
+    @Mock private SessionMessageLock sessionMessageLock;
     @Mock private ValueOperations<String, String> valueOps;
 
     private SessionService sessionService;
@@ -74,8 +76,8 @@ class SessionServiceTest {
         lenient().when(redisTemplate.opsForValue()).thenReturn(valueOps);
         sessionService = new SessionService(
                 sessionRepository, sessionSummaryRepository, behaviorTaskRepository, userRepository,
-                sessionMessagePersistenceService, conversationOrchestrator, workingMemory,
-                eventPublisher, contextPreWarmer, redisTemplate
+                sessionMessagePersistenceService, conversationOrchestrator, sessionMessageLock,
+                workingMemory, eventPublisher, contextPreWarmer, redisTemplate
         );
         userId = UUID.randomUUID();
         mockUser = User.builder()
@@ -255,9 +257,10 @@ class SessionServiceTest {
         UUID sessionId = UUID.randomUUID();
         SseEmitter emitter = mock(SseEmitter.class);
 
-        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, null);
+        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, null, "token");
 
         verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, null);
+        verify(sessionMessageLock).release(sessionId, "token");
     }
 
     /**
@@ -270,9 +273,37 @@ class SessionServiceTest {
         UUID sessionId = UUID.randomUUID();
         SseEmitter emitter = mock(SseEmitter.class);
 
-        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, "key-1");
+        sessionService.streamMessage(userId, sessionId, new SendMessageRequest("안녕"), emitter, "key-1", "token");
 
         verify(conversationOrchestrator).handle(userId, sessionId, "안녕", emitter, "key-1");
+    }
+
+    @Test
+    @DisplayName("acquireTurnLock: 같은 세션이 처리 중이면 409 로 알린다")
+    void acquireTurnLock_whenBusy_throwsConflict() {
+        UUID sessionId = UUID.randomUUID();
+        when(sessionMessageLock.tryAcquire(sessionId)).thenReturn(null);
+
+        assertThatThrownBy(() -> sessionService.acquireTurnLock(sessionId))
+                .isInstanceOf(BusinessException.class)
+                .extracting("errorCode")
+                .isEqualTo(ErrorCode.SESSION_MESSAGE_IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("streamMessage: 처리 중 예외가 나도 락을 해제한다")
+    void streamMessage_releasesLockOnFailure() {
+        UUID sessionId = UUID.randomUUID();
+        SseEmitter emitter = mock(SseEmitter.class);
+        doThrow(new RuntimeException("boom"))
+                .when(conversationOrchestrator).handle(any(), any(), any(), any(), any());
+
+        assertThatThrownBy(() -> sessionService.streamMessage(
+                userId, sessionId, new SendMessageRequest("안녕"), emitter, null, "token"))
+                .isInstanceOf(RuntimeException.class);
+
+        verify(sessionMessageLock)
+                .release(sessionId, "token");
     }
 
     @Test

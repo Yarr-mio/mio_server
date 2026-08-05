@@ -56,6 +56,7 @@ public class SessionService {
     private final UserRepository userRepository;
     private final SessionMessagePersistenceService sessionMessagePersistenceService;
     private final ConversationOrchestrator conversationOrchestrator;
+    private final SessionMessageLock sessionMessageLock;
     private final WorkingMemory workingMemory;
     private final ApplicationEventPublisher eventPublisher;
     private final ContextPreWarmer contextPreWarmer;
@@ -229,9 +230,31 @@ public class SessionService {
         return EmotionScoreResponse.from(sessionRepository.save(session));
     }
 
+    /**
+     * 같은 세션의 턴을 하나씩 처리하도록 락을 잡는다 (이슈 #243).
+     *
+     * <p>요청마다 독립 virtual thread 에서 실행되므로, 락이 없으면 같은 세션의 LLM 응답 생성과
+     * 메시지 저장·WorkingMemory 갱신이 서로 경쟁한다. 대화 순서가 뒤섞이거나 한쪽 턴이 다른
+     * 쪽의 세션 상태를 덮어쓴다.
+     *
+     * <p><b>SSE 스트림을 열기 전에</b> 호출해야 한다. 스트림이 시작된 뒤에는 상태 코드를 바꿀 수
+     * 없어, 사용자는 이유를 알 수 없는 끊긴 스트림만 보게 된다.
+     */
+    public String acquireTurnLock(UUID sessionId) {
+        String token = sessionMessageLock.tryAcquire(sessionId);
+        if (token == null) {
+            throw new BusinessException(ErrorCode.SESSION_MESSAGE_IN_PROGRESS);
+        }
+        return token;
+    }
+
     public void streamMessage(UUID userId, UUID sessionId, SendMessageRequest request,
-                              SseEmitter emitter, String idempotencyKey) {
-        conversationOrchestrator.handle(userId, sessionId, request.content(), emitter, idempotencyKey);
+                              SseEmitter emitter, String idempotencyKey, String lockToken) {
+        try {
+            conversationOrchestrator.handle(userId, sessionId, request.content(), emitter, idempotencyKey);
+        } finally {
+            sessionMessageLock.release(sessionId, lockToken);
+        }
     }
 
     private void checkMessageRateLimit(UUID userId) {
