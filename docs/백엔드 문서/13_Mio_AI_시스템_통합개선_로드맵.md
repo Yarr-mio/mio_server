@@ -1038,6 +1038,60 @@ P0-3의 초기 범위는 `EMPATHIC_REFLECTION`, `EMOTION_CHECK`, `CLARIFY_CONTEX
 `CRISIS_ASSESSMENT/RESOURCE_HANDOFF`처럼 자유도가 낮고 평가하기 쉬운 경로로 제한한다.
 `SOCRATIC_QUESTION`과 `REFRAME` 전체를 한 번에 옮기지 않는다.
 
+#### P0-3 진행 상태 — 이슈 #303 (Response Plan MVP)
+
+`PolicyDecision`과 생성 사이에 실행 가능한 계약을 넣었다. 범위는 로드맵이 지정한 대로
+자유도가 낮은 행위만이다.
+
+| 구성요소 | 역할 |
+|---|---|
+| `ResponseAct` | 이번 턴의 응답 행위. MVP는 공감 반영·감정 확인·맥락 확인·위기·자원 연결 |
+| `GenerationFreedom` | `TEMPLATE_ONLY`/`SLOT_FILLING`/`CONSTRAINED`/`OPEN` |
+| `ResponsePlan` | 질문 수·문장 수·금지 요소를 담은 계약. `PolicyDecision`이 운반한다 |
+| `ResponsePlanner` | 결정론적 매핑. LLM을 호출하지 않는다 |
+| `ResponseContractValidator` | 질문 수·문장 수·금지 표현의 결정론적 검사 |
+
+계획 매핑은 다음과 같다.
+
+- `HIGH` → `EMPATHIC_REFLECTION`, 질문 1개, 3문장, 조언·CBT 개입 금지
+- `MEDIUM` → `EMOTION_CHECK`, 질문 1개, 4문장
+- 룰 승격 후 Judge가 내린 턴(`SUPPORTIVE`) → `CLARIFY_CONTEXT`, 질문 1개, 4문장
+- 그 외 일반 대화 → `UNPLANNED` (기존 동작 유지)
+- 위기·보안·폴백 → 서버 고정 문구이므로 계약 검사 대상 아님
+
+§15의 미결정 항목("Response Plan을 별도 도메인 객체로 둘지 `PolicyDecision`에 포함할지")은
+**별도 도메인 객체를 `PolicyDecision`이 운반하는 방식**으로 정했다. 타입은 분리해 계획
+로직이 정책 분기와 섞이지 않게 하고, 운반은 하나로 묶어 결정 로그·trace가 갈라지지 않게 한다.
+
+계약은 검사만 하지 않고 프롬프트 지시로도 전달한다. 검사만 하면 위반이 정상 경로가 되고
+서버가 사후에 거르는 구조가 된다.
+
+측정 가능해진 것:
+
+- `ai_policy_decisions.response_act` 집계 컬럼(V47)
+- trace의 `response_act`, `generation_freedom`, `contract_result`, `contract_violations`
+- `contract_result`는 `PASS`/`VIOLATED`/`NOT_APPLICABLE`/`UNCHECKED`를 구분한다. 계획 밖
+  턴을 준수로 세면 준수율이 높아 보이고, 검사 지점이 없는 전달 경로(`SPECULATIVE`)를 통과로
+  세면 검사하지 못했다는 사실 자체가 사라진다
+
+계약 위반은 OutputJudge 승격 사유로만 쓴다(로드맵 §5.7). 완화 방향으로는 쓰지 않는다.
+
+**§5.3 표와의 차이를 명시한다.** 표는 `EMPATHIC_REFLECTION`을 `SLOT_FILLING`,
+`EMOTION_CHECK`를 `TEMPLATE_ONLY`로 지정했지만, 구현은 셋 다 `CONSTRAINED`다. 즉 이번
+MVP는 자유도를 낮춰 **모델 호출을 줄이는** 효과는 아직 내지 않는다. 얻은 것은 "무조건
+Judge" 대신 "결정론적 계약 검사 후 필요할 때만 Judge"이며, 템플릿·슬롯 렌더링은 문구
+검토가 끝난 뒤에 옮긴다.
+
+**검증 범위도 정확히 적는다.** 전체 경로 평가에서 미탐 4건·위기 오탐 0건이고 HARD 위기
+확정률은 아카이브 기준 80.3%(실행 간 변동 80.3~81.6%)로 안전 지표 회귀는 없다. 다만 이
+평가는 위기 라우팅을 재는 것이고, `ResponsePlanner`·`ResponseContractValidator`는 구조적으로
+`riskLevel`·`deliveryMode`를 바꾸지 못하므로 **여기서 회귀가 없는 것은 거의 정의상 당연하다.**
+계약 코드 경로 자체의 성능 — 응답 행위별 위반률, 프롬프트 지시의 효과, 응답 품질 영향 —
+은 아직 측정되지 않았고 이슈 `#305`로 분리했다.
+
+남은 것은 자유도가 높은 행위(`SOCRATIC_QUESTION`, `REFRAME`), 승인 단위 holdback(P0-4),
+계약 준수율 실측(`#305`)이다.
+
 ### P1 — 정책·메모리·검색의 의미 정합성
 
 | 순서 | 작업 | 산출물 | 완료 조건 |

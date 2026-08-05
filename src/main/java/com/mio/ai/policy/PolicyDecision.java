@@ -3,6 +3,7 @@ package com.mio.ai.policy;
 import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.moderation.ModerationStatus;
+import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.security.SecurityLevel;
 
 import java.util.Objects;
@@ -16,6 +17,8 @@ import java.util.Objects;
  *                      (이슈 #289).
  * @param moderationStatus L0 Moderation의 이번 턴 판정 상태. 판정 부재를 정상 판정과
  *                      구분한다 (이슈 #294).
+ * @param responsePlan  생성 전에 확정한 응답 계약. 계획 범위 밖이면
+ *                      {@link ResponsePlan#unplanned()} 다 (이슈 #303).
  */
 public record PolicyDecision(
         String decisionId,
@@ -31,12 +34,14 @@ public record PolicyDecision(
         RiskLevel riskLevel,
         CrisisTrigger crisisTrigger,
         JudgeStatus judgeStatus,
-        ModerationStatus moderationStatus
+        ModerationStatus moderationStatus,
+        ResponsePlan responsePlan
 ) {
 
     public PolicyDecision {
         Objects.requireNonNull(judgeStatus, "judgeStatus");
         Objects.requireNonNull(moderationStatus, "moderationStatus");
+        responsePlan = responsePlan != null ? responsePlan : ResponsePlan.unplanned();
         if (judgeStatus == JudgeStatus.FAILED
                 && action == DecisionAction.GENERATE
                 && (deliveryMode != DeliveryMode.BUFFER || !requireOutputGuard)) {
@@ -75,11 +80,42 @@ public record PolicyDecision(
                 ModerationStatus.RESOLVED);
     }
 
+    /** 응답 계약 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #303). */
+    public PolicyDecision(
+            String decisionId,
+            DecisionAction action,
+            GenerationMode generationMode,
+            DeliveryMode deliveryMode,
+            SecurityLevel securityLevel,
+            boolean allowGeneration,
+            boolean allowStreaming,
+            boolean requireOutputGuard,
+            InterventionHints interventionHints,
+            String policyVersion,
+            RiskLevel riskLevel,
+            CrisisTrigger crisisTrigger,
+            JudgeStatus judgeStatus,
+            ModerationStatus moderationStatus) {
+        this(decisionId, action, generationMode, deliveryMode, securityLevel,
+                allowGeneration, allowStreaming, requireOutputGuard, interventionHints,
+                policyVersion, riskLevel, crisisTrigger, judgeStatus, moderationStatus,
+                ResponsePlan.unplanned());
+    }
+
+    /** 계획을 붙인 사본. 정책 결정 자체는 바꾸지 않는다 (이슈 #303). */
+    public PolicyDecision withResponsePlan(ResponsePlan plan) {
+        return new PolicyDecision(
+                decisionId, action, generationMode, deliveryMode, securityLevel,
+                allowGeneration, allowStreaming, requireOutputGuard, interventionHints,
+                policyVersion, riskLevel, crisisTrigger, judgeStatus, moderationStatus, plan
+        );
+    }
+
     public PolicyDecision withInterventionHints(InterventionHints hints) {
         return new PolicyDecision(
                 decisionId, action, generationMode, deliveryMode, securityLevel,
                 allowGeneration, allowStreaming, requireOutputGuard, hints, policyVersion,
-                riskLevel, crisisTrigger, judgeStatus, moderationStatus
+                riskLevel, crisisTrigger, judgeStatus, moderationStatus, responsePlan
         );
     }
 

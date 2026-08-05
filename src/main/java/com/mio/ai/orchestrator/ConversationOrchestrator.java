@@ -33,6 +33,10 @@ import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
+import com.mio.ai.plan.ResponseContractResult;
+import com.mio.ai.plan.ResponseContractValidator;
+import com.mio.ai.plan.ResponsePlan;
+import com.mio.ai.plan.ResponsePlanner;
 import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.PolicyDecision;
@@ -100,6 +104,8 @@ public class ConversationOrchestrator {
     private final SafetySignalCombiner signalCombiner;
     private final SafetyProfileBuilder safetyProfileBuilder;
     private final InputJudge inputJudge;
+    private final ResponsePlanner responsePlanner;
+    private final ResponseContractValidator responseContractValidator;
     private final CbtMetadataClassifier cbtMetadataClassifier;
     private final OutputPreFilter outputPreFilter;
     private final OutputJudge outputJudge;
@@ -229,6 +235,11 @@ public class ConversationOrchestrator {
                                     decision.interventionHints(), userSignal.biasType()),
                             combined, sessionDelta));
 
+            // 6b. 응답 계약 확정 (이슈 #303). 결정론적이며 LLM 을 호출하지 않는다.
+            // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
+            decision = decision.withResponsePlan(responsePlanner.plan(decision));
+            ResponsePlan responsePlan = decision.responsePlan();
+
             // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
             if (reactiveOntologyEligibility.allowsBeliefActivation(userSignal, combined, decision)) {
                 reactiveOntologyActivationDispatcher.activateBeliefs(userId, sessionId, normalized);
@@ -251,6 +262,11 @@ public class ConversationOrchestrator {
             CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
             OutputJudgeResult judgeActionResult = null;
+            // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
+            // 계약이 있는데 검사 지점이 없는 전달 경로(SPECULATIVE)는 "미검사"로 남는다.
+            ResponseContractResult contractResult = responsePlan.isContractEnforced()
+                    ? ResponseContractResult.unchecked()
+                    : ResponseContractResult.notApplicable();
 
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
@@ -283,7 +299,7 @@ public class ConversationOrchestrator {
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
-                        session.getCharacterId(), checkpointSummary);
+                        session.getCharacterId(), checkpointSummary, responsePlan);
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
@@ -304,8 +320,11 @@ public class ConversationOrchestrator {
                     assistantContent = contentBuilder.toString();
 
                     preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
-                    if (!preFilterResult.passed()) {
-                        judgeActionResult = outputJudge.judge(assistantContent, preFilterResult);
+                    contractResult = responseContractValidator.validate(responsePlan, assistantContent);
+                    OutputPreFilterResult bufferedGuardInput =
+                            mergeContractViolations(preFilterResult, contractResult);
+                    if (!bufferedGuardInput.passed()) {
+                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
@@ -368,6 +387,9 @@ public class ConversationOrchestrator {
                     llmUsage = streamResult.usage();
 
                     assistantContent = contentBuilder.toString();
+                    // 조기 중단 여부와 무관하게 전체 응답을 계약 검사한다. 조기 중단 경로에서
+                    // 건너뛰면 계약이 있는 턴이 로그에 미검사로 남아 위반율이 실제보다 낮아 보인다.
+                    contractResult = responseContractValidator.validate(responsePlan, assistantContent);
 
                     CompletableFuture<OutputJudgeResult> judgeFuture = earlyJudgeFutureRef.get();
                     OutputPreFilterResult earlyFilter = earlyFilterRef.get();
@@ -379,11 +401,15 @@ public class ConversationOrchestrator {
                     if (judgeFuture == null) {
                         // No early stop — run post-stream pre-filter check
                         preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
-                        if (!preFilterResult.passed()) {
+                        // 계약 위반은 그 자체로 Judge 승격 사유다 (로드맵 §5.7). 이미 전달된
+                        // 토큰을 되돌릴 수는 없지만, 위반한 응답을 검증 없이 종료하지는 않는다.
+                        OutputPreFilterResult streamedGuardInput =
+                                mergeContractViolations(preFilterResult, contractResult);
+                        if (!streamedGuardInput.passed()) {
                             log.warn("OutputGuard post-stream: session={} reasons={}",
-                                    sessionId, preFilterResult.failReasons());
+                                    sessionId, streamedGuardInput.failReasons());
                             final String fullContent = assistantContent;
-                            final OutputPreFilterResult fullFilter = preFilterResult;
+                            final OutputPreFilterResult fullFilter = streamedGuardInput;
                             judgeFuture = CompletableFuture.supplyAsync(
                                     () -> outputJudge.judge(fullContent, fullFilter), outputJudgeExecutor);
                         }
@@ -503,7 +529,7 @@ public class ConversationOrchestrator {
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
-                    profile.degraded(), appliedCrisisTrigger, llmUsage);
+                    profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult);
 
             emitter.complete();
 
@@ -688,6 +714,23 @@ public class ConversationOrchestrator {
      * 여기서 예외를 던지면 위기 사용자의 응답이 통째로 실패하므로, 가장 흔한 경로인
      * {@code L1_KEYWORD} 로 이어가되 로그를 남긴다.
      */
+    /**
+     * 사전 필터 결과와 계약 검사 결과를 하나의 가드 입력으로 합친다 (이슈 #303).
+     *
+     * <p>둘 중 하나라도 걸리면 OutputJudge 를 부른다. 계약 위반 사유도 함께 넘겨야 Judge 가
+     * 무엇이 문제인지 알고 판단한다. 로그에는 두 결과를 따로 남긴다 — 합쳐서 기록하면
+     * 의미 판단 실패와 계약 위반의 비율을 나눌 수 없다.
+     */
+    private OutputPreFilterResult mergeContractViolations(
+            OutputPreFilterResult preFilterResult, ResponseContractResult contractResult) {
+        if (contractResult == null || contractResult.passed()) {
+            return preFilterResult;
+        }
+        List<String> reasons = new ArrayList<>(preFilterResult.failReasons());
+        contractResult.violations().forEach(violation -> reasons.add("contract:" + violation));
+        return OutputPreFilterResult.fail(reasons);
+    }
+
     private CrisisTrigger resolveCrisisTrigger(PolicyDecision decision) {
         if (decision.crisisTrigger() != null) {
             return decision.crisisTrigger();
