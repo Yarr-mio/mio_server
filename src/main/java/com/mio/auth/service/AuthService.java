@@ -22,6 +22,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -30,6 +31,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AuthService {
 
     private static final int JWT_EXPIRY_SECONDS = 900;
+
+    // #320 — 이벤트 화이트리스트(event-whitelist.yml)에만 enum 검증을 걸면 DB엔 오염값이
+    // 남아 나중에 백필이 불가능하다. 코호트 축이라 여기서도 막는다. 선택 필드라 null/blank는 통과.
+    private static final Set<String> VALID_EMPLOYMENT_STATUSES = Set.of("job_seeker", "employed");
 
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
@@ -173,7 +178,15 @@ public class AuthService {
             throw new BusinessException(ErrorCode.NICKNAME_DUPLICATE);
         }
 
-        user.completeProfile(request.nickname(), request.ageRange(), request.gender(), request.employmentStatus());
+        String employmentStatus = request.employmentStatus();
+        if (employmentStatus != null && employmentStatus.isBlank()) {
+            employmentStatus = null;
+        }
+        if (employmentStatus != null && !VALID_EMPLOYMENT_STATUSES.contains(employmentStatus)) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+
+        user.completeProfile(request.nickname(), request.ageRange(), request.gender(), employmentStatus);
 
         return new SignupCompleteResponse(user.getSignupStep(), user.getOnboardingStep(), user.getNickname());
     }
