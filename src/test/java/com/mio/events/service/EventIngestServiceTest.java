@@ -76,6 +76,35 @@ class EventIngestServiceTest {
     }
 
     @Test
+    @DisplayName("#324 — rejected 항목에 배치 내 index가 정확히 포함된다")
+    void ingest_rejectedEvent_includesBatchIndex() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope valid = validEvent("e0");
+        EventEnvelope missingId = new EventEnvelope(null, "chat_message_sent", 3, VALID_TS,
+                "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(valid, missingId), "req-1");
+
+        assertThat(response.rejected().get(0).index()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("#324 — 배치 내 event_id 중복은 첫 건만 기록되고 DUPLICATE_IN_BATCH로 통지된다")
+    void ingest_duplicateEventIdInBatch_secondNotified() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope first = validEvent("dup-1");
+        EventEnvelope duplicate = validEvent("dup-1");
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(first, duplicate), "req-1");
+
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).hasSize(1);
+        assertThat(response.rejected().get(0).index()).isEqualTo(1);
+        assertThat(response.rejected().get(0).reason()).isEqualTo("DUPLICATE_IN_BATCH");
+        verify(eventLogWriter, times(1)).write(any(), eq("req-1"));
+    }
+
+    @Test
     @DisplayName("#322 — schema_version이 허용 집합 밖이어도 거부하지 않고 그대로 수락한다")
     void ingest_schemaVersionMismatch_stillAccepted() {
         when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
