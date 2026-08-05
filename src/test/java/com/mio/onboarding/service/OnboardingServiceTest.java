@@ -6,7 +6,6 @@ import com.mio.onboarding.dto.*;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserOnboardingAnswer;
-import com.mio.onboarding.event.OnboardingCompletedEvent;
 import com.mio.user.repository.UserOnboardingAnswerRepository;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,7 +14,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.List;
 import java.util.Optional;
@@ -31,7 +29,6 @@ class OnboardingServiceTest {
 
     @Mock private UserRepository userRepository;
     @Mock private UserOnboardingAnswerRepository onboardingAnswerRepository;
-    @Mock private ApplicationEventPublisher eventPublisher;
 
     private OnboardingService onboardingService;
     private UUID userId;
@@ -40,7 +37,7 @@ class OnboardingServiceTest {
     @BeforeEach
     void setUp() {
         CharacterRecommender recommender = new CharacterRecommender();
-        onboardingService = new OnboardingService(userRepository, onboardingAnswerRepository, recommender, eventPublisher);
+        onboardingService = new OnboardingService(userRepository, onboardingAnswerRepository, recommender);
         userId = UUID.randomUUID();
         mockUser = User.builder()
                 .socialProvider("kakao")
