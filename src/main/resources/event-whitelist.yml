@@ -4,9 +4,9 @@
 # #320 개편: 키 목록이 아니라 "키 -> 값 도메인" 맵이다. 값이 도메인 밖이면 그 property만
 # 조용히 드롭한다(이벤트 자체는 통과) — 키만 검증하면 enum 자리에 자유 문자열이 실려도
 # 통과했다(예: employment_status). 도메인 종류:
-#   enum: [...]       -> 문자열이 목록 안에 있어야 함
-#   type: enum         -> id(빈 문자열 아닌 문자열), int(숫자), bool(true/false),
-#                          string(자유 문자열 — screen_name류 예외만 여기 씀)
+#   enum: [...]                -> 문자열이 목록 안에 있어야 함
+#   type: <int|bool|id|string> -> int(정수), bool(true/false), id(빈 문자열 아닌 문자열),
+#                                  string(자유 문자열 — screen_name류 예외만 여기 씀)
 # properties가 없는 이벤트는 빈 맵으로 둔다(어떤 property를 보내도 전부 드롭됨).
 
 events:

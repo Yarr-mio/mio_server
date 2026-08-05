@@ -92,4 +92,25 @@ class EventWhitelistTest {
     void isValidPropertyValue_unknownKey_returnsFalse() {
         assertThat(whitelist.isValidPropertyValue("profile_submitted", "totally_made_up_key", "x")).isFalse();
     }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — INT는 Integer/Long만 허용, Double은 거부한다")
+    void isValidPropertyValue_intField_rejectsDouble() {
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", 3.5)).isFalse();
+        assertThat(whitelist.isValidPropertyValue("chat_message_sent", "message_index", 3L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — STRING은 실제 문자열만 허용, 중첩 객체/배열은 거부한다")
+    void isValidPropertyValue_stringField_rejectsNestedStructures() {
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", java.util.Map.of("a", 1))).isFalse();
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", java.util.List.of("a"))).isFalse();
+        assertThat(whitelist.isValidPropertyValue("app_session_ended", "last_screen", "home")).isTrue();
+    }
+
+    @Test
+    @DisplayName("#320 리뷰 반영 — ENUM은 문자열 강제 변환 없이 실제 문자열만 비교한다")
+    void isValidPropertyValue_enumField_rejectsNonStringCoercion() {
+        assertThat(whitelist.isValidPropertyValue("profile_submitted", "gender", true)).isFalse();
+    }
 }

@@ -179,8 +179,10 @@ public class AuthService {
         }
 
         String employmentStatus = request.employmentStatus();
-        if (employmentStatus != null && !employmentStatus.isBlank()
-                && !VALID_EMPLOYMENT_STATUSES.contains(employmentStatus)) {
+        if (employmentStatus != null && employmentStatus.isBlank()) {
+            employmentStatus = null;
+        }
+        if (employmentStatus != null && !VALID_EMPLOYMENT_STATUSES.contains(employmentStatus)) {
             throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
 

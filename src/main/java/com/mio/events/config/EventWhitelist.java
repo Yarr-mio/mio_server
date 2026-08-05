@@ -34,11 +34,11 @@ public class EventWhitelist {
                 return true;
             }
             return switch (type) {
-                case ENUM -> enumValues.contains(String.valueOf(value));
-                case INT -> value instanceof Number;
+                case ENUM -> value instanceof String s && enumValues.contains(s);
+                case INT -> value instanceof Integer || value instanceof Long;
                 case BOOL -> value instanceof Boolean;
                 case ID -> value instanceof String s && !s.isBlank();
-                case STRING -> true;
+                case STRING -> value instanceof String;
             };
         }
     }
