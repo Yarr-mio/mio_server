@@ -1,0 +1,151 @@
+package com.mio.ai.crisis;
+
+import com.mio.session.domain.Session;
+import com.mio.session.repository.SessionRepository;
+import com.mio.user.domain.User;
+import com.mio.user.repository.UserRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/** 이슈 #256 — 실시간 하네스가 놓친 위기를 세션 종료 후 승격한다. */
+class CrisisEpisodePromoterTest {
+
+    private CrisisEventRepository crisisEventRepository;
+    private CrisisEventRecorder crisisEventRecorder;
+    private UserRepository userRepository;
+    private SessionRepository sessionRepository;
+    private CrisisEpisodePromoter promoter;
+
+    private User user;
+    private Session session;
+    private UUID userId;
+    private UUID sessionId;
+
+    @BeforeEach
+    void setUp() {
+        crisisEventRepository = mock(CrisisEventRepository.class);
+        crisisEventRecorder = mock(CrisisEventRecorder.class);
+        userRepository = mock(UserRepository.class);
+        sessionRepository = mock(SessionRepository.class);
+        promoter = new CrisisEpisodePromoter(
+                crisisEventRepository, crisisEventRecorder, userRepository, sessionRepository);
+
+        user = mock(User.class);
+        session = mock(Session.class);
+        userId = UUID.randomUUID();
+        sessionId = UUID.randomUUID();
+        when(userRepository.findById(userId)).thenReturn(java.util.Optional.of(user));
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.of(session));
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(true);
+    }
+
+    @Test
+    @DisplayName("위기 세션인데 기록이 없으면 승격한다")
+    void promotesCrisisEpisodeWithoutExistingEvent() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(false);
+
+        boolean promoted = promoter.promoteIfCrisis(userId, sessionId, "crisis");
+
+        assertThat(promoted)
+                .as("룰이 정상으로 본 발화는 어떤 LLM 도 보지 못한다 — 이 경로가 유일한 회수 지점이다")
+                .isTrue();
+        verify(crisisEventRecorder).record(eq(user), eq(session), eq(2), eq("pattern"));
+    }
+
+    @Test
+    @DisplayName("이미 위기로 기록된 세션은 승격하지 않는다")
+    void doesNotPromoteWhenSessionAlreadyHasCrisisEvent() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(true);
+
+        boolean promoted = promoter.promoteIfCrisis(userId, sessionId, "crisis");
+
+        assertThat(promoted)
+                .as("같은 위기를 두 번 기록하면 운영자 검토 큐에 중복이 쌓이고 감지 경로 구분이 흐려진다")
+                .isFalse();
+        verify(crisisEventRecorder, never()).record(any(), any(), anyInt(), anyString());
+    }
+
+    @Test
+    @DisplayName("위기가 아닌 세션 유형은 무시한다")
+    void ignoresNonCrisisEpisodeTypes() {
+        for (String episodeType : new String[]{"regular", "cbt_success", "cbt_partial", "support_only"}) {
+            assertThat(promoter.promoteIfCrisis(userId, sessionId, episodeType)).isFalse();
+        }
+
+        verify(crisisEventRecorder, never()).record(any(), any(), anyInt(), anyString());
+        verify(crisisEventRepository, never()).existsBySession_Id(any());
+    }
+
+    @Test
+    @DisplayName("판정값이 없거나 엔티티가 없으면 아무 일도 하지 않는다")
+    void ignoresMissingInputs() {
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, null)).isFalse();
+        assertThat(promoter.promoteIfCrisis(null, sessionId, "crisis")).isFalse();
+        assertThat(promoter.promoteIfCrisis(userId, null, "crisis")).isFalse();
+
+        verify(crisisEventRecorder, never()).record(any(), any(), anyInt(), anyString());
+    }
+
+    @Test
+    @DisplayName("대소문자가 달라도 위기 판정으로 인식한다")
+    void episodeTypeMatchingIsCaseInsensitive() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(false);
+
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, "CRISIS")).isTrue();
+    }
+
+    @Test
+    @DisplayName("조회가 실패해도 예외를 밖으로 내보내지 않는다")
+    void doesNotPropagateRepositoryFailure() {
+        when(crisisEventRepository.existsBySession_Id(sessionId))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("db down"));
+
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, "crisis"))
+                .as("여기서 예외가 나가면 이미 커밋된 세션 요약 뒤의 후처리가 통째로 실패한다 (이슈 #219)")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("동시 승격이 유니크 제약에 막히면 조용히 넘어간다")
+    void treatsUniqueViolationAsAlreadyPromoted() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(false);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString()))
+                .thenThrow(new org.springframework.dao.DataIntegrityViolationException("duplicate"));
+
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, "crisis")).isFalse();
+    }
+
+    @Test
+    @DisplayName("사용자나 세션을 찾지 못하면 기록하지 않는다")
+    void skipsWhenEntitiesAreMissing() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(false);
+        when(sessionRepository.findById(sessionId)).thenReturn(java.util.Optional.empty());
+
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, "crisis")).isFalse();
+        verify(crisisEventRecorder, never()).record(any(), any(), anyInt(), anyString());
+    }
+
+    @Test
+    @DisplayName("기록에 실패하면 승격도 실패로 보고한다")
+    void reportsFailureWhenRecordingFails() {
+        when(crisisEventRepository.existsBySession_Id(sessionId)).thenReturn(false);
+        when(crisisEventRecorder.record(any(), any(), anyInt(), anyString())).thenReturn(false);
+
+        assertThat(promoter.promoteIfCrisis(userId, sessionId, "crisis"))
+                .as("기록되지 않은 승격을 성공으로 세면 다음 세션의 보호 근거가 없는데 있다고 믿게 된다")
+                .isFalse();
+    }
+}
