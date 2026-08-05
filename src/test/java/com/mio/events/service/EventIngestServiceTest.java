@@ -1,5 +1,6 @@
 package com.mio.events.service;
 
+import com.mio.events.config.EventSchemaProperties;
 import com.mio.events.config.EventWhitelist;
 import com.mio.events.dto.EventEnvelope;
 import com.mio.events.dto.EventsIngestResponse;
@@ -29,7 +30,7 @@ class EventIngestServiceTest {
 
     @BeforeEach
     void setUp() {
-        eventIngestService = new EventIngestService(eventWhitelist, eventLogWriter);
+        eventIngestService = new EventIngestService(eventWhitelist, eventLogWriter, new EventSchemaProperties());
     }
 
     private EventEnvelope validEvent(String eventId) {
@@ -75,14 +76,30 @@ class EventIngestServiceTest {
     }
 
     @Test
-    @DisplayName("schema_version이 3이 아니면 INVALID_SCHEMA_VERSION으로 거부된다")
-    void ingest_wrongSchemaVersion_rejected() {
+    @DisplayName("#322 — schema_version이 허용 집합 밖이어도 거부하지 않고 그대로 수락한다")
+    void ingest_schemaVersionMismatch_stillAccepted() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
         EventEnvelope event = new EventEnvelope("e1", "chat_message_sent", 2, VALID_TS,
                 "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
 
         EventsIngestResponse response = eventIngestService.ingest(List.of(event), "req-1");
 
-        assertThat(response.rejected().get(0).reason()).isEqualTo("INVALID_SCHEMA_VERSION");
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).isEmpty();
+        verify(eventLogWriter).write(event, "req-1");
+    }
+
+    @Test
+    @DisplayName("#322 — schema_version이 null이어도(필수 5종 아님) 거부하지 않고 수락한다")
+    void ingest_nullSchemaVersion_stillAccepted() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(true);
+        EventEnvelope event = new EventEnvelope("e1", "chat_message_sent", null, VALID_TS,
+                "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", Map.of());
+
+        EventsIngestResponse response = eventIngestService.ingest(List.of(event), "req-1");
+
+        assertThat(response.acceptedCount()).isEqualTo(1);
+        assertThat(response.rejected()).isEmpty();
     }
 
     @Test
