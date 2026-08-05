@@ -60,7 +60,9 @@ public class AiDecisionLogger {
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
             LlmUsage llmUsage,
-            ResponseContractResult contractResult) {
+            ResponseContractResult contractResult,
+            long firstSubstantiveTokenMs,
+            int unverifiedExposedChars) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -68,7 +70,8 @@ public class AiDecisionLogger {
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
-                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult);
+                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
+                    firstSubstantiveTokenMs, unverifiedExposedChars);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -120,7 +123,35 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
                 preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
                 memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
-                ResponseContractResult.notApplicable());
+                ResponseContractResult.notApplicable(), -1, 0);
+    }
+
+    /** 전달 계측 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #306). */
+    public void log(
+            UUID userId,
+            UUID sessionId,
+            PolicyDecision decision,
+            ModerationResult moderation,
+            SafetyL1Result l1Result,
+            SecurityAssessment securityAssessment,
+            long totalPipelineMs,
+            long llmTtftMs,
+            boolean crisisFlowTriggered,
+            boolean inputJudgeCalled,
+            OutputPreFilterResult preFilterResult,
+            OutputJudgeResult outputJudgeResult,
+            String l1ThresholdSource,
+            boolean safetyProfileCacheHit,
+            boolean memoryCacheHit,
+            boolean safetyProfileDegraded,
+            CrisisTrigger appliedCrisisTrigger,
+            LlmUsage llmUsage,
+            ResponseContractResult contractResult) {
+        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
+                totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
+                preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
+                memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
+                contractResult, -1, 0);
     }
 
     /** Phase 1 호환 오버로드 */
@@ -139,7 +170,7 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
                 "default", false, false, false, decision.crisisTrigger(), null,
-                ResponseContractResult.notApplicable());
+                ResponseContractResult.notApplicable(), -1, 0);
     }
 
     private Map<String, Object> buildTrace(
@@ -158,7 +189,9 @@ public class AiDecisionLogger {
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
             LlmUsage llmUsage,
-            ResponseContractResult contractResult) {
+            ResponseContractResult contractResult,
+            long firstSubstantiveTokenMs,
+            int unverifiedExposedChars) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -204,7 +237,20 @@ public class AiDecisionLogger {
         // "비용이 0" 과 "비용을 모른다" 가 구분되지 않았고, LLM 을 부르지도 않은 턴까지
         // gpt-4o 를 쓴 것처럼 기록됐다.
         trace.put("llm_model", llmUsage != null ? llmUsage.model() : null);
+        // 지연은 세 지점을 따로 잰다 (이슈 #306, 14번 검증 리뷰 지적 E). 하나로 재면 서버가
+        // 먼저 보내는 문구만으로도 수치가 좋아져 "지연 개선"과 "지연 은폐"를 구분할 수 없다.
+        //   llm_ttft_ms                — 첫 생성 토큰
+        //   first_substantive_token_ms — 승인되어 실제로 전달된 첫 콘텐츠
+        //   first_rendered_token_ms    — 사용자가 무언가를 보기까지
+        // 검토된 safe prefix 를 서버가 먼저 보내는 기능이 없는 동안 뒤의 두 값은 같다.
+        // 필드를 미리 두어 그 기능이 들어올 때 값이 갈라지는 것을 볼 수 있게 한다.
         trace.put("llm_ttft_ms", ttftMs);
+        trace.put("first_substantive_token_ms",
+                firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
+        trace.put("first_rendered_token_ms",
+                firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
+        // 검사를 통과하지 않은 채 전달된 문자 수. 승인 단위 전달에서는 0 이어야 한다.
+        trace.put("unverified_exposed_chars", unverifiedExposedChars);
         trace.put("llm_usage_resolved", llmUsage != null ? llmUsage.resolved() : null);
         trace.put("llm_prompt_tokens", resolvedTokens(llmUsage, LlmUsage::promptTokens));
         trace.put("llm_completion_tokens", resolvedTokens(llmUsage, LlmUsage::completionTokens));

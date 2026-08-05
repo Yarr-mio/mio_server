@@ -32,6 +32,8 @@ import com.mio.ai.memory.working.WorkingMessage;
 import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.delivery.ApprovedUnitBuffer;
+import com.mio.ai.delivery.HoldbackDelivery;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponseContractValidator;
@@ -83,7 +85,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -95,7 +96,6 @@ public class ConversationOrchestrator {
     // 출력 상한. 프롬프트가 "2-4문장"을 요구하고 실측 출력이 49~150 토큰이라 2.7배 여유다.
     // 상한이 없으면 폭주 응답 하나가 턴당 비용을 8.1배로 올린다 (기준선 문서 §5.7 R-1).
     private static final int LLM_MAX_COMPLETION_TOKENS = 400;
-    private static final int EARLY_PREFILTER_THRESHOLD = 200;
 
     private final InputNormalizer inputNormalizer;
     private final SecurityRuleFilter securityRuleFilter;
@@ -261,6 +261,10 @@ public class ConversationOrchestrator {
             // 출력 가드가 승격시킨 위기는 decision.action() 이 GENERATE 라 결정에 경로가 없다.
             CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
+            // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
+            // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
+            long firstSubstantiveTokenMs = -1;
+            int unverifiedExposedChars = 0;
             OutputJudgeResult judgeActionResult = null;
             // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
             // 계약이 있는데 검사 지점이 없는 전달 경로(SPECULATIVE)는 "미검사"로 남는다.
@@ -344,45 +348,50 @@ public class ConversationOrchestrator {
                     }
 
                 } else if (deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE) {
-                    // CAUTIOUS_SPECULATIVE: stream immediately + parallel OutputJudge
-                    // Pre-filter runs every EARLY_PREFILTER_THRESHOLD chars during stream.
-                    // If a violation is detected early, delta SSEs stop immediately and
-                    // OutputJudge starts async on the partial snapshot.
+                    // CAUTIOUS_SPECULATIVE: 승인 단위 holdback (이슈 #306).
+                    //
+                    // 이전에는 청크를 그대로 흘려보내며 200자 간격으로 사후 검사했다. 그래서
+                    // 첫 검사 전에 최대 200자가 이미 사용자에게 전달됐다. 이제 문장 단위로
+                    // 잘라 검사를 통과한 단위만 연다 — 생성은 계속하되 전달만 늦춘다.
                     AtomicBoolean stopSendingDeltas = new AtomicBoolean(false);
-                    AtomicInteger lastCheckedLength = new AtomicInteger(0);
                     AtomicReference<OutputPreFilterResult> earlyFilterRef = new AtomicReference<>();
                     AtomicReference<CompletableFuture<OutputJudgeResult>> earlyJudgeFutureRef = new AtomicReference<>();
                     AtomicReference<String> capturedSnapshotRef = new AtomicReference<>();
 
+                    HoldbackDelivery holdback = new HoldbackDelivery(
+                            new ApprovedUnitBuffer(),
+                            candidate -> {
+                                OutputPreFilterResult unitCheck =
+                                        outputPreFilter.checkWithCrisisContext(candidate, inputHadRiskSignal);
+                                if (unitCheck.passed()) {
+                                    return true;
+                                }
+                                stopSendingDeltas.set(true);
+                                earlyFilterRef.set(unitCheck);
+                                capturedSnapshotRef.set(candidate);
+                                log.warn("OutputGuard held back unit: session={} reasons={}",
+                                        sessionId, unitCheck.failReasons());
+                                earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
+                                        () -> outputJudge.judge(candidate, unitCheck), outputJudgeExecutor));
+                                return false;
+                            },
+                            unit -> sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId)));
+
                     LlmStreamResult streamResult = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
-                        if (!stopSendingDeltas.get()) {
-                            int currentLen = contentBuilder.length();
-                            if (currentLen - lastCheckedLength.get() >= EARLY_PREFILTER_THRESHOLD) {
-                                lastCheckedLength.set(currentLen);
-                                String snapshot = contentBuilder.toString();
-                                OutputPreFilterResult earlyCheck =
-                                        outputPreFilter.checkWithCrisisContext(snapshot, inputHadRiskSignal);
-                                if (!earlyCheck.passed()) {
-                                    stopSendingDeltas.set(true);
-                                    earlyFilterRef.set(earlyCheck);
-                                    log.warn("OutputGuard early-stop during stream: session={} reasons={}",
-                                            sessionId, earlyCheck.failReasons());
-                                    capturedSnapshotRef.set(snapshot);
-                                    final String capturedSnapshot = snapshot;
-                                    final OutputPreFilterResult capturedCheck = earlyCheck;
-                                    earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
-                                            () -> outputJudge.judge(capturedSnapshot, capturedCheck), outputJudgeExecutor));
-                                    return;
-                                }
-                            }
-                            try {
-                                sendEvent(emitter, new SseEventDto.DeltaEvent(chunk, outboundMsgId));
-                            } catch (IOException e) {
-                                throw new RuntimeException(e);
-                            }
+                        try {
+                            holdback.onChunk(chunk);
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
                         }
                     }));
+                    try {
+                        holdback.finish();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                    firstSubstantiveTokenMs = holdback.firstSubstantiveTokenMs();
+                    unverifiedExposedChars = holdback.unverifiedExposedChars();
                     llmTtftMs = streamResult.ttftMs();
                     llmUsage = streamResult.usage();
 
@@ -529,7 +538,8 @@ public class ConversationOrchestrator {
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
-                    profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult);
+                    profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
+                    firstSubstantiveTokenMs, unverifiedExposedChars);
 
             emitter.complete();
 
