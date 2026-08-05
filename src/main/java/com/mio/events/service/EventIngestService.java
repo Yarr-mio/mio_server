@@ -40,6 +40,7 @@ public class EventIngestService {
             if (reason != null) {
                 rejected.add(new RejectedEvent(index, event.eventId(), event.eventName(), reason.name()));
                 log.warn("journey_event_rejected reason={} event_name={}", reason, event.eventName());
+                eventLogWriter.writeRejected(event, index, reason.name(), requestId);
                 continue;
             }
             // 이슈 #324 — 배치 안 event_id 중복은 거부가 아니라 통지다. 지표는 투영

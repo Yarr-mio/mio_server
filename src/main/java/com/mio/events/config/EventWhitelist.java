@@ -102,4 +102,14 @@ public class EventWhitelist {
         PropertySpec spec = specs.get(key);
         return spec != null && spec.accepts(value);
     }
+
+    /**
+     * 이슈 #326 — {@link #isValidPropertyValue}는 "키가 없음"과 "키는 있는데 값이 도메인
+     * 밖"을 구분하지 않는다. drop(키 자체가 카탈로그 밖)과 invalid(알려진 키의 값 불일치)를
+     * 서로 다른 로그로 남기려면 이 구분이 필요하다.
+     */
+    public boolean isKnownProperty(String eventName, String key) {
+        Map<String, PropertySpec> specs = catalog.get(eventName);
+        return specs != null && specs.containsKey(key);
+    }
 }
