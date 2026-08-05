@@ -262,8 +262,11 @@ public class ConversationOrchestrator {
             CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
             OutputJudgeResult judgeActionResult = null;
-            // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이다.
-            ResponseContractResult contractResult = ResponseContractResult.notApplicable();
+            // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
+            // 계약이 있는데 검사 지점이 없는 전달 경로(SPECULATIVE)는 "미검사"로 남는다.
+            ResponseContractResult contractResult = responsePlan.isContractEnforced()
+                    ? ResponseContractResult.unchecked()
+                    : ResponseContractResult.notApplicable();
 
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
@@ -384,6 +387,9 @@ public class ConversationOrchestrator {
                     llmUsage = streamResult.usage();
 
                     assistantContent = contentBuilder.toString();
+                    // 조기 중단 여부와 무관하게 전체 응답을 계약 검사한다. 조기 중단 경로에서
+                    // 건너뛰면 계약이 있는 턴이 로그에 미검사로 남아 위반율이 실제보다 낮아 보인다.
+                    contractResult = responseContractValidator.validate(responsePlan, assistantContent);
 
                     CompletableFuture<OutputJudgeResult> judgeFuture = earlyJudgeFutureRef.get();
                     OutputPreFilterResult earlyFilter = earlyFilterRef.get();
@@ -395,7 +401,6 @@ public class ConversationOrchestrator {
                     if (judgeFuture == null) {
                         // No early stop — run post-stream pre-filter check
                         preFilterResult = outputPreFilter.checkWithCrisisContext(assistantContent, inputHadRiskSignal);
-                        contractResult = responseContractValidator.validate(responsePlan, assistantContent);
                         // 계약 위반은 그 자체로 Judge 승격 사유다 (로드맵 §5.7). 이미 전달된
                         // 토큰을 되돌릴 수는 없지만, 위반한 응답을 검증 없이 종료하지는 않는다.
                         OutputPreFilterResult streamedGuardInput =

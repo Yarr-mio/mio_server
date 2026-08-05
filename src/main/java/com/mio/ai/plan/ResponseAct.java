@@ -11,7 +11,7 @@ package com.mio.ai.plan;
  * {@code REFRAME} 처럼 자유도가 높은 행위는 계약 검사와 평가 기준을 갖춘 뒤에 추가한다.
  */
 public enum ResponseAct {
-    /** 감정을 인정하고 반영한다. 질문 없음. */
+    /** 감정을 인정하고 반영한다. 위험도가 높은 턴에서는 현재 상태를 확인하는 질문 하나까지 허용한다. */
     EMPATHIC_REFLECTION,
     /** 감정과 강도를 확인한다. 질문 1개. */
     EMOTION_CHECK,

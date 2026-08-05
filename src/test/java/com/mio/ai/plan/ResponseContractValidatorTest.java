@@ -79,6 +79,27 @@ class ResponseContractValidatorTest {
     }
 
     @Test
+    @DisplayName("진단명 귀속 표현을 잡는다")
+    void diagnosisIsViolation() {
+        assertThat(validator.validate(plan(1, 4), "지금 상태를 보면 우울증 초기 증상 같아요.").violations())
+                .as("BASE_FORBIDDEN 에 이름만 있고 패턴이 없으면 검사가 조용히 통과한다")
+                .contains("diagnosis");
+        assertThat(validator.validate(plan(1, 4), "공황장애인 것 같아요.").violations())
+                .contains("diagnosis");
+    }
+
+    @Test
+    @DisplayName("의견을 묻는 질문은 조언으로 세지 않는다")
+    void opinionQuestionIsNotAdvice() {
+        ResponsePlan highRiskPlan = plan(1, 3,
+                "certainty_about_user", "guaranteed_outcome", "advice", "cbt_intervention");
+
+        assertThat(validator.validate(highRiskPlan, "그 상황을 어떻게 보세요?").violations())
+                .as("조언이 금지된 계획도 질문 1개를 허용한다 — 그 질문을 위반으로 세면 지킬 수 없는 계약이 된다")
+                .doesNotContain("advice");
+    }
+
+    @Test
     @DisplayName("계획되지 않은 턴은 통과가 아니라 검사 대상 아님이다")
     void unplannedTurnIsNotApplicable() {
         ResponseContractResult result = validator.validate(
@@ -97,5 +118,15 @@ class ResponseContractValidatorTest {
                 ResponsePlan.fixed(ResponseAct.RESOURCE_HANDOFF), "도움받을 수 있는 곳을 안내할게요.");
 
         assertThat(result.applicable()).isFalse();
+    }
+
+    @Test
+    @DisplayName("계약이 있는데 검사하지 못한 턴은 통과와 구분된다")
+    void uncheckedIsDistinctFromPass() {
+        assertThat(ResponseContractResult.unchecked().logValue()).isEqualTo("UNCHECKED");
+        assertThat(ResponseContractResult.pass().logValue()).isEqualTo("PASS");
+        assertThat(ResponseContractResult.notApplicable().logValue()).isEqualTo("NOT_APPLICABLE");
+        assertThat(ResponseContractResult.violated(List.of("max_questions(2>1)")).logValue())
+                .isEqualTo("VIOLATED");
     }
 }

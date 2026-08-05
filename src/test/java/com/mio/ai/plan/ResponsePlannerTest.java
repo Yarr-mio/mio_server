@@ -87,6 +87,27 @@ class ResponsePlannerTest {
     }
 
     @Test
+    @DisplayName("폴백 응답도 서버 문구이므로 계약 검사 대상이 아니다")
+    void fallbackPathIsNotContractEnforced() {
+        ResponsePlan plan = planner.plan(
+                decision(DecisionAction.FALLBACK, GenerationMode.NORMAL, RiskLevel.CLEAR_LOW));
+
+        assertThat(plan.generationFreedom()).isEqualTo(GenerationFreedom.TEMPLATE_ONLY);
+        assertThat(plan.isContractEnforced()).isFalse();
+    }
+
+    @Test
+    @DisplayName("보안 SUSPICIOUS 로 가드된 턴은 아직 계획 범위가 아니다")
+    void suspiciousGuardedTurnStaysUnplanned() {
+        ResponsePlan plan = planner.plan(
+                decision(DecisionAction.GENERATE, GenerationMode.GUARDED, RiskLevel.LOW));
+
+        assertThat(plan.responseAct())
+                .as("조작 시도에 대한 응답은 정서 코칭 행위와 성격이 다르다 — 별도 계약이 필요하다")
+                .isEqualTo(ResponseAct.UNPLANNED);
+    }
+
+    @Test
     @DisplayName("계획은 정책 결정의 위험 등급이나 전달 방식을 바꾸지 않는다")
     void planNeverAltersPolicyDecision() {
         PolicyDecision original =
