@@ -60,7 +60,18 @@ class EventIngestServiceTest {
         assertThat(response.acceptedCount()).isZero();
         assertThat(response.rejected()).hasSize(1);
         assertThat(response.rejected().get(0).reason()).isEqualTo("UNKNOWN_EVENT_NAME");
-        verifyNoInteractions(eventLogWriter);
+        verify(eventLogWriter, never()).write(any(), any());
+    }
+
+    @Test
+    @DisplayName("#326 — 거부된 이벤트는 원본 payload가 index·reason과 함께 rejected 전용 로거로 넘어간다")
+    void ingest_rejectedEvent_writesToRejectedLogger() {
+        when(eventWhitelist.isKnownEvent("chat_message_sent")).thenReturn(false);
+        EventEnvelope event = validEvent("e1");
+
+        eventIngestService.ingest(List.of(event), "req-1");
+
+        verify(eventLogWriter).writeRejected(event, 0, "UNKNOWN_EVENT_NAME", "req-1");
     }
 
     @Test

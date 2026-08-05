@@ -113,4 +113,22 @@ class EventWhitelistTest {
     void isValidPropertyValue_enumField_rejectsNonStringCoercion() {
         assertThat(whitelist.isValidPropertyValue("profile_submitted", "gender", true)).isFalse();
     }
+
+    @Test
+    @DisplayName("#326 — 카탈로그에 있는 키는 known으로 판정한다")
+    void isKnownProperty_catalogued_returnsTrue() {
+        assertThat(whitelist.isKnownProperty("chat_message_sent", "message_index")).isTrue();
+    }
+
+    @Test
+    @DisplayName("#326 — 카탈로그에 없는 키는 unknown으로 판정한다 (값 도메인과 무관)")
+    void isKnownProperty_uncatalogued_returnsFalse() {
+        assertThat(whitelist.isKnownProperty("profile_submitted", "totally_made_up_key")).isFalse();
+    }
+
+    @Test
+    @DisplayName("#326 — 모르는 이벤트의 프로퍼티는 항상 unknown이다")
+    void isKnownProperty_unknownEvent_returnsFalse() {
+        assertThat(whitelist.isKnownProperty("totally_made_up_event", "message_index")).isFalse();
+    }
 }
