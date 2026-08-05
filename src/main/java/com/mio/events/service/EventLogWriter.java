@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Set;
 
 /**
  * 전용 로거 "journey-events"에 순수 JSON 한 줄을 남긴다 — logback-spring.xml에서
@@ -30,11 +29,12 @@ public class EventLogWriter {
     private final ObjectMapper objectMapper;
 
     public void write(EventEnvelope event, String requestId) {
-        Set<String> allowedKeys = eventWhitelist.allowedProperties(event.eventName());
+        // #320 — 키만 보면 enum 자리에 자유 문자열이 실려도 통과했다(예: employment_status).
+        // 값이 도메인 밖이면 그 property만 드롭한다 — 이벤트 자체는 통과시킨다.
         Map<String, Object> filteredProperties = new LinkedHashMap<>();
         if (event.properties() != null) {
             event.properties().forEach((key, value) -> {
-                if (allowedKeys.contains(key)) {
+                if (eventWhitelist.isValidPropertyValue(event.eventName(), key, value)) {
                     filteredProperties.put(key, value);
                 }
             });

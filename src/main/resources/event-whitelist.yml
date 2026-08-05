@@ -1,127 +1,143 @@
-# 강민석 "mio 이벤트 로그 명세 v3.4" §4 카탈로그 전체 반영 (이슈 #285).
+# 강민석 "mio 이벤트 로그 명세" §4 카탈로그 전체 반영 (이슈 #285, 개편 #320).
 # 이벤트 카탈로그가 바뀌면 이 파일만 고치면 된다 — 인프라/코드 변경 불필요.
-# 값이 빈 배열([])인 이벤트는 properties가 없거나 원문 위험 때문에 전부 거른다는 뜻이다.
+#
+# #320 개편: 키 목록이 아니라 "키 -> 값 도메인" 맵이다. 값이 도메인 밖이면 그 property만
+# 조용히 드롭한다(이벤트 자체는 통과) — 키만 검증하면 enum 자리에 자유 문자열이 실려도
+# 통과했다(예: employment_status). 도메인 종류:
+#   enum: [...]       -> 문자열이 목록 안에 있어야 함
+#   type: enum         -> id(빈 문자열 아닌 문자열), int(숫자), bool(true/false),
+#                          string(자유 문자열 — screen_name류 예외만 여기 씀)
+# properties가 없는 이벤트는 빈 맵으로 둔다(어떤 property를 보내도 전부 드롭됨).
 
 events:
   # §4-A 세션 백본
   app_session_started:
-    - entry_point
-    - is_first_session
-    - days_since_last_session
+    entry_point: {enum: [cold_start, push_notification, background_resume, deep_link]}
+    is_first_session: {type: bool}
+    days_since_last_session: {type: int}
   app_session_ended:
-    - last_screen
-    - duration_ms
-    - screen_count
+    last_screen: {type: string}
+    duration_ms: {type: int}
+    screen_count: {type: int}
   screen_viewed:
-    - screen_name
-    - referrer_screen
-  app_installed: []
+    screen_name: {type: string}
+    referrer_screen: {type: string}
+  app_installed: {}
 
   # §4-B 가입·온보딩 퍼널
   consent_agreed:
-    - consent_version
-    - marketing_agree
+    consent_version: {type: string}
+    marketing_agree: {type: bool}
+    sensitive_info_agreed: {type: bool}
   profile_submitted:
-    - age_range
-    - gender
-    - employment_status
-  signup_completed: []
+    age_range: {enum: ["10대", "20대", "30대", "40대+"]}
+    gender: {enum: [male, female, other]}
+    employment_status: {enum: [job_seeker, employed]}
+  signup_completed: {}
   onboarding_step_completed:
-    - step
-    - selected_emotion
-    - concern_types
-    - preferred_style
+    step: {type: int}
+    selected_emotion: {enum: [happy, calm, anxious, sad, angry, ashamed, numb, tired, confused]}
+    concern_types: {type: string}
+    preferred_style: {enum: [empathetic, analytical, solution, balanced]}
   onboarding_step_skipped:
-    - step
+    step: {type: int}
   character_selected:
-    - character_id
-  onboarding_completed: []
+    character_id: {enum: [mio, bau, rumi, momo, chichi]}
+    is_auto_assigned: {type: bool}
+  onboarding_completed: {}
+  push_permission_prompted:
+    trigger: {enum: [signup_flow, settings, re_prompt]}
+  push_permission_result:
+    granted: {type: bool}
+    trigger: {enum: [signup_flow, settings, re_prompt]}
   identify:
-    - previous_anonymous_id
-    - user_id
+    previous_anonymous_id: {type: string}
+    user_id: {type: id}
   login_succeeded:
-    - provider
+    provider: {enum: [kakao, apple]}
+    is_new_user: {type: bool}
+    is_new_device: {type: bool}
 
   # §4-C Core Action 5종 (최우선)
   checkin_completed:
-    - condition_score
-    - has_memo
-    - emotion_type
-    - time_of_day
+    condition_score: {type: int}
+    has_memo: {type: bool}
+    emotion_type: {enum: [happy, calm, anxious, sad, angry, ashamed, numb, tired, confused]}
+    time_of_day: {enum: [morning, afternoon, evening]}
   chat_message_sent:
-    - chat_session_id
-    - message_index
-    - char_count
-    - ai_emotion_score
-    - is_socratic
-    - cbt_intervention_state
-    - is_crisis_flagged
+    chat_session_id: {type: id}
+    message_index: {type: int}
+    char_count: {type: int}
+    ai_emotion_score: {type: int}
+    is_socratic: {type: bool}
+    cbt_intervention_state: {enum: [none, socratic_asked, followup_needed, completed]}
+    is_crisis_flagged: {type: bool}
   session_summary_viewed:
-    - chat_session_id
+    chat_session_id: {type: id}
   todo_checked_in:
-    - todo_id
-    - task_status
-    - chat_session_id
-    - emotion_before
-    - emotion_after
-    - emotion_delta
-    - has_feedback
-    - days_since_suggested
+    todo_id: {type: id}
+    task_status: {enum: [completed, partial_completed, skipped, expired]}
+    chat_session_id: {type: id}
+    emotion_before: {type: int}
+    emotion_after: {type: int}
+    emotion_delta: {type: int}
+    has_feedback: {type: bool}
+    days_since_suggested: {type: int}
   report_viewed:
-    - period
+    period: {enum: [weekly, monthly]}
 
-  # §4-D 대화 세션 부속 (session_summarized·todo_suggested는 서버 발행, 이번 이슈 범위 밖)
+  # §4-D 대화 세션 부속 (session_summarized·todo_suggested는 서버 발행)
   session_summarized:
-    - chat_session_id
-    - duration_seconds
-    - message_count
-    - bias_types_detected
-    - socratic_count
-    - problem_type
-    - classifier_version
-    - dominant_emotion
-    - cbt_intervened
-    - avg_emotion_score
-    - todo_suggested_count
+    chat_session_id: {type: id}
+    duration_seconds: {type: int}
+    message_count: {type: int}
+    bias_types_detected: {type: string}
+    socratic_count: {type: int}
+    problem_type: {enum: [loneliness, burnout, fear, comparison, other]}
+    classifier_version: {type: string}
+    dominant_emotion: {enum: [happy, calm, anxious, sad, angry, ashamed, numb, tired, confused]}
+    cbt_intervened: {type: bool}
+    avg_emotion_score: {type: int}
+    todo_suggested_count: {type: int}
   todo_suggested:
-    - chat_session_id
-    - count
-    - categories
-    - difficulty_avg
+    chat_session_id: {type: id}
+    count: {type: int}
+    categories: {type: string}
+    difficulty_avg: {type: int}
   chat_session_created:
-    - chat_session_id
+    chat_session_id: {type: id}
   chat_session_ended:
-    - duration_ms
-    - message_count
-    - chat_session_id
-    - completion_reason
-    - socratic_count
+    duration_ms: {type: int}
+    message_count: {type: int}
+    chat_session_id: {type: id}
+    completion_reason: {enum: [user_reframed_thought, user_declined, max_questions_reached, stabilized, not_applicable]}
+    socratic_count: {type: int}
   emotion_score_recorded:
-    - score
-    - chat_session_id
-    - reconstruction_id
-    - score_before
-    - score_delta
+    score: {type: int}
+    chat_session_id: {type: id}
+    reconstruction_id: {type: id}
+    score_before: {type: int}
+    score_delta: {type: int}
 
   # §4-E 알림·보조 기능
   notification_opened:
-    - notification_type
-  account_withdrawn: []
-  logout: []
-  checkin_started: []
-  checkin_updated: []
+    notification_type: {enum: [checkin_reminder_morning, checkin_reminder_afternoon, checkin_reminder_evening, todo_incomplete, negative_emotion_streak, report_weekly, crisis_detected]}
+  account_withdrawn: {}
+  logout: {}
+  checkin_started: {}
+  checkin_updated: {}
   todo_list_viewed:
-    - todo_count
+    todo_count: {type: int}
   emotion_trend_viewed:
-    - period
-    - days
-  daily_test_viewed: []
+    period: {enum: [week, month, all]}
+    days: {type: int}
+  daily_test_viewed: {}
   daily_test_answered:
-    - test_id
+    test_id: {type: id}
   notification_settings_changed:
-    - setting_key
-    - enabled
+    setting_key: {enum: [checkin_enabled, checkin_time, character_enabled, report_enabled]}
+    enabled: {type: bool}
   character_changed:
-    - from_id
-    - to_id
-  crisis_flow_triggered: []
+    from_id: {enum: [mio, bau, rumi, momo, chichi]}
+    to_id: {enum: [mio, bau, rumi, momo, chichi]}
+  crisis_flow_triggered: {}

@@ -279,6 +279,33 @@ class AuthServiceTest {
                         .isEqualTo(ErrorCode.NICKNAME_DUPLICATE));
     }
 
+    @Test
+    @DisplayName("#320 — employment_status가 job_seeker/employed 외 값이면 INVALID_INPUT을 던진다")
+    void completeSignup_invalidEmploymentStatus_throwsInvalidInput() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.CONSENT_AGREED, "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNickname("닉네임")).thenReturn(false);
+        SignupCompleteRequest request = new SignupCompleteRequest("닉네임", "20대", "male", "JOB_SEEKER");
+
+        assertThatThrownBy(() -> authService.completeSignup(USER_ID, request))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.INVALID_INPUT));
+    }
+
+    @Test
+    @DisplayName("#320 — employment_status가 없으면(선택 필드) 그대로 통과한다")
+    void completeSignup_nullEmploymentStatus_succeeds() {
+        User user = buildUser(USER_ID, "kakao", "social-123", SignupStep.CONSENT_AGREED, "PENDING");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNickname("닉네임")).thenReturn(false);
+        SignupCompleteRequest request = new SignupCompleteRequest("닉네임", "20대", "male", null);
+
+        SignupCompleteResponse response = authService.completeSignup(USER_ID, request);
+
+        assertThat(response.nickname()).isEqualTo("닉네임");
+    }
+
     // ──────────────── checkNicknameDuplicate ────────────────
 
     @Test
