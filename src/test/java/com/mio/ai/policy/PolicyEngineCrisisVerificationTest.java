@@ -2,6 +2,7 @@ package com.mio.ai.policy;
 
 import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.crisis.CrisisTrigger;
+import com.mio.ai.judge.CrisisAttribution;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
@@ -136,6 +137,88 @@ class PolicyEngineCrisisVerificationTest {
 
         assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
         assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+    }
+
+    // ── 위기 어휘의 귀속 판정 (이슈 #297) ────────────────────────────
+
+    private InputJudgeResult judged(RiskLevel riskLevel, CrisisAttribution attribution) {
+        return new InputJudgeResult(
+                SecurityVerdict.clean(),
+                new RiskVerdict(riskLevel, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false, attribution),
+                0.8);
+    }
+
+    @Test
+    @DisplayName("타인의 위기로 판정되면 MEDIUM이어도 위기를 해제한다")
+    void thirdPartyAttributionClearsCrisis() {
+        var decision = policyEngine.decide(
+                unverified(), judged(RiskLevel.MEDIUM, CrisisAttribution.THIRD_PARTY), null, null);
+
+        assertThat(decision.action())
+                .as("친구를 걱정해 온 사용자에게 본인 위기 개입을 하면 안 된다")
+                .isEqualTo(DecisionAction.GENERATE);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.MEDIUM);
+    }
+
+    @Test
+    @DisplayName("인용·과거 경험 판정도 위기를 해제한다")
+    void quotedAndPastAttributionClearCrisis() {
+        assertThat(policyEngine.decide(unverified(),
+                judged(RiskLevel.MEDIUM, CrisisAttribution.QUOTED), null, null).action())
+                .isEqualTo(DecisionAction.GENERATE);
+        assertThat(policyEngine.decide(unverified(),
+                judged(RiskLevel.MEDIUM, CrisisAttribution.SELF_PAST), null, null).action())
+                .isEqualTo(DecisionAction.GENERATE);
+    }
+
+    @Test
+    @DisplayName("화자 본인의 현재 위기로 판정되면 저위험 판정이어도 위기를 유지한다")
+    void selfCurrentAttributionKeepsCrisisEvenWhenRiskIsLow() {
+        var decision = policyEngine.decide(
+                unverified(), judged(RiskLevel.LOW, CrisisAttribution.SELF_CURRENT), null, null);
+
+        assertThat(decision.action())
+                .as("귀속이 본인이면 위험도 하향만으로 위기를 풀 수 없다")
+                .isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.riskLevel()).isEqualTo(RiskLevel.HARD_CRISIS);
+    }
+
+    @Test
+    @DisplayName("귀속 판정이 없으면 기존 위험도 기준을 그대로 쓴다")
+    void missingAttributionFallsBackToRiskLevel() {
+        assertThat(policyEngine.decide(unverified(), judged(RiskLevel.LOW, null), null, null).action())
+                .as("귀속 필드를 못 받아도 기존 동작이 좁아지면 안 된다")
+                .isEqualTo(DecisionAction.GENERATE);
+        assertThat(policyEngine.decide(unverified(), judged(RiskLevel.MEDIUM, null), null, null).action())
+                .as("판정 부재는 해제 근거가 아니다")
+                .isEqualTo(DecisionAction.CRISIS_FLOW);
+    }
+
+    @Test
+    @DisplayName("귀속 판정은 실패한 Judge에서는 해제 근거가 되지 못한다")
+    void attributionFromFailedJudgeCannotClearCrisis() {
+        InputJudgeResult incomplete = new InputJudgeResult(
+                null,
+                new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.NORMAL,
+                        DeliveryMode.SPECULATIVE, false, CrisisAttribution.THIRD_PARTY),
+                0.9);
+
+        var decision = policyEngine.decide(unverified(), incomplete, null, null);
+
+        assertThat(decision.action()).isEqualTo(DecisionAction.CRISIS_FLOW);
+        assertThat(decision.judgeStatus()).isEqualTo(JudgeStatus.FAILED);
+    }
+
+    @Test
+    @DisplayName("귀속이 NONE이어도 위험도가 MEDIUM 이상이면 위기를 유지한다")
+    void noneAttributionDoesNotOverrideRiskLevel() {
+        var decision = policyEngine.decide(
+                unverified(), judged(RiskLevel.MEDIUM, CrisisAttribution.NONE), null, null);
+
+        assertThat(decision.action())
+                .as("위기 어휘가 매칭된 발화에 대한 NONE은 비-자기 귀속의 적극적 근거가 아니다")
+                .isEqualTo(DecisionAction.CRISIS_FLOW);
     }
 
     @Test
