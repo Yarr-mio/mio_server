@@ -51,10 +51,14 @@ public class SessionController {
         response.setHeader("Cache-Control", "no-cache");
         UUID userId = resolveUserId(principal);
         sessionService.validateMessageRequest(userId, sessionId, idempotencyKey);
+        // 스트림을 열기 전에 세션 락을 잡는다 (이슈 #243). 스트림이 시작된 뒤에는 409 를 보낼 수
+        // 없어, 같은 세션에 요청이 겹친 사용자가 이유 없이 끊긴 스트림만 보게 된다.
+        String lockToken = sessionService.acquireTurnLock(sessionId, idempotencyKey);
         SseEmitter emitter = new SseEmitter(60_000L);
         emitter.onTimeout(emitter::complete);
         emitter.onError(error -> emitter.complete());
-        Thread.ofVirtual().start(() -> sessionService.streamMessage(userId, sessionId, request, emitter, idempotencyKey));
+        Thread.ofVirtual().start(() ->
+                sessionService.streamMessage(userId, sessionId, request, emitter, idempotencyKey, lockToken));
         return emitter;
     }
 

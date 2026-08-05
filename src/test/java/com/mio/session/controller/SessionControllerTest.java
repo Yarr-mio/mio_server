@@ -23,8 +23,12 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import org.mockito.InOrder;
 import java.util.UUID;
 
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
@@ -227,5 +231,37 @@ class SessionControllerTest {
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.error.code").value("SESSION_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/sessions/{id}/messages - 같은 세션이 처리 중이면 409 JSON 으로 알린다")
+    void sendMessage_sessionBusy_returnsConflictJson() throws Exception {
+        doThrow(new BusinessException(ErrorCode.SESSION_MESSAGE_IN_PROGRESS))
+                .when(sessionService).acquireTurnLock(eq(TEST_SESSION_ID), any());
+
+        mockMvc.perform(post("/v1/sessions/{sessionId}/messages", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new SendMessageRequest("안녕"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error.code").value("SESSION_MESSAGE_IN_PROGRESS"));
+    }
+
+    @Test
+    @DisplayName("POST /v1/sessions/{id}/messages - 락은 스트림을 열기 전에 잡는다")
+    void sendMessage_acquiresLockBeforeOpeningStream() throws Exception {
+        when(sessionService.acquireTurnLock(eq(TEST_SESSION_ID), any())).thenReturn("token");
+
+        mockMvc.perform(post("/v1/sessions/{sessionId}/messages", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new SendMessageRequest("안녕"))))
+                .andExpect(status().isOk());
+
+        // 스트림이 시작된 뒤에 잡으면 상태 코드를 바꿀 수 없어, 겹친 요청이 이유 없이 끊긴
+        // 스트림만 받게 된다. 순서를 고정한다.
+        InOrder inOrder = inOrder(sessionService);
+        inOrder.verify(sessionService).validateMessageRequest(eq(TEST_USER_ID), eq(TEST_SESSION_ID), any());
+        inOrder.verify(sessionService).acquireTurnLock(eq(TEST_SESSION_ID), any());
     }
 }
