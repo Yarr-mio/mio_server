@@ -414,9 +414,9 @@ class PolicyEngineTest {
     }
 
     @Test
-    @DisplayName("가드 요구가 없으면 기존대로 SPECULATIVE 를 유지한다")
-    void noGuardRequestKeepsSpeculative() {
-        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, true, false);
+    @DisplayName("아무 신호도 없던 턴은 기존대로 SPECULATIVE 를 유지한다")
+    void noSignalTurnKeepsSpeculative() {
+        CombinedSignal combined = combined(SecurityLevel.CLEAN, false, false, false);
         InputJudgeResult judge = new InputJudgeResult(
                 new SecurityVerdict(SecurityLevel.CLEAN, List.of(), false),
                 new RiskVerdict(RiskLevel.LOW, List.of(), GenerationMode.NORMAL,
@@ -429,6 +429,76 @@ class PolicyEngineTest {
                 .as("가드 승격이 남발되면 모든 턴이 느려진다")
                 .isEqualTo(DeliveryMode.SPECULATIVE);
         assertThat(decision.requireOutputGuard()).isFalse();
+    }
+
+    // === 룰의 위험 승격은 Judge 하향 판정에도 남는다 (이슈 #298) ===
+
+    /** 룰이 위험 후보로 보고 Judge 호출을 요구한 상태 — 실제 결합부가 만드는 조합이다. */
+    private CombinedSignal ruleEscalated() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, true, false, false, false, false, List.of("risk_keyword"), 0.5);
+        return new CombinedSignal(
+                SecurityLevel.CLEAN, false, true, false, false, false, false, true, l1, 0.5);
+    }
+
+    @Test
+    @DisplayName("룰이 위험 후보로 올린 턴은 Judge 가 LOW 로 내려도 무검사로 나가지 않는다")
+    void ruleEscalatedTurnNeverEndsUnguardedAfterJudgeDowngrade() {
+        CombinedSignal combined = ruleEscalated();
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.LOW), null, null);
+
+        assertThat(decision)
+                .as("계획·수단 발화처럼 단문만으로 판정이 어려운 턴이 무검사 스트리밍으로 끝났다")
+                .extracting(
+                        PolicyDecision::generationMode,
+                        PolicyDecision::deliveryMode,
+                        PolicyDecision::requireOutputGuard)
+                .containsExactly(
+                        GenerationMode.SUPPORTIVE,
+                        DeliveryMode.CAUTIOUS_SPECULATIVE,
+                        true);
+    }
+
+    @Test
+    @DisplayName("룰 승격 턴을 Judge 가 CLEAR_LOW 로 내려도 마찬가지다")
+    void ruleEscalatedTurnSurvivesClearLowJudgement() {
+        CombinedSignal combined = ruleEscalated();
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.CLEAR_LOW), null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+    }
+
+    @Test
+    @DisplayName("룰 승격이 위험 등급을 올리지는 않는다")
+    void ruleEscalationDoesNotInflateRiskLevel() {
+        CombinedSignal combined = ruleEscalated();
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.LOW), null, null);
+
+        assertThat(decision.riskLevel())
+                .as("전달 방식만 보수화하고 판정값은 Judge 의 것을 그대로 남긴다")
+                .isEqualTo(RiskLevel.LOW);
+    }
+
+    @Test
+    @DisplayName("의존 신호 단독 턴도 Judge 하향 판정 후 무검사로 나가지 않는다")
+    void dependencySignalTurnStaysGuarded() {
+        SafetyL1Result l1 = new SafetyL1Result(
+                false, false, false, false, true, false, List.of("dependency_phrase"), 0.0);
+        CombinedSignal combined = new CombinedSignal(
+                SecurityLevel.CLEAN, false, false, false, false, true,
+                false, true, l1, 0.0);
+
+        PolicyDecision decision =
+                policyEngine.decide(combined, judgeResult(RiskLevel.LOW), null, null);
+
+        assertThat(decision.deliveryMode()).isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
     }
 
     @Test

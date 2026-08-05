@@ -145,9 +145,9 @@ public class PolicyEngine {
 
             // 9. LOW → NORMAL + SPECULATIVE (Judge 가 가드를 요구하면 가드 경로로 올린다)
             if (riskLevel == RiskLevel.LOW) {
-                boolean guard = outputGuardRequired(judgeResult, moderationStatus);
+                boolean guard = outputGuardRequired(judgeResult, moderationStatus, combined);
                 return build(decisionId, DecisionAction.GENERATE,
-                        GenerationMode.NORMAL, deliveryFor(guard),
+                        generationModeFor(combined), deliveryFor(guard),
                         effectiveSecurity, true, true, guard,
                         generateHints(profile, riskLevel), RiskLevel.LOW, judgeStatus, moderationStatus);
             }
@@ -155,7 +155,7 @@ public class PolicyEngine {
 
         // 10. L1 약신호 단독 (Judge 생략)
         if (combined.repetitiveNegative() || combined.emotionSpike()) {
-            boolean guard = outputGuardRequired(judgeResult, moderationStatus);
+            boolean guard = outputGuardRequired(judgeResult, moderationStatus, combined);
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.SUPPORTIVE, deliveryFor(guard),
                     effectiveSecurity, true, true, guard,
@@ -163,9 +163,9 @@ public class PolicyEngine {
         }
 
         // 11. CLEAR_LOW (기본)
-        boolean guard = outputGuardRequired(judgeResult, moderationStatus);
+        boolean guard = outputGuardRequired(judgeResult, moderationStatus, combined);
         return build(decisionId, DecisionAction.GENERATE,
-                GenerationMode.NORMAL, deliveryFor(guard),
+                generationModeFor(combined), deliveryFor(guard),
                 effectiveSecurity, true, true, guard,
                 InterventionHints.empty(), RiskLevel.CLEAR_LOW, judgeStatus, moderationStatus);
     }
@@ -200,9 +200,31 @@ public class PolicyEngine {
      * 판정 부재는 위험의 근거가 아니라 확인 불가의 근거이기 때문이다.
      */
     private boolean outputGuardRequired(
-            InputJudgeResult judgeResult, ModerationStatus moderationStatus) {
+            InputJudgeResult judgeResult, ModerationStatus moderationStatus,
+            CombinedSignal combined) {
         return judgeRequiresOutputGuard(judgeResult)
-                || moderationStatus == ModerationStatus.UNRESOLVED;
+                || moderationStatus == ModerationStatus.UNRESOLVED
+                || ruleEscalated(combined);
+    }
+
+    /**
+     * 룰 레이어가 검증이 필요하다고 본 턴인지 (이슈 #298).
+     *
+     * <p>Judge 가 이 턴을 {@code LOW} 이하로 내리면 룰이 승격한 근거가 전달 정책에서 사라져,
+     * 아무 신호도 없던 턴과 같은 무검사 스트리밍으로 합류했다. 전체 경로 평가에서 위험 발화
+     * 25건이 이 경로로 끝났고 그중 계획·수단 4건이 포함됐다 — "주변 정리를 다 끝냈어요"처럼
+     * 단문만으로는 이사 준비와 구분되지 않는 문장들이다.
+     *
+     * <p>판정이 갈리는 턴을 정상 턴과 같은 속도로 흘려보내지 않는 것이 목적이다. 위험 등급은
+     * 올리지 않는다 — 룰의 승격은 위험의 확정이 아니라 확인이 필요하다는 신호다.
+     */
+    private boolean ruleEscalated(CombinedSignal combined) {
+        return combined != null && combined.requiresJudge();
+    }
+
+    /** 룰이 승격한 턴은 Judge 가 내려도 지지적 응답을 유지한다 (이슈 #298). */
+    private GenerationMode generationModeFor(CombinedSignal combined) {
+        return ruleEscalated(combined) ? GenerationMode.SUPPORTIVE : GenerationMode.NORMAL;
     }
 
     /**
