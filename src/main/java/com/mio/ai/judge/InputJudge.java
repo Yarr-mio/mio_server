@@ -38,6 +38,7 @@ public class InputJudge {
               "risk": {
                 "risk_level": "CLEAR_LOW|LOW|MEDIUM|HIGH",
                 "risk_types": [],
+                "crisis_attribution": "SELF_CURRENT|SELF_PAST|THIRD_PARTY|QUOTED|NONE",
                 "recommended_generation_mode": "NORMAL|SUPPORTIVE|GUARDED",
                 "recommended_delivery": "SPECULATIVE|CAUTIOUS_SPECULATIVE|BUFFER",
                 "require_output_safety_guard": false
@@ -52,6 +53,15 @@ public class InputJudge {
             - MEDIUM: clear emotional distress, dependency phrases, cognitive distortions without crisis signals. Use SUPPORTIVE + CAUTIOUS_SPECULATIVE.
             - LOW: mild negative mood, everyday worry or stress without clinical concern.
             - CLEAR_LOW: routine emotional sharing, no distress signals.
+
+            crisis_attribution answers a different question from risk_level: WHOSE crisis the
+            suicide/self-harm wording refers to. It never lowers risk_level.
+            - SELF_CURRENT: the speaker is expressing their own present ideation, urge or intent.
+            - SELF_PAST: the speaker describes their own past experience they have moved past or recovered from.
+            - THIRD_PARTY: the wording is about another person (friend, family, colleague), including asking how to help them.
+            - QUOTED: the wording is quoted or referenced material — lyrics, film, news, coursework, someone else's words.
+            - NONE: no suicide/self-harm wording refers to anyone's crisis (negation, idiom, unrelated meaning).
+            When you cannot tell whether it is SELF_CURRENT or another value, answer SELF_CURRENT.
 
             Be conservative: when in doubt, prefer MEDIUM over LOW, HIGH over MEDIUM for crisis-adjacent signals.
             Respond ONLY with valid JSON.
@@ -120,7 +130,9 @@ public class InputJudge {
         GenerationMode genMode = parseGenerationMode(riskNode.path("recommended_generation_mode").asText("NORMAL"));
         DeliveryMode delivery = parseDeliveryMode(riskNode.path("recommended_delivery").asText("SPECULATIVE"));
         boolean requireSafetyGuard = riskNode.path("require_output_safety_guard").asBoolean(true);
-        RiskVerdict risk = new RiskVerdict(riskLevel, riskTypes, genMode, delivery, requireSafetyGuard);
+        CrisisAttribution attribution = parseCrisisAttribution(riskNode.path("crisis_attribution"));
+        RiskVerdict risk = new RiskVerdict(
+                riskLevel, riskTypes, genMode, delivery, requireSafetyGuard, attribution);
 
         double confidence = root.path("confidence").asDouble(0.5);
 
@@ -156,6 +168,26 @@ public class InputJudge {
             };
         } catch (IllegalArgumentException e) {
             throw new IllegalStateException("InputJudge 가 알 수 없는 RiskLevel 을 반환했다: " + value, e);
+        }
+    }
+
+    /**
+     * 귀속 판정은 없거나 스키마 밖이면 {@code null} 이다.
+     *
+     * <p>{@link #parseRiskLevel} 과 달리 판정 실패로 올리지 않는다. 이 필드는 강등된 위기를
+     * <b>해제</b>하는 근거로만 쓰이므로, {@code null} 이면 기존 위험도 기준이 그대로 적용돼
+     * 위기가 유지된다 — 부재가 이미 보수적인 쪽이다. 반대로 여기서 예외를 던지면 필드 하나
+     * 누락이 판정 전체를 실패로 만들어 정상 대화까지 BUFFER 로 떨어뜨린다.
+     */
+    private CrisisAttribution parseCrisisAttribution(JsonNode node) {
+        if (node == null || !node.isTextual()) {
+            return null;
+        }
+        try {
+            return CrisisAttribution.valueOf(node.asText().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            log.warn("InputJudge 가 알 수 없는 crisis_attribution 을 반환했다: {}", node.asText());
+            return null;
         }
     }
 

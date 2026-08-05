@@ -1,6 +1,7 @@
 package com.mio.ai.policy;
 
 import com.mio.ai.crisis.CrisisTrigger;
+import com.mio.ai.judge.CrisisAttribution;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.memory.working.SessionDelta;
@@ -230,6 +231,11 @@ public class PolicyEngine {
      * {@code CLEAR_LOW}·{@code LOW}만 해제하고, {@code MEDIUM} 이상과 판정 부재·호출 실패,
      * 필수 verdict 누락은 모두 위기로 유지한다(fail-closed). 위기 해제도 다른 정책 분기와
      * 동일한 통합 {@link JudgeStatus} 계약을 사용해야 한다.
+     *
+     * <p>여기에 귀속 판정을 더한다(이슈 #297). 위험도는 "이 발화가 얼마나 위험한가"를 답하지만
+     * 이 게이트가 실제로 묻는 것은 "이 위기 어휘가 화자 자신의 것인가"다. 두 질문이 다르기
+     * 때문에 3인칭 걱정 발화가 위험 주제로 분류돼 위기로 확정됐다. 귀속이 명시적으로 타인·
+     * 인용·과거면 해제하고, 명시적으로 본인 현재면 위험도가 낮아도 유지한다.
      */
     private boolean crisisClearedByJudge(
             InputJudgeResult judgeResult, JudgeStatus judgeStatus) {
@@ -238,8 +244,27 @@ public class PolicyEngine {
                 || !hasUsableJudgeResult(judgeResult)) {
             return false;
         }
+        CrisisAttribution attribution = judgeResult.risk().crisisAttribution();
+        if (attribution == CrisisAttribution.SELF_CURRENT) {
+            // 화자 자신의 현재 위기라고 판정했으면 위험도가 낮아도 해제하지 않는다.
+            // 두 값이 어긋날 때 더 구체적인 쪽을 따른다.
+            return false;
+        }
+        if (isNonSelfAttribution(attribution)) {
+            // 위기 어휘가 타인·인용·과거 경험의 것이라고 명시적으로 판정한 경우다.
+            // 위험 주제라 모델이 위험도를 MEDIUM 이상으로 주더라도, 그 값 때문에 3인칭 걱정
+            // 발화가 본인 위기 개입을 받는 것이 이슈 #297 의 결함이었다.
+            return true;
+        }
         RiskLevel riskLevel = judgeResult.risk().riskLevel();
         return riskLevel == RiskLevel.CLEAR_LOW || riskLevel == RiskLevel.LOW;
+    }
+
+    /** 위기 어휘가 화자 자신의 현재 상태가 아니라고 판정된 경우 (이슈 #297). */
+    private boolean isNonSelfAttribution(CrisisAttribution attribution) {
+        return attribution == CrisisAttribution.THIRD_PARTY
+                || attribution == CrisisAttribution.QUOTED
+                || attribution == CrisisAttribution.SELF_PAST;
     }
 
     /**
