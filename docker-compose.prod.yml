@@ -20,7 +20,9 @@ services:
       options:
         awslogs-region: ap-northeast-2
         awslogs-group: /mio/app
-        awslogs-stream-prefix: app
+        # awslogs-stream-prefix: EC2(mio_backend)의 Docker 엔진이 "unknown log opt"로 거부해
+        # 컨테이너 생성 자체가 실패했다(#309, 2026-08-05 배포 장애) — 스트림 이름을 보기 좋게
+        # 만드는 optional 필드일 뿐이라 제거. 없어도 CloudWatch 전송 자체엔 영향 없음.
         # 로그 그룹이 미리 없으면 자동 생성 — 이미 있으면 무해한 no-op.
         # 보존기간(30일)은 aws logs put-retention-policy로 별도 설정 필요 (자동 생성 시 기본이 무기한 보관).
         awslogs-create-group: "true"
