@@ -25,15 +25,18 @@ import java.util.UUID;
 @Slf4j
 public class EmbeddingWorker {
 
+    /** 배치 최악 소요 = BATCH_SIZE × 임베딩 타임아웃(30초). {@link #RECLAIM_AFTER_MINUTES} 참고. */
     private static final int BATCH_SIZE = 20;
 
     /**
      * claim 후 이 시간이 지나도 결과가 기록되지 않으면 중단된 것으로 보고 회수한다.
      *
-     * <p>임베딩 API 호출은 초 단위로 끝난다. 10분은 느린 호출을 중단으로 오인하지 않으면서,
-     * 배포·크래시로 죽은 claim 을 다음 주기 안에 회수하기에 충분한 값이다.
+     * <p>값은 한 배치의 최악 소요 시간에서 잡는다. 배치는 순차 처리이고 임베딩 호출 타임아웃이
+     * 30초이므로 최악은 {@code BATCH_SIZE × 30초} 다. 이 값이 회수 기한보다 크면 <b>같은
+     * 인스턴스가 처리 중인 배치의 앞쪽 행이 회수 대상이 된다</b> — 죽지 않은 작업을 회수해
+     * 같은 요약을 두 번 임베딩하게 된다. 여유를 두어 그 상황 자체를 피한다.
      */
-    private static final int RECLAIM_AFTER_MINUTES = 10;
+    private static final int RECLAIM_AFTER_MINUTES = 30;
 
     /**
      * 시도 상한.
@@ -58,10 +61,17 @@ public class EmbeddingWorker {
         log.debug("EmbeddingWorker: processing {} claimed rows", rows.size());
 
         for (Map<String, Object> row : rows) {
-            UUID id = UUID.fromString(row.get("id").toString());
-            String summaryText = (String) row.get("summary_text");
-            int attempts = ((Number) row.get("embedding_attempts")).intValue();
-            embedOne(id, summaryText, attempts);
+            // 한 행의 값이 망가져도 배치 전체를 중단하지 않는다. 중단하면 이미 claim 한 나머지
+            // 행이 다음 회수 주기까지 processing 에 묶인다.
+            try {
+                UUID id = UUID.fromString(row.get("id").toString());
+                String summaryText = (String) row.get("summary_text");
+                int attempts = ((Number) row.get("embedding_attempts")).intValue();
+                Object claimToken = row.get("embedding_claimed_at");
+                embedOne(id, summaryText, attempts, claimToken);
+            } catch (Exception e) {
+                log.error("EmbeddingWorker: malformed claimed row, skipping: {}", row.get("id"), e);
+            }
         }
     }
 
@@ -90,7 +100,7 @@ public class EmbeddingWorker {
                     LIMIT ?
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, summary_text, embedding_attempts
+                RETURNING id, summary_text, embedding_attempts, embedding_claimed_at
                 """,
                 MAX_ATTEMPTS, RECLAIM_AFTER_MINUTES, BATCH_SIZE
         );
@@ -115,11 +125,11 @@ public class EmbeddingWorker {
         );
     }
 
-    private void embedOne(UUID summaryId, String summaryText, int attempts) {
+    private void embedOne(UUID summaryId, String summaryText, int attempts, Object claimToken) {
         if (summaryText == null || summaryText.isBlank()) {
             // 재시도해도 결과가 달라지지 않는다. 상한을 기다리지 않고 바로 확정한다.
             log.warn("EmbeddingWorker: summaryText is null or blank for summaryId={}, marking failed", summaryId);
-            markStatus(summaryId, "failed");
+            markStatus(summaryId, "failed", claimToken);
             return;
         }
         try {
@@ -133,11 +143,12 @@ public class EmbeddingWorker {
                         embedding_status = 'done'
                     WHERE id = ?
                       AND embedding_status = 'processing'
+                      AND embedding_claimed_at = ?
                     """,
-                    vectorLiteral, summaryId
+                    vectorLiteral, summaryId, claimToken
             );
             if (updated == 0) {
-                log.debug("EmbeddingWorker: summaryId={} already processed by another instance, skipping", summaryId);
+                log.debug("EmbeddingWorker: summaryId={} was reclaimed by another worker, discarding result", summaryId);
             } else {
                 log.debug("EmbeddingWorker: embedded summaryId={}", summaryId);
             }
@@ -147,20 +158,37 @@ public class EmbeddingWorker {
             if (attempts < MAX_ATTEMPTS) {
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, will retry",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "pending");
+                markStatus(summaryId, "pending", claimToken);
             } else {
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, marking failed",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "failed");
+                markStatus(summaryId, "failed", claimToken);
             }
         }
     }
 
-    /** claim 을 잡고 있는 동안에만 상태를 바꾼다 — 다른 인스턴스가 회수해 간 행을 덮지 않는다. */
-    private void markStatus(UUID summaryId, String status) {
+    /**
+     * 내 claim 이 아직 유효할 때만 상태를 바꾼다.
+     *
+     * <p>{@code status = 'processing'} 조건만으로는 부족하다. 내 호출이 늦어져 다른 워커가
+     * 회수해 새로 처리 중이어도 상태는 여전히 {@code processing} 이라, 늦게 끝난 내 결과가
+     * 남의 작업을 덮어쓴다 — 이미 완료된 임베딩이 {@code pending} 으로 되돌아갈 수 있다.
+     * claim 시각을 펜싱 토큰으로 써서 내 claim 이 살아 있을 때만 쓴다.
+     *
+     * <p>재시도로 되돌릴 때는 claim 시각을 비운다. 그러지 않으면 {@code pending} 행에 오래된
+     * claim 시각이 남아 대시보드에서 "처리 중"으로 오해된다.
+     */
+    private void markStatus(UUID summaryId, String status, Object claimToken) {
         jdbcTemplate.update(
-                "UPDATE session_summaries SET embedding_status = ? WHERE id = ? AND embedding_status = 'processing'",
-                status, summaryId
+                """
+                UPDATE session_summaries
+                SET embedding_status = ?,
+                    embedding_claimed_at = CASE WHEN ? = 'pending' THEN NULL ELSE embedding_claimed_at END
+                WHERE id = ?
+                  AND embedding_status = 'processing'
+                  AND embedding_claimed_at = ?
+                """,
+                status, status, summaryId, claimToken
         );
     }
 

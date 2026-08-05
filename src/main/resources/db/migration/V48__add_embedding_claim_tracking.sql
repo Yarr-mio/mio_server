@@ -23,4 +23,4 @@ CREATE INDEX idx_session_summaries_embedding_claim
 COMMENT ON COLUMN session_summaries.embedding_claimed_at IS
     'When the row was last claimed by EmbeddingWorker. Used to reclaim rows stuck in processing after a crash.';
 COMMENT ON COLUMN session_summaries.embedding_attempts IS
-    'How many times embedding has been attempted. Caps retries so a permanently failing row does not loop forever.';
+    'How many times embedding has been attempted. Caps retries so a permanently failing row does not loop forever. To requeue a failed row manually you must also reset this to 0 - the worker skips rows at or above the cap regardless of status.';
