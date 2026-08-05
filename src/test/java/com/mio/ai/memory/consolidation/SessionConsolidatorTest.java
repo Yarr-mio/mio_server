@@ -50,6 +50,7 @@ class SessionConsolidatorTest {
     private SessionRepository sessionRepository;
     private TodoRecommendationService todoRecommendationService;
     private SummaryStatusWriter summaryStatusWriter;
+    private CrisisEpisodePromoter crisisEpisodePromoter;
     private ObjectProvider<SessionConsolidator> self;
 
     private SessionConsolidator newConsolidator() {
@@ -62,6 +63,7 @@ class SessionConsolidatorTest {
         sessionRepository = mock(SessionRepository.class);
         todoRecommendationService = mock(TodoRecommendationService.class);
         summaryStatusWriter = mock(SummaryStatusWriter.class);
+        crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
         when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
@@ -87,7 +89,7 @@ class SessionConsolidatorTest {
                 mock(OntologyValidator.class),
                 todoRecommendationService,
                 summaryStatusWriter,
-                mock(CrisisEpisodePromoter.class),
+                crisisEpisodePromoter,
                 selfProvider
         );
     }
@@ -110,8 +112,7 @@ class SessionConsolidatorTest {
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
-                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약"
-        );
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
         when(self.getObject()).thenReturn(proxy);
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
@@ -126,6 +127,9 @@ class SessionConsolidatorTest {
         inOrder.verify(summaryStatusWriter).markDone(sessionId);
         verify(sessionRepository, never()).updateSummaryStatus(sessionId, SummaryStatus.DONE);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+
+        // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
+        verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
     }
 
     @Test
@@ -136,8 +140,7 @@ class SessionConsolidatorTest {
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
-                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약"
-        );
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
         when(self.getObject()).thenReturn(proxy);
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))

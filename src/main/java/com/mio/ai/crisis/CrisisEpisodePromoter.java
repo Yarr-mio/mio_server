@@ -1,10 +1,15 @@
 package com.mio.ai.crisis;
 
 import com.mio.session.domain.Session;
+import com.mio.session.repository.SessionRepository;
 import com.mio.user.domain.User;
+import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+
+import java.util.UUID;
 
 /**
  * 세션 종료 후 ExtractorLLM 이 위기로 판정한 세션을 위기 이벤트로 승격한다 (이슈 #256).
@@ -18,7 +23,9 @@ import org.springframework.stereotype.Component;
  * 읽어 다음 세션의 임계값과 {@code force_judge} 를 정한다. 미탐이면 행이 생기지 않아 같은
  * 사용자가 같은 이유로 계속 미탐되는데, 이 승격이 그 고리를 끊는다.
  *
- * <p>추가 비용은 없다. ExtractorLLM 호출은 이미 세션마다 발생하고 그 결과를 읽기만 한다.
+ * <p><b>이 클래스는 예외를 밖으로 내보내지 않는다.</b> 호출부는 이미 커밋된 세션 요약 뒤에서
+ * 돌기 때문이다. 승격 경로의 DB 실패가 위로 전파되면 사용자가 LLM 비용을 치르고 받은 요약이
+ * 함께 사라진다 — 이슈 #219 에서 한 번 겪은 사고다.
  */
 @Component
 @RequiredArgsConstructor
@@ -35,26 +42,51 @@ public class CrisisEpisodePromoter {
      *
      * <p>실시간 위기 플로우는 발화 근거로 1~3을 가른다. 사후 승격은 그 근거가 없다 — 세션
      * 전체를 요약한 판정이라 즉시성과 계획 여부를 확인할 수 없다. 그래서 최고 등급은 쓰지
-     * 않고, 동시에 프로파일이 무시하지 않도록 최저 등급보다는 높게 둔다.
+     * 않는다. 반대로 1은 {@code SafetyProfileBuilder} 의 {@code crisisMax >= 2} 조건을
+     * 넘지 못해 {@code force_judge} 도 민감 임계값도 켜지지 않는다 — 승격의 목적이 사라진다.
      */
     private static final int PROMOTED_SEVERITY = 2;
 
     private final CrisisEventRepository crisisEventRepository;
     private final CrisisEventRecorder crisisEventRecorder;
+    private final UserRepository userRepository;
+    private final SessionRepository sessionRepository;
 
     /**
      * @param episodeType ExtractorLLM 이 판정한 세션 유형
-     * @return 이번 호출이 승격을 기록했는지. 이미 위기로 기록된 세션이면 {@code false}
+     * @return 이번 호출이 승격을 기록했는지. 이미 위기로 기록된 세션이거나 실패면 {@code false}
      */
-    public boolean promoteIfCrisis(User user, Session session, String episodeType) {
-        if (user == null || session == null || !CRISIS_EPISODE.equalsIgnoreCase(episodeType)) {
+    public boolean promoteIfCrisis(UUID userId, UUID sessionId, String episodeType) {
+        if (userId == null || sessionId == null || !CRISIS_EPISODE.equalsIgnoreCase(episodeType)) {
             return false;
         }
-        // 실시간 플로우가 이미 기록한 세션은 건너뛴다. 같은 위기를 두 번 세면 프로파일의
-        // 위기 빈도가 부풀고, 운영자 검토 큐에도 중복이 쌓인다.
-        if (crisisEventRepository.existsBySession_Id(session.getId())) {
-            log.debug("CrisisEpisodePromoter: sessionId={} already has a crisis event, skipping",
-                    session.getId());
+        try {
+            return promote(userId, sessionId);
+        } catch (DataIntegrityViolationException e) {
+            // 같은 세션에 대한 승격이 동시에 두 번 들어온 경우다. DB 의 부분 유니크 인덱스가
+            // 두 번째를 막았으므로 이미 목적은 달성됐다.
+            log.debug("CrisisEpisodePromoter: sessionId={} already promoted concurrently", sessionId);
+            return false;
+        } catch (Exception e) {
+            // 여기서 던지면 이미 커밋된 요약 뒤의 후처리가 실패로 기록된다. 승격은 사후
+            // 안전망이므로 실패해도 요약과 나머지 후처리를 막지 않는다.
+            log.error("CrisisEpisodePromoter: promotion failed sessionId={}", sessionId, e);
+            return false;
+        }
+    }
+
+    private boolean promote(UUID userId, UUID sessionId) {
+        // 실시간 플로우가 이미 기록한 세션은 건너뛴다. 같은 위기를 두 번 기록하면 운영자
+        // 검토 큐에 중복이 쌓이고, 사후 승격인지 실시간 감지인지 구분이 흐려진다.
+        if (crisisEventRepository.existsBySession_Id(sessionId)) {
+            log.debug("CrisisEpisodePromoter: sessionId={} already has a crisis event, skipping", sessionId);
+            return false;
+        }
+
+        User user = userRepository.findById(userId).orElse(null);
+        Session session = sessionRepository.findById(sessionId).orElse(null);
+        if (user == null || session == null) {
+            log.warn("CrisisEpisodePromoter: user or session not found userId={} sessionId={}", userId, sessionId);
             return false;
         }
 
@@ -62,10 +94,9 @@ public class CrisisEpisodePromoter {
         if (recorded) {
             // 실시간 하네스가 놓친 위기다. 사람이 볼 수 있게 경고로 남긴다.
             log.warn("CrisisEpisodePromoter: promoted missed crisis sessionId={} severity={}",
-                    session.getId(), PROMOTED_SEVERITY);
+                    sessionId, PROMOTED_SEVERITY);
         } else {
-            log.error("CrisisEpisodePromoter: failed to record promoted crisis sessionId={}",
-                    session.getId());
+            log.error("CrisisEpisodePromoter: failed to record promoted crisis sessionId={}", sessionId);
         }
         return recorded;
     }

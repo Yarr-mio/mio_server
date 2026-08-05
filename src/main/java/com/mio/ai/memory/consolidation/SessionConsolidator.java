@@ -136,6 +136,18 @@ public class SessionConsolidator {
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
         // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
         if (enrichInput != null) {
+            // 실시간 하네스가 놓친 위기를 사후 승격한다 (이슈 #256).
+            // 요약 트랜잭션이 커밋된 뒤 best-effort 로 실행한다 — 승격 경로의 실패가 이미 성공한
+            // 요약을 롤백시키면, 사용자는 LLM 비용을 치른 요약을 영구히 받지 못한다 (이슈 #219와
+            // 같은 계열의 사고다).
+            try {
+                crisisEpisodePromoter.promoteIfCrisis(
+                        enrichInput.userId(), enrichInput.sessionId(), enrichInput.episodeType());
+            } catch (Exception e) {
+                log.error("SessionConsolidator: crisis promotion failed but summary preserved sessionId={}",
+                        event.sessionId(), e);
+            }
+
             try {
                 self.getObject().enrichMemory(enrichInput);
             } catch (Exception e) {
@@ -243,12 +255,9 @@ public class SessionConsolidator {
         log.info("SessionConsolidator: summary persisted sessionId={} episodeType={} cbtIntervened={} thoughts={} emotion={}",
                 sessionId, extracted.episodeType(), cbtIntervened, validThoughts.size(), dominantEmotion);
 
-        // ExtractorLLM 이 위기로 판정했는데 실시간 하네스가 놓친 세션을 사후 승격한다 (이슈 #256).
-        // 요약 영속화가 끝난 뒤에 한다 — 승격이 실패해도 요약은 남아야 한다.
-        crisisEpisodePromoter.promoteIfCrisis(user, session, extracted.episodeType());
 
         return new EnrichmentInput(userId, sessionId, validThoughts, dominantEmotion, distortionCodes,
-                extracted.triggerTags(), summaryText);
+                extracted.triggerTags(), summaryText, extracted.episodeType());
     }
 
     /**
@@ -293,7 +302,8 @@ public class SessionConsolidator {
             String dominantEmotion,
             List<String> distortionCodes,
             List<String> triggerTags,
-            String summaryText
+            String summaryText,
+            String episodeType
     ) {}
 
     // ── 대화 컨텍스트 구성 ────────────────────────────────────────
