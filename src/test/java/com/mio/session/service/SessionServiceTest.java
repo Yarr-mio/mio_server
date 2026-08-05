@@ -284,10 +284,25 @@ class SessionServiceTest {
         UUID sessionId = UUID.randomUUID();
         when(sessionMessageLock.tryAcquire(sessionId)).thenReturn(null);
 
-        assertThatThrownBy(() -> sessionService.acquireTurnLock(sessionId))
+        assertThatThrownBy(() -> sessionService.acquireTurnLock(sessionId, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("errorCode")
                 .isEqualTo(ErrorCode.SESSION_MESSAGE_IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("acquireTurnLock: 완료된 턴의 재생 요청은 락을 잡지 않는다")
+    void acquireTurnLock_completedTurnReplay_skipsLock() {
+        UUID sessionId = UUID.randomUUID();
+        MessageTurn completed = mock(MessageTurn.class);
+        when(completed.getStatus()).thenReturn(TurnStatus.COMPLETED);
+        when(sessionMessagePersistenceService.findTurn(sessionId, "key-1"))
+                .thenReturn(Optional.of(completed));
+
+        assertThat(sessionService.acquireTurnLock(sessionId, "key-1"))
+                .as("저장된 응답을 다시 보낼 뿐이라 직렬화가 필요 없다 — 여기서 409 를 주면 재접속한 클라이언트가 자기 응답을 못 받는다")
+                .isNull();
+        verify(sessionMessageLock, never()).tryAcquire(any());
     }
 
     @Test
