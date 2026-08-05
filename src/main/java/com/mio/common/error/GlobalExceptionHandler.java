@@ -2,6 +2,7 @@ package com.mio.common.error;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -16,6 +17,20 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /**
+     * 이슈 #328 — 이벤트 배치 rate limit만 Retry-After 헤더를 붙인다. 아래 공용
+     * BusinessException 핸들러보다 서브타입이라 우선 매칭된다 — 체크인/세션 메시지의
+     * 429 응답 형태는 그대로 유지된다.
+     */
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ErrorResponse> handleRateLimitExceeded(
+            RateLimitExceededException e, HttpServletRequest request) {
+        return ResponseEntity
+                .status(ErrorCode.RATE_LIMIT_EXCEEDED.getHttpStatus())
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+                .body(ErrorResponse.of(ErrorCode.RATE_LIMIT_EXCEEDED, getTraceId(request)));
+    }
 
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ErrorResponse> handleBusinessException(
