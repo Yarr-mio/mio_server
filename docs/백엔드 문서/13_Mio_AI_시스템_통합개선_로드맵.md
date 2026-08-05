@@ -1070,13 +1070,27 @@ P0-3의 초기 범위는 `EMPATHIC_REFLECTION`, `EMOTION_CHECK`, `CLARIFY_CONTEX
 
 - `ai_policy_decisions.response_act` 집계 컬럼(V47)
 - trace의 `response_act`, `generation_freedom`, `contract_result`, `contract_violations`
-- `contract_result`는 `PASS`/`VIOLATED`/`NOT_APPLICABLE`을 구분한다 — 계획 밖 턴을 준수로
-  세면 준수율이 실제보다 높아 보인다
+- `contract_result`는 `PASS`/`VIOLATED`/`NOT_APPLICABLE`/`UNCHECKED`를 구분한다. 계획 밖
+  턴을 준수로 세면 준수율이 높아 보이고, 검사 지점이 없는 전달 경로(`SPECULATIVE`)를 통과로
+  세면 검사하지 못했다는 사실 자체가 사라진다
 
 계약 위반은 OutputJudge 승격 사유로만 쓴다(로드맵 §5.7). 완화 방향으로는 쓰지 않는다.
-전체 경로 평가에서 미탐 4건·위기 오탐 0건·HARD 확정률 81.6%로 안전 지표 회귀는 없다.
 
-남은 것은 자유도가 높은 행위(`SOCRATIC_QUESTION`, `REFRAME`)와 승인 단위 holdback(P0-4)이다.
+**§5.3 표와의 차이를 명시한다.** 표는 `EMPATHIC_REFLECTION`을 `SLOT_FILLING`,
+`EMOTION_CHECK`를 `TEMPLATE_ONLY`로 지정했지만, 구현은 셋 다 `CONSTRAINED`다. 즉 이번
+MVP는 자유도를 낮춰 **모델 호출을 줄이는** 효과는 아직 내지 않는다. 얻은 것은 "무조건
+Judge" 대신 "결정론적 계약 검사 후 필요할 때만 Judge"이며, 템플릿·슬롯 렌더링은 문구
+검토가 끝난 뒤에 옮긴다.
+
+**검증 범위도 정확히 적는다.** 전체 경로 평가에서 미탐 4건·위기 오탐 0건이고 HARD 위기
+확정률은 아카이브 기준 80.3%(실행 간 변동 80.3~81.6%)로 안전 지표 회귀는 없다. 다만 이
+평가는 위기 라우팅을 재는 것이고, `ResponsePlanner`·`ResponseContractValidator`는 구조적으로
+`riskLevel`·`deliveryMode`를 바꾸지 못하므로 **여기서 회귀가 없는 것은 거의 정의상 당연하다.**
+계약 코드 경로 자체의 성능 — 응답 행위별 위반률, 프롬프트 지시의 효과, 응답 품질 영향 —
+은 아직 측정되지 않았고 이슈 `#305`로 분리했다.
+
+남은 것은 자유도가 높은 행위(`SOCRATIC_QUESTION`, `REFRAME`), 승인 단위 holdback(P0-4),
+계약 준수율 실측(`#305`)이다.
 
 ### P1 — 정책·메모리·검색의 의미 정합성
 
