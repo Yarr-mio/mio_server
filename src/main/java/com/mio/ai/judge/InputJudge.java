@@ -22,6 +22,9 @@ import java.util.List;
 public class InputJudge {
 
     private static final String JUDGE_MODEL = "gpt-4o-mini";
+    // JSON 판정 출력 상한. 예상 ~130 토큰이지만 여유를 크게 둔다 — JSON 은 잘리면 파싱이
+    // 통째로 실패하고, 그러면 안전 판정이 사라진다 (fallback CLEAR_LOW + failed).
+    private static final int JUDGE_MAX_COMPLETION_TOKENS = 500;
 
     private static final String SYSTEM_PROMPT = """
             You are a safety classifier for a mental health coaching app.
@@ -35,6 +38,7 @@ public class InputJudge {
               "risk": {
                 "risk_level": "CLEAR_LOW|LOW|MEDIUM|HIGH",
                 "risk_types": [],
+                "crisis_attribution": "SELF_CURRENT|SELF_PAST|THIRD_PARTY|QUOTED|NONE",
                 "recommended_generation_mode": "NORMAL|SUPPORTIVE|GUARDED",
                 "recommended_delivery": "SPECULATIVE|CAUTIOUS_SPECULATIVE|BUFFER",
                 "require_output_safety_guard": false
@@ -50,6 +54,15 @@ public class InputJudge {
             - LOW: mild negative mood, everyday worry or stress without clinical concern.
             - CLEAR_LOW: routine emotional sharing, no distress signals.
 
+            crisis_attribution answers a different question from risk_level: WHOSE crisis the
+            suicide/self-harm wording refers to. It never lowers risk_level.
+            - SELF_CURRENT: the speaker is expressing their own present ideation, urge or intent.
+            - SELF_PAST: the speaker describes their own past experience they have moved past or recovered from.
+            - THIRD_PARTY: the wording is about another person (friend, family, colleague), including asking how to help them.
+            - QUOTED: the wording is quoted or referenced material — lyrics, film, news, coursework, someone else's words.
+            - NONE: no suicide/self-harm wording refers to anyone's crisis (negation, idiom, unrelated meaning).
+            When you cannot tell whether it is SELF_CURRENT or another value, answer SELF_CURRENT.
+
             Be conservative: when in doubt, prefer MEDIUM over LOW, HIGH over MEDIUM for crisis-adjacent signals.
             Respond ONLY with valid JSON.
             """;
@@ -64,7 +77,8 @@ public class InputJudge {
     public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile) {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt);
+            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt)
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {
@@ -89,43 +103,91 @@ public class InputJudge {
         JsonNode root = objectMapper.readTree(json);
 
         JsonNode secNode = root.path("security");
-        SecurityLevel secLevel = parseSecurityLevel(
-                secNode.hasNonNull("level") ? secNode.path("level").asText() : "CLEAN");
+        // security.level 이 없으면 "안전함"이 아니라 "판정하지 못함"이다. 이 판정은 이제
+        // effectiveSecurity 결합에 실제로 쓰이므로(이슈 #262), CLEAN 으로 채우면 규칙이
+        // 의심한 입력을 Judge 가 "깨끗하다"고 복구해버린다 — 없는 근거로 등급을 낮추는 셈이다.
+        if (!secNode.hasNonNull("level")) {
+            throw new IllegalStateException("InputJudge 응답에 security.level 이 없다");
+        }
+        SecurityLevel secLevel = parseSecurityLevel(secNode.path("level").asText());
         List<String> attackTypes = new ArrayList<>();
         secNode.path("attack_types").forEach(n -> attackTypes.add(n.asText()));
-        boolean requireOutputSecGuard = secNode.path("require_output_security_guard").asBoolean(false);
+        // 가드 요구는 부재 시 켜는 쪽이 기본이다. 끄는 쪽을 기본으로 두면 필드 누락이
+        // 곧 가드 해제가 된다.
+        boolean requireOutputSecGuard = secNode.path("require_output_security_guard").asBoolean(true);
         SecurityVerdict security = new SecurityVerdict(secLevel, attackTypes, requireOutputSecGuard);
 
         JsonNode riskNode = root.path("risk");
-        RiskLevel riskLevel = parseRiskLevel(
-                riskNode.hasNonNull("risk_level") ? riskNode.path("risk_level").asText() : "CLEAR_LOW");
+        // risk_level 이 없으면 "위험 없음"이 아니라 "판정하지 못함"이다. 기본값 CLEAR_LOW 로 채우면
+        // 잘린 응답이 그대로 저위험 판정이 되어, 강등된 위기를 해제하는 신호로 쓰인다
+        // (PolicyEngine.crisisClearedByJudge). 판정 실패로 처리해 fail-closed 를 유지한다.
+        if (!riskNode.hasNonNull("risk_level")) {
+            throw new IllegalStateException("InputJudge 응답에 risk.risk_level 이 없다");
+        }
+        RiskLevel riskLevel = parseRiskLevel(riskNode.path("risk_level").asText());
         List<String> riskTypes = new ArrayList<>();
         riskNode.path("risk_types").forEach(n -> riskTypes.add(n.asText()));
         GenerationMode genMode = parseGenerationMode(riskNode.path("recommended_generation_mode").asText("NORMAL"));
         DeliveryMode delivery = parseDeliveryMode(riskNode.path("recommended_delivery").asText("SPECULATIVE"));
-        boolean requireSafetyGuard = riskNode.path("require_output_safety_guard").asBoolean(false);
-        RiskVerdict risk = new RiskVerdict(riskLevel, riskTypes, genMode, delivery, requireSafetyGuard);
+        boolean requireSafetyGuard = riskNode.path("require_output_safety_guard").asBoolean(true);
+        CrisisAttribution attribution = parseCrisisAttribution(riskNode.path("crisis_attribution"));
+        RiskVerdict risk = new RiskVerdict(
+                riskLevel, riskTypes, genMode, delivery, requireSafetyGuard, attribution);
 
         double confidence = root.path("confidence").asDouble(0.5);
 
         return new InputJudgeResult(security, risk, confidence);
     }
 
+    /**
+     * 알 수 없는 값을 CLEAN 으로 떨어뜨리지 않는다 ({@link #parseRiskLevel} 과 같은 이유).
+     *
+     * <p>이 판정은 {@code EffectiveSecurityResolver} 에서 규칙 판정과 결합된다. 스키마를 벗어난
+     * 값이 CLEAN 이 되면 규칙이 SUSPICIOUS 로 본 입력을 "Judge 가 깨끗하다고 했다"며 되돌린다.
+     * 판정 실패로 올려 규칙 판정이 유지되게 한다.
+     */
     private SecurityLevel parseSecurityLevel(String value) {
         try {
             return SecurityLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown SecurityLevel from LLM: {}, defaulting to CLEAN", value);
-            return SecurityLevel.CLEAN;
+            throw new IllegalStateException("InputJudge 가 알 수 없는 SecurityLevel 을 반환했다: " + value, e);
         }
     }
 
+    /**
+     * 알 수 없는 값을 CLEAR_LOW 로 떨어뜨리지 않는다. 그렇게 하면 모델이 스키마를 벗어난 값을
+     * 반환했을 때 "판정 불가"가 "위험 없음"으로 둔갑해 위기 해제 신호가 된다.
+     */
     private RiskLevel parseRiskLevel(String value) {
         try {
-            return RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+            RiskLevel parsed = RiskLevel.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+            return switch (parsed) {
+                case CLEAR_LOW, LOW, MEDIUM, HIGH -> parsed;
+                case HARD_CRISIS, ATTACK -> throw new IllegalStateException(
+                        "InputJudge risk 스키마 밖 RiskLevel 을 반환했다: " + value);
+            };
         } catch (IllegalArgumentException e) {
-            log.warn("Unknown RiskLevel from LLM: {}, defaulting to CLEAR_LOW", value);
-            return RiskLevel.CLEAR_LOW;
+            throw new IllegalStateException("InputJudge 가 알 수 없는 RiskLevel 을 반환했다: " + value, e);
+        }
+    }
+
+    /**
+     * 귀속 판정은 없거나 스키마 밖이면 {@code null} 이다.
+     *
+     * <p>{@link #parseRiskLevel} 과 달리 판정 실패로 올리지 않는다. 이 필드는 강등된 위기를
+     * <b>해제</b>하는 근거로만 쓰이므로, {@code null} 이면 기존 위험도 기준이 그대로 적용돼
+     * 위기가 유지된다 — 부재가 이미 보수적인 쪽이다. 반대로 여기서 예외를 던지면 필드 하나
+     * 누락이 판정 전체를 실패로 만들어 정상 대화까지 BUFFER 로 떨어뜨린다.
+     */
+    private CrisisAttribution parseCrisisAttribution(JsonNode node) {
+        if (node == null || !node.isTextual()) {
+            return null;
+        }
+        try {
+            return CrisisAttribution.valueOf(node.asText().toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            log.warn("InputJudge 가 알 수 없는 crisis_attribution 을 반환했다: {}", node.asText());
+            return null;
         }
     }
 

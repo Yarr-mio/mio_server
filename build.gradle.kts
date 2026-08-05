@@ -32,6 +32,10 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
+    // Metrics — Micrometer 카운터를 Prometheus 포맷으로 스크레이프 가능하게 만든다.
+    // 이 레지스트리가 없으면 코드가 기록하는 지표를 프로세스 밖에서 읽을 방법이 없다.
+    runtimeOnly("io.micrometer:micrometer-registry-prometheus")
+
     // Database
     runtimeOnly("org.postgresql:postgresql")
     implementation("org.flywaydb:flyway-database-postgresql")
@@ -65,8 +69,27 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+// 실 LLM API를 호출하는 테스트는 과금이 발생하므로 기본 실행에서 제외한다.
+// 포함하려면: ./gradlew test -PllmTests
+val runLlmTests = project.hasProperty("llmTests")
+
 tasks.withType<Test> {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if (!runLlmTests) {
+            excludeTags("llm-integration")
+        }
+    }
+
+    // 스케일 테스트 표본 수 조정: ./gradlew test -PllmTests -PllmScaleSample=1000
+    project.findProperty("llmScaleSample")?.let {
+        systemProperty("llm.scale.sample", it.toString())
+    }
+
+    // 평가 실행 아카이브 위치. 기본은 build/eval-runs (커밋 대상 아님).
+    // 기준선으로 저장소에 남길 실행만: ./gradlew test -PevalArchiveDir=docs/eval/runs
+    project.findProperty("evalArchiveDir")?.let {
+        systemProperty("mio.eval.archiveDir", it.toString())
+    }
 
     val envFile = rootProject.file(".env")
     if (envFile.exists()) {

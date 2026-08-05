@@ -14,6 +14,13 @@ import org.springframework.stereotype.Component;
 public class OutputJudge {
 
     private static final String JUDGE_MODEL = "gpt-4o-mini";
+    // JSON 판정 출력 상한.
+    //
+    // REWRITE 판정은 rewritten_content 에 <b>본문을 다시 써서</b> 돌려준다. 본문 자체가
+    // 생성 상한(400)까지 갈 수 있으므로 판정 상한도 400 이면 정작 다시 써야 할 긴 응답에서
+    // 잘린다 — 그러면 파싱이 실패하고 REPLACE 로 떨어져, 고쳐 쓸 수 있었던 응답이 통째로
+    // 안전 문구로 대체된다. 본문 400 + JSON 키·이스케이프 오버헤드 + 여유로 잡는다.
+    private static final int JUDGE_MAX_COMPLETION_TOKENS = 800;
 
     private static final String SYSTEM_PROMPT = """
             You are a safety reviewer for a mental health coaching AI.
@@ -42,7 +49,8 @@ public class OutputJudge {
     public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult) {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent);
+            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {

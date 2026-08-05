@@ -68,13 +68,22 @@ springdoc:
     disable-swagger-default-url: true
 
 management:
+  # 메인 포트(8080)와 분리한다. Nginx 는 8080 만 프록시하므로 관리 포트는 구조적으로
+  # 외부에서 도달할 수 없고, docker-compose.prod.yml 에도 publish 하지 않는다.
+  # 메인 포트에 노출하면 admin 롤이 없어 일반 로그인 사용자가 메트릭을 읽게 된다.
+  # 스크레이프: docker compose exec app curl -s localhost:9090/actuator/prometheus
+  server:
+    port: ${MANAGEMENT_PORT:9090}
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: when-authorized
+      show-details: always
+  metrics:
+    tags:
+      application: mio
 
 jwt:
   secret: ${JWT_SECRET}
@@ -109,7 +118,27 @@ notification:
 openai:
   api-key: ${OPENAI_API_KEY}
   base-url: https://api.openai.com
+  # 토큰 100만 개당 USD — OpenAI 가격표와 같은 단위라 값을 그대로 옮길 수 있다.
+  # 여기 없는 모델은 비용이 0 이 아니라 '미상'으로 기록되고 mio.llm.cost.unpriced 가 올라간다.
+  # 새 모델을 도입하면 여기에 단가를 같이 추가할 것.
+  pricing:
+    models:
+      "[gpt-4o]":
+        input: 2.50
+        output: 10.00
+      "[gpt-4o-mini]":
+        input: 0.15
+        output: 0.60
+      # 임베딩은 출력 토큰이 없다.
+      "[text-embedding-3-small]":
+        input: 0.02
+        output: 0.00
 
 logging:
   level:
     com.mio: INFO
+
+events:
+  # 성장분석 이벤트 전용 로그 파일 경로 (이슈 #285). prod는 docker-compose.prod.yml에서
+  # /var/log/mio/journey-events.jsonl로 덮어쓴다 — 강민석 인프라 명세 §1 EVENT_FILE 그대로.
+  log-file-path: ${EVENTS_LOG_FILE_PATH:./logs/journey-events.jsonl}

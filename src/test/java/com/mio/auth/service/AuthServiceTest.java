@@ -2,6 +2,7 @@ package com.mio.auth.service;
 
 import com.mio.auth.dto.*;
 import com.mio.auth.provider.SocialAuthProvider;
+import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.user.domain.SignupStep;
@@ -35,6 +36,7 @@ class AuthServiceTest {
     @Mock private UserDeviceRepository userDeviceRepository;
     @Mock private JwtTokenService jwtTokenService;
     @Mock private RefreshTokenService refreshTokenService;
+    @Mock private AuditLogService auditLogService;
 
     private AuthService authService;
 
@@ -49,7 +51,7 @@ class AuthServiceTest {
                 .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
-                userDeviceRepository, jwtTokenService, refreshTokenService
+                userDeviceRepository, jwtTokenService, refreshTokenService, auditLogService
         );
     }
 
@@ -67,7 +69,7 @@ class AuthServiceTest {
         when(userRepository.save(any())).thenReturn(savedUser);
         when(userDeviceRepository.findByUser_IdAndDeviceId(any(), any())).thenReturn(Optional.empty());
         when(userDeviceRepository.save(any())).thenReturn(mock(UserDevice.class));
-        when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean())).thenReturn("access-token");
+        when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean(), anyBoolean())).thenReturn("access-token");
         when(refreshTokenService.issue(any(), any(), any(), any())).thenReturn("mio_refresh_xxx");
 
         LoginResponse response = authService.login(new LoginRequest("kakao", null, "kakao-token", DEVICE_ID));
@@ -94,7 +96,7 @@ class AuthServiceTest {
         when(userRepository.findBySocialProviderAndSocialId("kakao", "social-123"))
                 .thenReturn(Optional.of(existingUser));
         when(userDeviceRepository.findByUser_IdAndDeviceId(any(), any())).thenReturn(Optional.of(mock(UserDevice.class)));
-        when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean())).thenReturn("access-token");
+        when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean(), anyBoolean())).thenReturn("access-token");
         when(refreshTokenService.issue(any(), any(), any(), any())).thenReturn("mio_refresh_xxx");
 
         LoginResponse response = authService.login(new LoginRequest("kakao", null, "kakao-token", DEVICE_ID));
@@ -321,6 +323,6 @@ class AuthServiceTest {
     }
 
     private SignupCompleteRequest buildCompleteRequest(String nickname) {
-        return new SignupCompleteRequest(nickname, "20대", "male");
+        return new SignupCompleteRequest(nickname, "20대", "male", "job_seeker");
     }
 }

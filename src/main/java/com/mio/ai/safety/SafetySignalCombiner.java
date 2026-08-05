@@ -20,7 +20,9 @@ public class SafetySignalCombiner {
 
         return new CombinedSignal(
                 security.level(),
+                security.attackKind(),
                 l1.hardCrisis(),
+                l1.hardCrisisUnverified(),
                 l1.riskCandidate(),
                 l1.emotionSpike(),
                 l1.repetitiveNegative(),
@@ -28,7 +30,10 @@ public class SafetySignalCombiner {
                 moderation.flagged(),
                 requiresJudge,
                 l1,
-                confidence
+                confidence,
+                security.unverifiableByJudge(),
+                // 판정을 못 받아온 L0 는 flagged=false 로 축약되면 정상 판정과 구분할 수 없다 (이슈 #294).
+                moderation.status()
         );
     }
 
@@ -47,7 +52,16 @@ public class SafetySignalCombiner {
             SafetyProfile profile) {
 
         if (l1.hardCrisis()) return false;
+        // ATTACK 은 성격과 무관하게 Judge 를 생략한다. 조작 시도는 거절로, 자해 질의는 위기
+        // 플로우로 확정되며(이슈 #260) 둘 다 판정 결과가 분기를 바꾸지 않기 때문이다.
         if (security.level() == SecurityLevel.ATTACK) return false;
+
+        // 0. 맥락 마커 또는 가시 구분자 우회로 검증 대기인 위기 후보는 반드시 Judge를 거친다
+        // (이슈 #255, #258).
+        // riskCandidate로도 걸리지만, 강등의 전제 조건이므로 명시적으로 둔다.
+        if (l1.hardCrisisUnverified()) {
+            return true;
+        }
 
         // §10.2 발동 조건
         // 1. riskCandidate (hardCrisis 아닌 위기 후보) — SafetyL1의 RISK_KEYWORDS 매칭 시

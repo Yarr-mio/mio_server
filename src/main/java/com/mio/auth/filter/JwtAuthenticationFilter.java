@@ -34,7 +34,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             "POST /v1/auth/login",
             "POST /v1/auth/refresh",
             "POST /v1/auth/dev/token",
-            "GET /actuator/health"
+            // actuator 는 관리 포트로 분리됐다. 8080 의 liveness 는 HealthController 가 담당한다.
+            "GET /health",
+            // 이슈 #285: 성장분석 이벤트 수집 API. SecurityConfig.PUBLIC_ENDPOINTS 와 별개로
+            // 이 필터가 먼저 실행되므로 여기서도 제외해야 한다.
+            "POST /v1/events"
     );
 
     private final JwtTokenService jwtTokenService;
@@ -67,11 +71,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String userId = claims.getSubject();
             String deviceId = claims.get("device_id", String.class);
 
+            List<?> scope = claims.get("scope", List.class);
+            List<SimpleGrantedAuthority> authorities = scope != null && scope.contains("admin")
+                    ? List.of(new SimpleGrantedAuthority("ROLE_USER"), new SimpleGrantedAuthority("ROLE_ADMIN"))
+                    : List.of(new SimpleGrantedAuthority("ROLE_USER"));
+
             // principal=userId, credentials=deviceId — 컨트롤러에서 @AuthenticationPrincipal로 userId 접근
             UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                     userId,
                     deviceId,
-                    List.of(new SimpleGrantedAuthority("ROLE_USER"))
+                    authorities
             );
             SecurityContextHolder.getContext().setAuthentication(authentication);
             filterChain.doFilter(request, response);

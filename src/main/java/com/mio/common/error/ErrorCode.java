@@ -69,6 +69,10 @@ public enum ErrorCode {
     // Report
     REPORT_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "SERVER_ERROR", "서버 오류로 리포트 조회에 실패했습니다."),
 
+    // Admin
+    CRISIS_EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "존재하지 않는 위기 이벤트입니다."),
+    CRISIS_EVENT_ALREADY_REVIEWED(HttpStatus.CONFLICT, "CONFLICT", "이미 검토된 위기 이벤트입니다."),
+
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청 한도를 초과했습니다."),
 

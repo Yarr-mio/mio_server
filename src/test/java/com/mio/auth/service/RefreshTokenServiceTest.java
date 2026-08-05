@@ -62,7 +62,7 @@ class RefreshTokenServiceTest {
 
         when(refreshTokenRedisRepository.validateToken(any())).thenReturn(Optional.of(info));
         when(userRepository.findById(userId)).thenReturn(Optional.of(activeUser));
-        when(jwtTokenService.generateAccessToken(any(), any(), eq(false))).thenReturn("new-access-token");
+        when(jwtTokenService.generateAccessToken(any(), any(), eq(false), eq(false))).thenReturn("new-access-token");
 
         String result = refreshTokenService.refresh("mio_refresh_" + UUID.randomUUID());
 

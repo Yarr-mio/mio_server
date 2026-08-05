@@ -18,6 +18,8 @@ import org.springframework.stereotype.Component;
 public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
 
     private static final String MODEL = "gpt-4o-mini";
+    // JSON 추출 출력 상한. 예상 ~40 토큰. 잘리면 파싱 실패로 추출이 비어 반환된다.
+    private static final int MAX_COMPLETION_TOKENS = 400;
     private static final String SYSTEM_PROMPT = """
             당신은 CBT 대화에서 현재 사용자의 발화만 분류합니다.
             반드시 아래 JSON 객체만 반환하세요.
@@ -38,7 +40,8 @@ public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
             return TurnOntologySignal.empty();
         }
         try {
-            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage));
+            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
             JsonNode node = objectMapper.readTree(stripCodeFence(response));
             return new TurnOntologySignal(
                     nullableText(node, "distortionCode"),

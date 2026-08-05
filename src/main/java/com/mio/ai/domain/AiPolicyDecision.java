@@ -45,6 +45,15 @@ public class AiPolicyDecision {
     @Column(name = "risk_level")
     private String riskLevel;
 
+    @Column(name = "judge_status")
+    private String judgeStatus;
+
+    @Column(name = "moderation_status")
+    private String moderationStatus;
+
+    @Column(name = "response_act")
+    private String responseAct;
+
     @Column(name = "generation_mode")
     private String generationMode;
 

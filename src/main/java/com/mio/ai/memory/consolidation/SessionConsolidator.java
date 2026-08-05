@@ -7,6 +7,7 @@ import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.memory.episodic.Thought;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
@@ -61,6 +62,9 @@ import java.util.stream.Collectors;
 public class SessionConsolidator {
 
     private static final String SUMMARY_MODEL = "gpt-4o-mini";
+    // 요약 출력 상한. 프롬프트가 500자를 요구하고 한국어 1자 ≈ 0.71 토큰이라 ~355 토큰,
+    // 2배 이상 여유를 둔다. 잘리면 세션 요약이 문장 중간에서 끊긴 채 저장된다.
+    private static final int SUMMARY_MAX_COMPLETION_TOKENS = 800;
     private static final String SUMMARY_SYSTEM_PROMPT = """
             당신은 CBT 코칭 세션 분석 전문가입니다.
             사용자와 AI 캐릭터 간의 대화 내용을 바탕으로 세션 요약을 300~500자 이내로 작성하세요.
@@ -359,10 +363,18 @@ public class SessionConsolidator {
 
     private String generateSummary(String conversationText) {
         StringBuilder sb = new StringBuilder();
-        llmClient.stream(
-                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText),
+        LlmStreamResult result = llmClient.stream(
+                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText)
+                        .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS),
                 sb::append
         );
+        // 잘린 요약을 그대로 쓰면 암호화·저장을 거쳐 세션의 정본 기억이 되고, ExtractorLLM 이
+        // 그 불완전한 텍스트에서 사고·감정을 뽑아낸다. 잘렸다는 사실은 어디에도 남지 않는다.
+        // 상위 consolidate() 의 catch 가 받아 로그를 남기고 이번 컨솔리데이션만 중단한다.
+        if (result.truncated()) {
+            throw new IllegalStateException(
+                    "세션 요약이 출력 토큰 상한에 걸려 잘렸다 — 불완전한 요약을 정본으로 저장하지 않는다");
+        }
         return sb.toString().trim();
     }
 

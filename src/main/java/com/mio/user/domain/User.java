@@ -39,6 +39,10 @@ public class User {
     @Column(name = "gender")
     private String gender;
 
+    /** 취준생/취업자 구분. 값 검증 없음 — gender/ageRange와 동일한 자유 문자열 (이슈 #282). */
+    @Column(name = "employment_status")
+    private String employmentStatus;
+
     /** 가입 시 초기 동의값 (이후 변경은 notification_settings 참조) */
     @Column(name = "notification_agree", nullable = false)
     @Builder.Default
@@ -82,6 +86,11 @@ public class User {
     @Column(name = "is_minor", nullable = false)
     private boolean isMinor;
 
+    /** Admin 엔드포인트(/v1/admin/**) 접근 권한. DB에서 직접 플래그를 세운다 — 셀프서비스 승격 경로 없음 (이슈 #279). */
+    @Column(name = "is_admin", nullable = false)
+    @Builder.Default
+    private boolean isAdmin = false;
+
     /** PENDING / ACTIVE / SUSPENDED / DELETED */
     @Column(name = "status", nullable = false)
     @Builder.Default
@@ -120,10 +129,11 @@ public class User {
         this.marketingAgree = marketingAgree;
         this.signupStep = SignupStep.CONSENT_AGREED;
     }
-    public void completeProfile(String nickname, String ageRange, String gender) {
+    public void completeProfile(String nickname, String ageRange, String gender, String employmentStatus) {
         this.nickname = nickname;
         this.ageRange = ageRange;
         this.gender = gender;
+        this.employmentStatus = employmentStatus;
         this.signupStep = SignupStep.PROFILE_COMPLETED;
     }
 

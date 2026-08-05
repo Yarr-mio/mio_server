@@ -10,9 +10,10 @@ public interface LlmClient {
      *
      * @param request      the LLM request
      * @param chunkHandler called for each content chunk
-     * @return time to first token in milliseconds
+     * @return time to first token and token usage; usage is
+     *         {@link LlmUsage#unresolved(String)} when the provider did not report it
      */
-    long stream(LlmRequest request, Consumer<String> chunkHandler);
+    LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler);
 
     /** Sends a non-streaming request for a natural-language response. */
     String completeText(LlmRequest request);

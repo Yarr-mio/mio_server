@@ -1,6 +1,9 @@
 package com.mio.ai.qa;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.LlmPricingProperties;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.memory.consolidation.ExtractorLlmClient;
 import com.mio.ai.memory.consolidation.ExtractorResult;
@@ -8,6 +11,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -23,8 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * ExtractorLLM episodeType 분류 QA 테스트 (107개 시나리오)
  *
- * 실제 LLM을 호출하는 통합 테스트. OPENAI_API_KEY 환경변수가 없으면 skip.
- * 실행: ./gradlew test --tests "*ExtractorEpisodeTypeQaTest"
+ * 실제 LLM을 호출하는 통합 테스트. 기본 빌드에서 제외되며 OPENAI_API_KEY 가 없으면 skip.
+ * 실행: ./gradlew test --tests "*ExtractorEpisodeTypeQaTest" -PllmTests
  *
  * 카테고리:
  *   ET-R-##: regular      (22개) — 인지 개입·감정 지지·위기 없는 일반 대화
@@ -34,6 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   ET-K-##: crisis       (15개) — 자해·자살·극단적 위험 발화 포함
  */
 @DisplayName("[QA] ExtractorLLM episodeType 분류 (107 시나리오)")
+@Tag("llm-integration")
 class ExtractorEpisodeTypeQaTest {
 
     private static ExtractorLlmClient extractor;
@@ -49,7 +54,8 @@ class ExtractorEpisodeTypeQaTest {
                 "OPENAI_API_KEY 미설정 또는 placeholder — LLM 통합 테스트 skip"
         );
         extractor = new ExtractorLlmClient(
-                new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper()),
+                new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
                 new ObjectMapper()
         );
     }

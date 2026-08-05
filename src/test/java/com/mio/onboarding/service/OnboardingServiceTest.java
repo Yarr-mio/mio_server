@@ -52,7 +52,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("1단계 제출 성공 시 onboarding_step이 1을 반환한다")
     void submitStep1_success_returnsStep1() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));
@@ -209,6 +209,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("캐릭터 선택 성공 시 preferred_character_id와 signup_step을 반환한다")
     void selectCharacter_success_returnsResponse() {
+        mockUser.completeProfile("테스트", null, null, null);
         mockUser.updateOnboardingStep(3);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
 
@@ -229,6 +230,39 @@ class OnboardingServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
                         .isEqualTo(ErrorCode.INVALID_CHARACTER_ID));
+    }
+
+    @Test
+    @DisplayName("이미 ONBOARDING_COMPLETED인 사용자가 다시 선택하면 COMPLETED로 강등되지 않고 예외를 발생시킨다")
+    void selectCharacter_alreadyOnboardingCompleted_throwsAndDoesNotDowngrade() {
+        mockUser.completeProfile("테스트", null, null, null);
+        mockUser.completeOnboarding("mio");
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.selectCharacter(
+                userId, new CharacterSelectRequest("bau")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
+        assertThat(mockUser.getPreferredCharacterId()).isEqualTo("mio");
+    }
+
+    @Test
+    @DisplayName("이미 COMPLETED인 사용자가 다시 선택하면 ONBOARDING_COMPLETED로 강등되지 않고 예외를 발생시킨다")
+    void selectCharacter_alreadyCompleted_throwsAndDoesNotDowngrade() {
+        mockUser.completeProfile("테스트", null, null, null);
+        mockUser.completeOnboarding("mio");
+        mockUser.finalizeSignup();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+
+        assertThatThrownBy(() -> onboardingService.selectCharacter(
+                userId, new CharacterSelectRequest("bau")
+        ))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(e -> assertThat(((BusinessException) e).getErrorCode())
+                        .isEqualTo(ErrorCode.ONBOARDING_STEP_NOT_COMPLETED));
+        assertThat(mockUser.getSignupStep()).isEqualTo(SignupStep.COMPLETED);
     }
 
     @Test
@@ -273,7 +307,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("이미 완료한 단계를 다시 제출해도 onboarding_step은 낮아지지 않는다")
     void submitStep1_resubmit_doesNotRegressStep() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         mockUser.updateOnboardingStep(2);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
@@ -287,7 +321,7 @@ class OnboardingServiceTest {
     @Test
     @DisplayName("step 1 skip 성공 시 onboarding_step이 1을 반환한다")
     void skipStep1_success_returnsStep1() {
-        mockUser.completeProfile("테스트", null, null);
+        mockUser.completeProfile("테스트", null, null, null);
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(onboardingAnswerRepository.findByUser_Id(any())).thenReturn(Optional.empty());
         when(onboardingAnswerRepository.save(any())).thenAnswer(i -> i.getArgument(0));

@@ -1,0 +1,127 @@
+# 강민석 "mio 이벤트 로그 명세 v3.4" §4 카탈로그 전체 반영 (이슈 #285).
+# 이벤트 카탈로그가 바뀌면 이 파일만 고치면 된다 — 인프라/코드 변경 불필요.
+# 값이 빈 배열([])인 이벤트는 properties가 없거나 원문 위험 때문에 전부 거른다는 뜻이다.
+
+events:
+  # §4-A 세션 백본
+  app_session_started:
+    - entry_point
+    - is_first_session
+    - days_since_last_session
+  app_session_ended:
+    - last_screen
+    - duration_ms
+    - screen_count
+  screen_viewed:
+    - screen_name
+    - referrer_screen
+  app_installed: []
+
+  # §4-B 가입·온보딩 퍼널
+  consent_agreed:
+    - consent_version
+    - marketing_agree
+  profile_submitted:
+    - age_range
+    - gender
+    - employment_status
+  signup_completed: []
+  onboarding_step_completed:
+    - step
+    - selected_emotion
+    - concern_types
+    - preferred_style
+  onboarding_step_skipped:
+    - step
+  character_selected:
+    - character_id
+  onboarding_completed: []
+  identify:
+    - previous_anonymous_id
+    - user_id
+  login_succeeded:
+    - provider
+
+  # §4-C Core Action 5종 (최우선)
+  checkin_completed:
+    - condition_score
+    - has_memo
+    - emotion_type
+    - time_of_day
+  chat_message_sent:
+    - chat_session_id
+    - message_index
+    - char_count
+    - ai_emotion_score
+    - is_socratic
+    - cbt_intervention_state
+    - is_crisis_flagged
+  session_summary_viewed:
+    - chat_session_id
+  todo_checked_in:
+    - todo_id
+    - task_status
+    - chat_session_id
+    - emotion_before
+    - emotion_after
+    - emotion_delta
+    - has_feedback
+    - days_since_suggested
+  report_viewed:
+    - period
+
+  # §4-D 대화 세션 부속 (session_summarized·todo_suggested는 서버 발행, 이번 이슈 범위 밖)
+  session_summarized:
+    - chat_session_id
+    - duration_seconds
+    - message_count
+    - bias_types_detected
+    - socratic_count
+    - problem_type
+    - classifier_version
+    - dominant_emotion
+    - cbt_intervened
+    - avg_emotion_score
+    - todo_suggested_count
+  todo_suggested:
+    - chat_session_id
+    - count
+    - categories
+    - difficulty_avg
+  chat_session_created:
+    - chat_session_id
+  chat_session_ended:
+    - duration_ms
+    - message_count
+    - chat_session_id
+    - completion_reason
+    - socratic_count
+  emotion_score_recorded:
+    - score
+    - chat_session_id
+    - reconstruction_id
+    - score_before
+    - score_delta
+
+  # §4-E 알림·보조 기능
+  notification_opened:
+    - notification_type
+  account_withdrawn: []
+  logout: []
+  checkin_started: []
+  checkin_updated: []
+  todo_list_viewed:
+    - todo_count
+  emotion_trend_viewed:
+    - period
+    - days
+  daily_test_viewed: []
+  daily_test_answered:
+    - test_id
+  notification_settings_changed:
+    - setting_key
+    - enabled
+  character_changed:
+    - from_id
+    - to_id
+  crisis_flow_triggered: []
