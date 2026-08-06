@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.events.config.EventSchemaProperties;
 import com.mio.events.config.EventWhitelist;
 import com.mio.events.dto.EventEnvelope;
 import org.junit.jupiter.api.AfterEach;
@@ -15,6 +16,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,18 +28,22 @@ class EventLogWriterTest {
 
     @Mock private EventWhitelist eventWhitelist;
 
+    private EventSchemaProperties eventSchemaProperties;
     private EventLogWriter eventLogWriter;
     private ListAppender<ILoggingEvent> journeyAppender;
     private ListAppender<ILoggingEvent> rejectedAppender;
+    private ListAppender<ILoggingEvent> internalAppender;
     private ListAppender<ILoggingEvent> classAppender;
 
     private static final String VALID_TS = "2026-08-06T21:13:02+09:00";
 
     @BeforeEach
     void setUp() {
-        eventLogWriter = new EventLogWriter(eventWhitelist, new ObjectMapper());
+        eventSchemaProperties = new EventSchemaProperties();
+        eventLogWriter = new EventLogWriter(eventWhitelist, eventSchemaProperties, new ObjectMapper());
         journeyAppender = attach("journey-events");
         rejectedAppender = attach("journey-events-rejected");
+        internalAppender = attach("journey-events-internal");
         classAppender = attach(EventLogWriter.class.getName());
     }
 
@@ -45,6 +51,7 @@ class EventLogWriterTest {
     void tearDown() {
         detach("journey-events", journeyAppender);
         detach("journey-events-rejected", rejectedAppender);
+        detach("journey-events-internal", internalAppender);
         detach(EventLogWriter.class.getName(), classAppender);
     }
 
@@ -61,8 +68,12 @@ class EventLogWriterTest {
     }
 
     private EventEnvelope event(Map<String, Object> properties) {
+        return event(properties, "anon-1");
+    }
+
+    private EventEnvelope event(Map<String, Object> properties, String anonymousId) {
         return new EventEnvelope("e1", "chat_message_sent", 3, VALID_TS,
-                "anon-1", "user-1", "session-1", "1.0.0", "ios", "17.0", properties);
+                anonymousId, "user-1", "session-1", "1.0.0", "ios", "17.0", properties);
     }
 
     @Test
@@ -119,5 +130,26 @@ class EventLogWriterTest {
         assertThat(message).contains("\"reject_reason\":\"UNKNOWN_EVENT_NAME\"");
         assertThat(message).contains("\"event_id\":\"e1\"");
         assertThat(journeyAppender.list).isEmpty();
+    }
+
+    @Test
+    @DisplayName("#353 — internal-anonymous-ids에 등록된 anonymous_id는 journey-events-internal로 간다")
+    void write_internalAnonymousId_routesToInternalLogger() {
+        eventSchemaProperties.setInternalAnonymousIds(List.of("dev-device-1"));
+
+        eventLogWriter.write(event(Map.of(), "dev-device-1"), "req-1");
+
+        assertThat(internalAppender.list).hasSize(1);
+        assertThat(internalAppender.list.get(0).getFormattedMessage()).contains("\"anonymous_id\":\"dev-device-1\"");
+        assertThat(journeyAppender.list).isEmpty();
+    }
+
+    @Test
+    @DisplayName("#353 — 목록이 비어 있으면(기본값) 기존과 동일하게 journey-events로 간다")
+    void write_emptyInternalList_routesToJourneyLogger() {
+        eventLogWriter.write(event(Map.of(), "anon-1"), "req-1");
+
+        assertThat(journeyAppender.list).hasSize(1);
+        assertThat(internalAppender.list).isEmpty();
     }
 }

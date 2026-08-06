@@ -9,6 +9,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -49,6 +50,19 @@ public class GlobalExceptionHandler {
                 .collect(Collectors.joining(", "));
         log.warn("ValidationException: {}", message);
         return ResponseEntity.badRequest().body(ErrorResponse.of(ErrorCode.INVALID_INPUT, message, getTraceId(request)));
+    }
+
+    /**
+     * 이슈 #348 — MissingRequestHeaderException(예: X-Device-Id 누락)은 이 타입의 하위
+     * 클래스다. 핸들러가 없으면 아래 Exception.class 폴백으로 떨어져 클라이언트 오류가
+     * 500으로 보고되고 5xx 알람이 오염된다.
+     */
+    @ExceptionHandler(ServletRequestBindingException.class)
+    public ResponseEntity<ErrorResponse> handleServletRequestBindingException(
+            ServletRequestBindingException e, HttpServletRequest request) {
+        log.warn("ServletRequestBindingException: {}", e.getMessage());
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of(ErrorCode.INVALID_INPUT, e.getMessage(), getTraceId(request)));
     }
 
     @ExceptionHandler(AuthenticationException.class)

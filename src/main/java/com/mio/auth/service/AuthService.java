@@ -34,7 +34,9 @@ public class AuthService {
 
     // #320 — 이벤트 화이트리스트(event-whitelist.yml)에만 enum 검증을 걸면 DB엔 오염값이
     // 남아 나중에 백필이 불가능하다. 코호트 축이라 여기서도 막는다. 선택 필드라 null/blank는 통과.
-    private static final Set<String> VALID_EMPLOYMENT_STATUSES = Set.of("job_seeker", "employed");
+    // package-private — #347 EmploymentStatusConsistencyTest가 event-whitelist.yml과 대조한다.
+    static final Set<String> VALID_EMPLOYMENT_STATUSES =
+            Set.of("student_or_unemployed", "job_seeker", "employed");
 
     private final List<SocialAuthProvider> socialAuthProviders;
     private final UserRepository userRepository;
