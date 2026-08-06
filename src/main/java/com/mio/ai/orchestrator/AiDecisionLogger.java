@@ -215,6 +215,10 @@ public class AiDecisionLogger {
                 memoryContextResult != null ? memoryContextResult.status().name() : null);
         trace.put("retrieval_failed_sources",
                 memoryContextResult != null ? memoryContextResult.failedSourcesLabel() : null);
+        // 소스가 아니라 계획이 어긋난 경우. 이력 조회에 실패해 검색 계획을 추측으로 세웠다는 뜻이라,
+        // 실패한 소스가 하나도 없는데 PARTIAL 인 이유가 여기 남는다.
+        trace.put("retrieval_plan_degraded",
+                memoryContextResult != null ? memoryContextResult.planDegraded() : null);
         // LLM 관련 필드는 전부 null 이 될 수 있고, null 은 각각 다른 뜻이다.
         //   llmUsage == null              → 이 턴은 LLM 을 호출하지 않았다 (보안 거절·위기·폴백)
         //   llmUsage.resolved() == false  → 호출했지만 사용량을 받지 못했다

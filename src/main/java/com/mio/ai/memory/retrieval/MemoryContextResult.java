@@ -17,7 +17,8 @@ import java.util.Set;
 public record MemoryContextResult(
         String text,
         MemoryContextStatus status,
-        Set<RetrievalSource> failedSources
+        Set<RetrievalSource> failedSources,
+        boolean planDegraded
 ) {
 
     public MemoryContextResult {
@@ -27,25 +28,35 @@ public record MemoryContextResult(
     }
 
     public static MemoryContextResult ok(String text) {
-        return new MemoryContextResult(text, MemoryContextStatus.OK, Set.of());
+        return new MemoryContextResult(text, MemoryContextStatus.OK, Set.of(), false);
+    }
+
+    public static MemoryContextResult partial(String text, Set<RetrievalSource> failedSources) {
+        return partial(text, failedSources, false);
     }
 
     /**
-     * 일부 소스가 죽었지만 남은 것으로 컨텍스트를 만든 경우.
+     * 일부가 어긋났지만 남은 것으로 컨텍스트를 만든 경우.
      *
-     * <p>실패 집합이 비어 있으면 {@link #ok(String)} 와 같다 — 호출부가 조건 분기를
-     * 하지 않아도 되도록 여기서 흡수한다.
+     * <p>{@code planDegraded} 는 <b>소스가 아니라 계획</b>이 틀어졌다는 뜻이다 — 이력
+     * 유무를 확인하지 못해 검색 계획을 추측으로 세운 경우다. 실패한 소스는 없지만
+     * 정상도 아니므로 {@code failedSources} 만으로는 표현할 수 없다.
+     *
+     * <p>둘 다 없으면 {@link #ok(String)} 와 같다 — 호출부가 조건 분기를 하지 않아도
+     * 되도록 여기서 흡수한다.
      */
-    public static MemoryContextResult partial(String text, Set<RetrievalSource> failedSources) {
-        if (failedSources == null || failedSources.isEmpty()) {
+    public static MemoryContextResult partial(String text, Set<RetrievalSource> failedSources,
+                                              boolean planDegraded) {
+        boolean noFailures = failedSources == null || failedSources.isEmpty();
+        if (noFailures && !planDegraded) {
             return ok(text);
         }
-        return new MemoryContextResult(text, MemoryContextStatus.PARTIAL, failedSources);
+        return new MemoryContextResult(text, MemoryContextStatus.PARTIAL, failedSources, planDegraded);
     }
 
     /** 컨텍스트 조립 자체가 실패했다. 텍스트는 없지만 "없음" 과 구별된다. */
     public static MemoryContextResult failed() {
-        return new MemoryContextResult(null, MemoryContextStatus.FAILED, Set.of());
+        return new MemoryContextResult(null, MemoryContextStatus.FAILED, Set.of(), false);
     }
 
     /** 캐시에서 읽어온 컨텍스트. 이번 턴에 검색을 돌리지 않았으므로 실패도 없다. */

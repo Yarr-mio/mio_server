@@ -57,6 +57,15 @@ public class ContextPreWarmer {
      */
     private static final String RETRIEVAL_METRIC = "mio.retrieval.outcome";
 
+    /**
+     * 이력 확인 쿼리의 메트릭 라벨.
+     *
+     * <p>{@code RetrievalSource} 값이 아니다 — 검색 소스가 아니라 계획을 세우는 데 쓰는
+     * 사전 조회이므로 enum 에 넣지 않는다. 그 enum 은 FusionRanker·planner 의 switch 가
+     * 함께 보는 값이라, 소스가 아닌 것을 끼워 넣으면 그쪽까지 흔든다.
+     */
+    private static final String HISTORY_PROBE = "HISTORY_PROBE";
+
     private final StructuredRetriever structuredRetriever;
     private final VectorRetriever vectorRetriever;
     private final LexicalRetriever lexicalRetriever;
@@ -152,22 +161,71 @@ public class ContextPreWarmer {
                                                 SafetyProfile profile, String queryText,
                                                 String currentDistortionCode) {
         Set<RetrievalSource> failedSources = ConcurrentHashMap.newKeySet();
+        HistoryProbe historyProbe = probeHistory(userId);
         try {
-            boolean hasHistory = checkHasHistory(userId);
-            RetrievalPlan plan = memoryRetrievalPlanner.plan(combined, profile, userId, hasHistory);
+            RetrievalPlan plan = memoryRetrievalPlanner.plan(
+                    combined, profile, userId, historyProbe.hasHistory());
             float[] queryEmbedding = embedIfNeeded(plan, queryText, failedSources);
-            Set<String> relatedDistortionCodes = plan.sources().contains(RetrievalSource.GRAPH_DISTORTION)
-                    ? ontologyRelationExpander.expandCooccurringCodes(currentDistortionCode)
-                    : Set.of();
+            Set<String> relatedDistortionCodes =
+                    expandRelatedCodes(plan, currentDistortionCode, failedSources);
             List<List<RetrievedItem>> results = retrieveParallel(
                     sessionId, userId, plan, queryEmbedding, queryText, relatedDistortionCodes, failedSources);
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             boolean highRisk = combined.hardCrisis() || combined.riskCandidate();
             String text = contextComposer.compose(ranked, plan.sensitivityCap(), highRisk);
-            return MemoryContextResult.partial(text, failedSources);
+            return MemoryContextResult.partial(text, failedSources, historyProbe.degraded());
         } catch (Exception e) {
             log.warn("ContextPreWarmer.buildContextSync failed for sessionId={}", sessionId, e);
             return MemoryContextResult.failed();
+        }
+    }
+
+    /** 이력 확인 결과. 확인에 실패했는지를 값으로 들고 다닌다. */
+    private record HistoryProbe(boolean hasHistory, boolean degraded) {}
+
+    /**
+     * 이력 유무를 확인하되, 실패해도 검색 전체를 포기하지 않는다.
+     *
+     * <p>이 값이 틀리면 검색 <b>계획</b>이 틀린다. 그렇다고 계획 하나 때문에 멀쩡한 소스까지
+     * 버리면, 일시적인 {@code COUNT} 실패가 그 턴의 기억을 통째로 없앤다 — 관측 가능성을
+     * 얻으려다 가용성을 잃는 교환이다.
+     *
+     * <p>실패 시 <b>이력이 있다고 가정</b>한다. 소스가 더 많은 쪽이고, 실제로 이력이 없으면
+     * 그 쿼리들이 빈 결과를 돌려줄 뿐이다. 대신 계획이 추측이었다는 사실을
+     * {@code planDegraded} 로 남긴다.
+     */
+    private HistoryProbe probeHistory(UUID userId) {
+        try {
+            Integer count = jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM session_summaries WHERE user_id = ? LIMIT 1",
+                    Integer.class, userId
+            );
+            return new HistoryProbe(count != null && count > 0, false);
+        } catch (Exception e) {
+            log.warn("ContextPreWarmer: history probe failed for userId={}; assuming history exists", userId, e);
+            meterRegistry.counter(RETRIEVAL_METRIC, "source", HISTORY_PROBE, "outcome", "failed").increment();
+            return new HistoryProbe(true, true);
+        }
+    }
+
+    /**
+     * 온톨로지 확장 실패를 {@code GRAPH_DISTORTION} 실패로 기록한다 (이슈 #364).
+     *
+     * <p>확장 결과가 비면 그 소스는 아무것도 조회하지 않는다. 그러니 확장이 실패한 것과
+     * "동반 왜곡이 원래 없는 것" 이 구별되지 않으면, 검색기에서 고친 것과 같은 결함이
+     * 한 단계 앞에 남는다.
+     */
+    private Set<String> expandRelatedCodes(RetrievalPlan plan, String currentDistortionCode,
+                                           Set<RetrievalSource> failedSources) {
+        if (!plan.sources().contains(RetrievalSource.GRAPH_DISTORTION)) {
+            return Set.of();
+        }
+        try {
+            return ontologyRelationExpander.expandCooccurringCodes(currentDistortionCode);
+        } catch (Exception e) {
+            log.warn("ContextPreWarmer: ontology relation expansion failed", e);
+            markFailed(failedSources, RetrievalSource.GRAPH_DISTORTION);
+            return Set.of();
         }
     }
 
@@ -263,6 +321,14 @@ public class ContextPreWarmer {
                     markFailed(failedSources, source);
                     return List.<RetrievedItem>of();
                 }
+                // null 은 예외를 던지지 않은 실패다. 아래 filter 에서 NPE 로 터지면 소스 하나가
+                // 턴 전체를 죽이고, 그것도 실패로 기록되지 않는다 — 이 이슈가 없애려는 형태다.
+                if (items == null) {
+                    log.warn("ContextPreWarmer: retrieval source {} returned null for sessionId={}",
+                            source, sessionId);
+                    markFailed(failedSources, source);
+                    return List.<RetrievedItem>of();
+                }
                 meterRegistry.counter(RETRIEVAL_METRIC, "source", source.name(), "outcome", "ok").increment();
                 return items;
             }));
@@ -276,18 +342,4 @@ public class ContextPreWarmer {
                 .toList();
     }
 
-    /**
-     * 이력 유무 확인. 실패해도 {@code false} 로 삼키지 않는다 (이슈 #364).
-     *
-     * <p>이 값이 틀리면 검색 계획 자체가 틀린다. "이력 없음" 으로 삼키면 기억이 있는
-     * 사용자에게 신규 사용자용 계획이 적용되고, 그 사실이 아무 데도 남지 않는다.
-     * 예외를 올려 {@code buildContextSync} 가 {@code FAILED} 로 판정하게 한다.
-     */
-    private boolean checkHasHistory(UUID userId) {
-        Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM session_summaries WHERE user_id = ? LIMIT 1",
-                Integer.class, userId
-        );
-        return count != null && count > 0;
-    }
 }

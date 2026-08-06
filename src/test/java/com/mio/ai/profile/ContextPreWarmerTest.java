@@ -30,6 +30,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -219,9 +220,9 @@ class ContextPreWarmerTest {
 
     @Test
     void reportsFailedRatherThanNullWhenContextAssemblyBreaks() {
-        // 이력 조회부터 실패하면 검색 계획 자체를 세울 수 없다.
-        when(jdbcTemplate.queryForObject(any(String.class), eq(Integer.class), eq(userId)))
-                .thenThrow(new RuntimeException("db down"));
+        // 계획 수립 자체가 깨지면 검색을 돌릴 수 없다.
+        when(planner.plan(any(), any(), eq(userId), anyBoolean()))
+                .thenThrow(new RuntimeException("planner down"));
 
         MemoryContextResult context = preWarmer.buildContextSync(
                 sessionId, userId, combined, profile, "회의가 걱정돼");
@@ -230,6 +231,65 @@ class ContextPreWarmerTest {
         assertThat(context).isNotNull();
         assertThat(context.status()).isEqualTo(MemoryContextStatus.FAILED);
         assertThat(context.text()).isNull();
+    }
+
+    @Test
+    void keepsRetrievingWhenHistoryProbeFailsInsteadOfDroppingAllMemory() {
+        RetrievalPlan plan = new RetrievalPlan(List.of(RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        RetrievedItem episode = new RetrievedItem("episode-4", RetrievalSource.LEXICAL_EPISODE,
+                "회의 전 긴장", "normal", 0.7, 1);
+        // COUNT 한 방이 실패했다고 멀쩡한 소스까지 버리면, 관측 가능성을 얻으려다 가용성을 잃는다.
+        when(jdbcTemplate.queryForObject(any(String.class), eq(Integer.class), eq(userId)))
+                .thenThrow(new RuntimeException("transient blip"));
+        // 이력이 있다고 가정해야 소스가 더 많은 계획이 선택된다.
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(lexicalRetriever.retrieveByKeywords(userId, "회의가 걱정돼", 3)).thenReturn(List.of(episode));
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("still has memory");
+
+        MemoryContextResult context = preWarmer.buildContextSync(
+                sessionId, userId, combined, profile, "회의가 걱정돼");
+
+        assertThat(context.text()).isEqualTo("still has memory");
+        assertThat(context.status()).isEqualTo(MemoryContextStatus.PARTIAL);
+        // 죽은 소스는 없지만 계획이 추측이었다는 사실은 남아야 한다.
+        assertThat(context.failedSources()).isEmpty();
+        assertThat(context.planDegraded()).isTrue();
+    }
+
+    @Test
+    void marksGraphDistortionFailedWhenOntologyExpansionThrows() {
+        RetrievalPlan plan = new RetrievalPlan(List.of(RetrievalSource.GRAPH_DISTORTION), 3, 200, "normal");
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(ontologyRelationExpander.expandCooccurringCodes("catastrophizing"))
+                .thenThrow(new RuntimeException("ontology db down"));
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("");
+
+        MemoryContextResult context = preWarmer.buildContextSync(
+                sessionId, userId, combined, profile, "회의가 걱정돼", "catastrophizing");
+
+        // 확장이 비면 그 소스는 아무것도 조회하지 않는다. 실패와 "동반 왜곡 없음" 이
+        // 같아 보이면 검색기에서 고친 결함이 한 단계 앞에 남는다.
+        assertThat(context.status()).isEqualTo(MemoryContextStatus.PARTIAL);
+        assertThat(context.failedSources()).contains(RetrievalSource.GRAPH_DISTORTION);
+    }
+
+    @Test
+    void treatsNullReturnFromSourceAsFailureRatherThanCrashingTheTurn() {
+        RetrievalPlan plan = new RetrievalPlan(List.of(RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        // 예외를 던지지 않고 null 을 돌려주는 소스. 방어가 없으면 아래 filter 에서 NPE 가 나고
+        // 소스 하나가 턴 전체를 죽인다 — 그것도 실패로 기록되지 않은 채.
+        when(lexicalRetriever.retrieveByKeywords(userId, "회의가 걱정돼", 3)).thenReturn(null);
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("");
+
+        MemoryContextResult context = preWarmer.buildContextSync(
+                sessionId, userId, combined, profile, "회의가 걱정돼");
+
+        assertThat(context.status()).isEqualTo(MemoryContextStatus.PARTIAL);
+        assertThat(context.failedSources()).contains(RetrievalSource.LEXICAL_EPISODE);
     }
 
     @Test
