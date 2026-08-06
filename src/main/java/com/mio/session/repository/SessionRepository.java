@@ -59,6 +59,58 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
     void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);
 
+    /**
+     * 유예 시간이 지나도 pending 이지만 <b>결과물은 이미 갖춘</b> 종료 세션을 완료로 회복시킨다
+     * (이슈 #356).
+     *
+     * <p>컨솔리데이션은 요약을 독립 트랜잭션으로 먼저 커밋하고, Todo 생성까지 끝난 뒤에야
+     * done 을 표시한다. 그 사이 배포·크래시로 프로세스가 죽으면 완성된 요약과 Todo 를 두고도
+     * pending 이 남는다. 이를 실패로 확정하면 사용자는 존재하는 요약을 410 으로 영영 못 본다.
+     *
+     * <p>Todo 가 없으면 회복 대상이 아니다 — 빈 Todo 요약을 노출하지 않는다는
+     * {@code SessionConsolidator} 의 판단을 여기서도 그대로 지킨다.
+     *
+     * @return 완료로 회복된 세션 수
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.DONE
+            WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
+              AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
+              AND s.endedAt IS NOT NULL
+              AND s.endedAt <= :cutoff
+              AND EXISTS (SELECT 1 FROM SessionSummary ss WHERE ss.session = s)
+              AND EXISTS (SELECT 1 FROM BehaviorTask bt WHERE bt.sourceSession = s)
+            """)
+    int recoverStalePendingSummaries(@Param("cutoff") OffsetDateTime cutoff);
+
+    /**
+     * 유예 시간이 지나도 pending 인 종료 세션의 요약을 실패로 확정한다 (이슈 #356).
+     *
+     * <p>컨솔리데이션은 종료 트랜잭션 커밋 후 비동기로 돌기 때문에, 그 사이 서버가 재시작되면
+     * 상태가 pending 에 영구히 남는다. 요약 조회는 pending 을 202 로 응답하므로 클라이언트는
+     * 무한 로딩에 갇힌다. 되살릴 방법이 없는 상태를 종결시켜 사용자가 빠져나올 수 있게 한다.
+     *
+     * <p>반드시 {@link #recoverStalePendingSummaries} 뒤에 실행해야 한다. 회복 가능한 세션을
+     * 먼저 건져낸 뒤 남은 것만 종결시킨다.
+     *
+     * <p>WHERE 절이 실행 시점에 pending 을 다시 확인하므로, 뒤늦게 완료된 컨솔리데이션의
+     * done 을 덮어쓰지 않는다.
+     *
+     * @return 실패로 전환된 세션 수
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED
+            WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
+              AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
+              AND s.endedAt IS NOT NULL
+              AND s.endedAt <= :cutoff
+            """)
+    int markStalePendingSummariesFailed(@Param("cutoff") OffsetDateTime cutoff);
+
     @Query("SELECT s FROM Session s WHERE s.user.id = :userId AND s.startedAt >= :start AND s.startedAt < :end AND s.status = com.mio.session.domain.SessionStatus.ENDED AND s.endedAt IS NOT NULL")
     List<Session> findEndedSessionsByUserAndPeriod(@Param("userId") UUID userId,
                                                    @Param("start") OffsetDateTime start,
