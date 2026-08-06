@@ -58,6 +58,8 @@ class StaleSummarySweepIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        jdbcTemplate.update("DELETE FROM behavior_tasks WHERE user_id = ?", user.getId());
+        jdbcTemplate.update("DELETE FROM session_summaries WHERE user_id = ?", user.getId());
         jdbcTemplate.update("DELETE FROM sessions WHERE user_id = ?", user.getId());
         userRepository.deleteById(user.getId());
     }
@@ -79,6 +81,47 @@ class StaleSummarySweepIntegrationTest {
         // 뒤늦게 완료된 컨솔리데이션의 done 을 덮어쓰면 사용자가 받을 요약을 잃는다.
         assertThat(statusOf(done)).isEqualTo("done");
         assertThat(statusOf(active)).isEqualTo("pending");
+    }
+
+    @Test
+    @DisplayName("요약과 Todo 가 이미 만들어진 세션은 실패로 봉인하지 않고 완료로 회복시킨다")
+    void sweep_recoversPendingSessionThatAlreadyHasSummaryAndTodo() {
+        // consolidate() 는 요약을 독립 트랜잭션으로 먼저 커밋한다. 그 뒤 markDone 이 불리기 전에
+        // 배포·크래시로 프로세스가 죽으면 완성된 요약을 두고도 pending 이 남는다.
+        // 이때 실패로 확정하면 사용자는 존재하는 요약을 410 으로 영영 못 보게 된다.
+        UUID sessionId = endedSessionWith(SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+        insertTodo(sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(statusOf(sessionId)).isEqualTo("done");
+    }
+
+    @Test
+    @DisplayName("요약은 있으나 Todo 가 없는 세션은 완료로 올리지 않고 실패로 정리한다")
+    void sweep_doesNotRecoverPendingSessionWithoutTodo() {
+        // Todo 없는 요약은 노출하지 않는다는 기존 판단(SessionConsolidator)을 회복 경로에서도 지킨다.
+        UUID sessionId = endedSessionWith(SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(statusOf(sessionId)).isEqualTo("failed");
+    }
+
+    private void insertSummary(UUID sessionId) {
+        jdbcTemplate.update("""
+                INSERT INTO session_summaries (user_id, session_id, character_id, summary_text)
+                VALUES (?, ?, 'mio', '완성된 요약')
+                """, user.getId(), sessionId);
+    }
+
+    private void insertTodo(UUID sessionId) {
+        jdbcTemplate.update("""
+                INSERT INTO behavior_tasks (user_id, source_session_id, generated_from, action_text, category)
+                VALUES (?, ?, 'chat', '3분 호흡하기', '심리_안정')
+                """, user.getId(), sessionId);
     }
 
     private UUID endedSessionWith(SummaryStatus summaryStatus, OffsetDateTime endedAt) {
