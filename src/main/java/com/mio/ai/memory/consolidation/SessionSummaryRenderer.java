@@ -2,11 +2,13 @@ package com.mio.ai.memory.consolidation;
 
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.LlmStreamResult;
 import com.mio.character.domain.CharacterPersona;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -63,9 +65,13 @@ public class SessionSummaryRenderer {
      */
     private static final Map<String, Pattern> FORBIDDEN_PATTERNS = Map.of(
             // 요약은 3인칭 케이스 노트처럼 읽히는 것이 문제의 출발점이었다.
-            "third_person", Pattern.compile("사용자(는|가|의|에게)|내담자|이용자(는|가)"),
+            // 조사를 열거하지 않는다. 사용자에게 직접 말하는 요약에 "사용자"·"내담자"·"이용자"가
+            // 어떤 조사와 함께든 등장하면 그 자체로 3인칭 케이스 노트 톤이다.
+            "third_person", Pattern.compile("사용자|내담자|이용자"),
+            // ADHD 처럼 대문자로 나올 수 있어 대소문자를 무시한다.
             "diagnosis", Pattern.compile(
-                    "(우울증|불안장애|공황장애|조현병|adhd|양극성|경계선 ?성격)\\s*(초기|증상|인 ?것|인 ?듯|같아요|같습니다|이에요|입니다|진단)"),
+                    "(우울증|불안장애|공황장애|조현병|adhd|양극성|경계선 ?성격)\\s*(초기|증상|인 ?것|인 ?듯|같아요|같습니다|이에요|입니다|진단)",
+                    Pattern.CASE_INSENSITIVE),
             "guaranteed_outcome", Pattern.compile(
                     "반드시 (좋아|나아|괜찮)|무조건 (좋아|나아|괜찮)|꼭 좋아질 (거예요|겁니다)|보장(해요|합니다|할게요)"),
             "certainty_about_user", Pattern.compile(
@@ -86,10 +92,18 @@ public class SessionSummaryRenderer {
 
         try {
             StringBuilder response = new StringBuilder();
-            llmClient.stream(
+            LlmStreamResult result = llmClient.stream(
                     LlmRequest.of(MODEL, buildSystemPrompt(persona), "세션 기록:\n" + internalSummary)
                             .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
                     response::append);
+
+            // 잘린 텍스트를 그대로 저장하면 사용자는 문장 중간에서 끊긴 요약을 받고, 잘렸다는
+            // 사실은 어디에도 남지 않는다 (LlmStreamResult.truncated 계약).
+            if (result.truncated()) {
+                log.warn("[SummaryRenderer] output truncated character={}; falling back to internal summary",
+                        persona.characterId());
+                return null;
+            }
 
             String rendered = response.toString().trim();
             List<String> violations = findViolations(rendered);
@@ -116,7 +130,7 @@ public class SessionSummaryRenderer {
         if (rendered.isBlank()) {
             return List.of("empty");
         }
-        List<String> violations = new java.util.ArrayList<>();
+        List<String> violations = new ArrayList<>();
 
         if (rendered.length() > MAX_LENGTH) {
             violations.add("max_length(%d>%d)".formatted(rendered.length(), MAX_LENGTH));
