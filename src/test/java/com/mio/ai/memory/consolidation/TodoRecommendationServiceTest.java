@@ -19,8 +19,11 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Random;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,6 +31,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,14 +59,14 @@ class TodoRecommendationServiceTest {
         sessionRepository = mock(SessionRepository.class);
         actionPersonalizer = mock(TodoActionPersonalizer.class);
 
-        service = new TodoRecommendationService(
-                templateRepository, behaviorTaskRepository, memoryPreferenceRepository,
-                outcomeRepository, userRepository, sessionRepository, actionPersonalizer, new ObjectMapper());
+        // 난수원이 0을 반환하면 항상 최고점 후보가 뽑힌다 — 점수 계산을 결정적으로 검증하기 위함.
+        service = newService(new ScoreWeightedSelector(() -> 0.0));
 
         User mockUser = user();
         Session mockSession = session();
         when(memoryPreferenceRepository.findByUserId(any())).thenReturn(Optional.empty());
         when(outcomeRepository.findRecentByUserId(any())).thenReturn(List.of());
+        when(behaviorTaskRepository.findRecentSessionTemplates(any(), any())).thenReturn(List.of());
         when(userRepository.findById(any())).thenReturn(Optional.of(mockUser));
         when(sessionRepository.findById(any())).thenReturn(Optional.of(mockSession));
         // 개인화기는 기본적으로 입력 템플릿 문구를 그대로 반환하도록(폴백 경로) 스텁.
@@ -202,7 +206,161 @@ class TodoRecommendationServiceTest {
         verify(behaviorTaskRepository, never()).saveAll(any());
     }
 
+    // ── 최근 발급 감점 (이슈 #337) ────────────────────────────
+
+    @Test
+    @DisplayName("직전 세션에 발급한 템플릿은 감점되어 동점 후보에 밀린다")
+    void penalizesTemplateIssuedInPreviousSession() {
+        // 두 후보 모두 왜곡 1건 매칭(+2). 감점이 없으면 목록 선두인 recent가 뽑힌다.
+        var recent = template("bt_recent", "심리_안정", "호흡", "breathing",
+                List.of("catastrophizing"), List.of(), 1);
+        var fresh = template("bt_fresh", "심리_안정", "그라운딩", "grounding",
+                List.of("catastrophizing"), List.of(), 1);
+        when(templateRepository.findAll()).thenReturn(List.of(recent, fresh));
+        when(behaviorTaskRepository.findRecentSessionTemplates(any(), any()))
+                .thenReturn(List.of(recentRow("bt_recent", UUID.randomUUID())));
+
+        service.generateForSession(userId, sessionId,
+                new TodoRecommendationService.TodoGenerationInput(
+                        List.of("catastrophizing"), null, List.of(), "요약"));
+
+        List<BehaviorTask> saved = captureSaved();
+        assertThat(saved).hasSize(1);
+        assertThat(saved.get(0).getTemplateCode()).isEqualTo("bt_fresh");
+    }
+
+    @Test
+    @DisplayName("감점된 템플릿도 후보에서 배제되지 않아 여전히 선택될 수 있다")
+    void penalizedTemplateIsStillSelectable() {
+        var recent = template("bt_recent", "심리_안정", "호흡", "breathing",
+                List.of("catastrophizing"), List.of(), 1);
+        var fresh = template("bt_fresh", "심리_안정", "그라운딩", "grounding",
+                List.of("catastrophizing"), List.of(), 1);
+        when(templateRepository.findAll()).thenReturn(List.of(recent, fresh));
+        when(behaviorTaskRepository.findRecentSessionTemplates(any(), any()))
+                .thenReturn(List.of(recentRow("bt_recent", UUID.randomUUID())));
+
+        // 실제 난수원(고정 시드)으로 반복 추출 — 감점이 배제로 동작하면 recent가 한 번도 나오지 않는다.
+        var randomized = newService(new ScoreWeightedSelector(new Random(42)::nextDouble));
+        Set<String> picked = new HashSet<>();
+        for (int i = 0; i < 200; i++) {
+            reset(behaviorTaskRepository);
+            when(behaviorTaskRepository.findRecentSessionTemplates(any(), any()))
+                    .thenReturn(List.of(recentRow("bt_recent", UUID.randomUUID())));
+            randomized.generateForSession(userId, sessionId,
+                    new TodoRecommendationService.TodoGenerationInput(
+                            List.of("catastrophizing"), null, List.of(), "요약"));
+            picked.add(captureSaved().get(0).getTemplateCode());
+        }
+        assertThat(picked).containsExactlyInAnyOrder("bt_recent", "bt_fresh");
+    }
+
+    @Test
+    @DisplayName("두 세션 전에 발급한 템플릿은 직전 세션보다 적게 감점된다")
+    void olderSessionIsPenalizedLess() {
+        // twoAgo: 왜곡 매칭 +2, 2세션 전 감점 -1 → 1
+        // prev:   왜곡 매칭 +2, 직전 세션 감점 -2 → 0
+        var prev = template("bt_prev", "심리_안정", "호흡", "breathing",
+                List.of("catastrophizing"), List.of(), 1);
+        var twoAgo = template("bt_two_ago", "심리_안정", "그라운딩", "grounding",
+                List.of("catastrophizing"), List.of(), 1);
+        when(templateRepository.findAll()).thenReturn(List.of(prev, twoAgo));
+
+        UUID prevSession = UUID.randomUUID();
+        UUID twoAgoSession = UUID.randomUUID();
+        when(behaviorTaskRepository.findRecentSessionTemplates(any(), any()))
+                .thenReturn(List.of(
+                        recentRow("bt_prev", prevSession),
+                        recentRow("bt_two_ago", twoAgoSession)));
+
+        service.generateForSession(userId, sessionId,
+                new TodoRecommendationService.TodoGenerationInput(
+                        List.of("catastrophizing"), null, List.of(), "요약"));
+
+        assertThat(captureSaved().get(0).getTemplateCode()).isEqualTo("bt_two_ago");
+    }
+
+    @Test
+    @DisplayName("감점 창 밖(3세션 전)의 발급 이력은 점수에 영향을 주지 않는다")
+    void outsideRecencyWindowIsNotPenalized() {
+        var old = template("bt_old", "심리_안정", "호흡", "breathing",
+                List.of("catastrophizing"), List.of(), 1);
+        var other = template("bt_other", "심리_안정", "그라운딩", "grounding",
+                List.of("catastrophizing"), List.of(), 1);
+        when(templateRepository.findAll()).thenReturn(List.of(old, other));
+
+        // bt_old는 3번째로 오래된 세션 → 감점 창(2세션) 밖.
+        when(behaviorTaskRepository.findRecentSessionTemplates(any(), any()))
+                .thenReturn(List.of(
+                        recentRow("bt_unrelated_a", UUID.randomUUID()),
+                        recentRow("bt_unrelated_b", UUID.randomUUID()),
+                        recentRow("bt_old", UUID.randomUUID())));
+
+        service.generateForSession(userId, sessionId,
+                new TodoRecommendationService.TodoGenerationInput(
+                        List.of("catastrophizing"), null, List.of(), "요약"));
+
+        // 감점이 없으므로 동점이고, 결정적 선택기는 목록 선두(bt_old)를 고른다.
+        assertThat(captureSaved().get(0).getTemplateCode()).isEqualTo("bt_old");
+    }
+
+    @Test
+    @DisplayName("생성된 Todo에 출처 template_code가 저장된다")
+    void persistsSourceTemplateCode() {
+        var t = template("bt_a", "심리_안정", "호흡", "breathing", List.of(), List.of(), 1);
+        when(templateRepository.findAll()).thenReturn(List.of(t));
+
+        service.generateForSession(userId, sessionId,
+                new TodoRecommendationService.TodoGenerationInput(List.of(), null, List.of(), "요약"));
+
+        assertThat(captureSaved().get(0).getTemplateCode()).isEqualTo("bt_a");
+    }
+
+    @Test
+    @DisplayName("과거 성과 가점(+1)은 왜곡 매칭 1건(+2)을 넘지 못한다")
+    void historyAffinityCannotOutweighSingleDistortionMatch() {
+        // manyPositive: 성과 3건(클램프 없으면 +3) / 매칭 0
+        var manyPositive = template("bt_a", "인지_재구성", "일기", "journaling",
+                List.of(), List.of(), 2);
+        // match: 왜곡 1건 매칭(+2) / 성과 0
+        var match = template("bt_b", "인지_재구성", "증거 점검", "evidence_check",
+                List.of("catastrophizing"), List.of(), 2);
+        when(templateRepository.findAll()).thenReturn(List.of(manyPositive, match));
+        // outcome() 은 내부에서 스터빙하므로 when(...) 인자 안에서 호출하면 스터빙이 깨진다.
+        var outcomes = List.of(
+                outcome("journaling", "positive"), outcome("journaling", "positive"),
+                outcome("journaling", "positive"));
+        when(outcomeRepository.findRecentByUserId(any())).thenReturn(outcomes);
+
+        service.generateForSession(userId, sessionId,
+                new TodoRecommendationService.TodoGenerationInput(
+                        List.of("catastrophizing"), null, List.of(), "요약"));
+
+        assertThat(captureSaved().get(0).getInterventionKind()).isEqualTo("evidence_check");
+    }
+
     // ── helpers ──────────────────────────────────────────────
+
+    private TodoRecommendationService newService(ScoreWeightedSelector selector) {
+        return new TodoRecommendationService(
+                templateRepository, behaviorTaskRepository, memoryPreferenceRepository,
+                outcomeRepository, userRepository, sessionRepository, actionPersonalizer,
+                selector, new ObjectMapper());
+    }
+
+    private BehaviorTaskRepository.RecentTemplateRow recentRow(String templateCode, UUID sessionId) {
+        return new BehaviorTaskRepository.RecentTemplateRow() {
+            @Override
+            public String getTemplateCode() {
+                return templateCode;
+            }
+
+            @Override
+            public UUID getSessionId() {
+                return sessionId;
+            }
+        };
+    }
 
     @SuppressWarnings("unchecked")
     private List<BehaviorTask> captureSaved() {

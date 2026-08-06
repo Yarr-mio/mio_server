@@ -55,6 +55,16 @@ public class BehaviorTask {
     @Column(name = "intervention_kind")
     private String interventionKind;
 
+    /**
+     * 생성 출처 behavior_template.code (이슈 #337).
+     *
+     * <p>intervention_kind 는 여러 템플릿이 공유하므로 "직전에 준 과제를 또 줬는지"를
+     * 판정할 수 없다. 최근 발급 감점을 템플릿 단위로 매기기 위해 출처를 보존한다.
+     * 템플릿을 거치지 않는 생성 경로(체크인 등)에서는 null 이다.
+     */
+    @Column(name = "template_code")
+    private String templateCode;
+
     @Column(name = "status", nullable = false)
     @Builder.Default
     private TaskStatus status = TaskStatus.SUGGESTED;
