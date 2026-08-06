@@ -42,8 +42,6 @@ public class MessageTurnSweepJob {
      */
     private static final Duration STALE_AFTER = Duration.ofMinutes(5);
 
-    private static final Duration SWEEP_INTERVAL = Duration.ofMinutes(5);
-
     /**
      * SSE {@code done} 이벤트의 값 집합에 없는 값이다.
      *
@@ -59,7 +57,9 @@ public class MessageTurnSweepJob {
     private final MessageTurnRepository messageTurnRepository;
     private final MeterRegistry meterRegistry;
 
-    @Scheduled(fixedDelay = 5 * 60 * 1000, initialDelay = 60 * 1000)
+    // 주기를 상수로 따로 두지 않는다. 상수와 애노테이션 리터럴이 둘 다 있으면 한쪽만 바뀌어
+    // 조용히 어긋난다. ISO-8601 문자열이 그 자체로 읽히므로 여기 한 곳에만 적는다.
+    @Scheduled(fixedDelayString = "PT5M", initialDelayString = "PT1M")
     public void run() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime staleBefore = now.minus(STALE_AFTER);
@@ -77,10 +77,5 @@ public class MessageTurnSweepJob {
             log.error("MessageTurnSweepJob: sweep failed", e);
             meterRegistry.counter(SWEEP_METRIC, "outcome", "failed").increment();
         }
-    }
-
-    /** 테스트·운영 점검에서 주기를 확인할 때 쓴다. */
-    static Duration sweepInterval() {
-        return SWEEP_INTERVAL;
     }
 }
