@@ -135,65 +135,73 @@ public class SessionConsolidator {
             return;
         }
 
+        // 영속화할 요약이 없으면(메시지 0건·세션 부재·복호화 전량 실패) 여기서 종결한다.
+        // 상태를 그대로 두면 pending 에 영구 고착되고, 요약 조회가 끝없이 202 를 반환해
+        // 사용자는 앱을 다시 켜기 전까지 무한 로딩에서 빠져나오지 못한다 (이슈 #356).
+        if (enrichInput == null) {
+            log.info("SessionConsolidator: nothing to summarize, marking failed sessionId={}", event.sessionId());
+            summaryStatusWriter.markFailed(event.sessionId());
+            return;
+        }
+
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
         // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
-        if (enrichInput != null) {
-            // 실시간 하네스가 놓친 위기를 사후 승격한다 (이슈 #256).
-            // 요약 트랜잭션이 커밋된 뒤 best-effort 로 실행한다 — 승격 경로의 실패가 이미 성공한
-            // 요약을 롤백시키면, 사용자는 LLM 비용을 치른 요약을 영구히 받지 못한다 (이슈 #219와
-            // 같은 계열의 사고다).
-            try {
-                crisisEpisodePromoter.promoteIfCrisis(
-                        enrichInput.userId(), enrichInput.sessionId(), enrichInput.episodeType());
-            } catch (Exception e) {
-                log.error("SessionConsolidator: crisis promotion failed but summary preserved sessionId={}",
-                        event.sessionId(), e);
-            }
 
-            try {
-                self.getObject().enrichMemory(enrichInput);
-            } catch (Exception e) {
-                log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
-                        event.sessionId(), e);
-            }
-
-            // 사용자 노출용 요약 렌더링 (이슈 #339). 블로킹 LLM 호출이므로 요약 트랜잭션 밖에서
-            // 실행하고, 쓰기만 별도 트랜잭션으로 분리한다.
-            // 실패해도 진행한다 — user_summary_text 가 비면 조회 시 summary_text 로 폴백되므로
-            // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
-            try {
-                String userSummary = sessionSummaryRenderer.render(
-                        enrichInput.summaryText(), event.characterId());
-                if (userSummary != null) {
-                    userSummaryWriter.write(enrichInput.sessionId(), userSummary);
-                }
-            } catch (Exception e) {
-                log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
-                        event.sessionId(), e);
-            }
-
-            // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
-            // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
-            int generatedTodoCount;
-            try {
-                generatedTodoCount = todoRecommendationService.generateForSession(
-                        enrichInput.userId(), enrichInput.sessionId(),
-                        new TodoRecommendationService.TodoGenerationInput(
-                                enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
-                                enrichInput.triggerTags(), enrichInput.summaryText()));
-            } catch (Exception e) {
-                log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
-                summaryStatusWriter.markFailed(event.sessionId());
-                return;
-            }
-            if (generatedTodoCount <= 0) {
-                log.warn("SessionConsolidator: no todo generated; summary not exposed sessionId={}",
-                        event.sessionId());
-                summaryStatusWriter.markFailed(event.sessionId());
-                return;
-            }
-            summaryStatusWriter.markDone(event.sessionId());
+        // 실시간 하네스가 놓친 위기를 사후 승격한다 (이슈 #256).
+        // 요약 트랜잭션이 커밋된 뒤 best-effort 로 실행한다 — 승격 경로의 실패가 이미 성공한
+        // 요약을 롤백시키면, 사용자는 LLM 비용을 치른 요약을 영구히 받지 못한다 (이슈 #219와
+        // 같은 계열의 사고다).
+        try {
+            crisisEpisodePromoter.promoteIfCrisis(
+                    enrichInput.userId(), enrichInput.sessionId(), enrichInput.episodeType());
+        } catch (Exception e) {
+            log.error("SessionConsolidator: crisis promotion failed but summary preserved sessionId={}",
+                    event.sessionId(), e);
         }
+
+        try {
+            self.getObject().enrichMemory(enrichInput);
+        } catch (Exception e) {
+            log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
+                    event.sessionId(), e);
+        }
+
+        // 사용자 노출용 요약 렌더링 (이슈 #339). 블로킹 LLM 호출이므로 요약 트랜잭션 밖에서
+        // 실행하고, 쓰기만 별도 트랜잭션으로 분리한다.
+        // 실패해도 진행한다 — user_summary_text 가 비면 조회 시 summary_text 로 폴백되므로
+        // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
+        try {
+            String userSummary = sessionSummaryRenderer.render(
+                    enrichInput.summaryText(), event.characterId());
+            if (userSummary != null) {
+                userSummaryWriter.write(enrichInput.sessionId(), userSummary);
+            }
+        } catch (Exception e) {
+            log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
+                    event.sessionId(), e);
+        }
+
+        // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
+        // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
+        int generatedTodoCount;
+        try {
+            generatedTodoCount = todoRecommendationService.generateForSession(
+                    enrichInput.userId(), enrichInput.sessionId(),
+                    new TodoRecommendationService.TodoGenerationInput(
+                            enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
+                            enrichInput.triggerTags(), enrichInput.summaryText()));
+        } catch (Exception e) {
+            log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
+            summaryStatusWriter.markFailed(event.sessionId());
+            return;
+        }
+        if (generatedTodoCount <= 0) {
+            log.warn("SessionConsolidator: no todo generated; summary not exposed sessionId={}",
+                    event.sessionId());
+            summaryStatusWriter.markFailed(event.sessionId());
+            return;
+        }
+        summaryStatusWriter.markDone(event.sessionId());
     }
 
     /**
