@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -30,8 +29,9 @@ public class StaleSummarySweepJob {
 
     private final SessionRepository sessionRepository;
 
+    // 트랜잭션 경계는 리포지터리 메서드에 있다. 여기에 @Transactional 을 걸면 커밋이 메서드
+    // 반환 뒤에 일어나 아래 catch 가 커밋 실패를 잡지 못한다.
     @Scheduled(fixedDelay = 5 * 60 * 1000)
-    @Transactional
     public void run() {
         OffsetDateTime cutoff = OffsetDateTime.now(ZoneOffset.UTC).minusMinutes(STALE_THRESHOLD_MINUTES);
         try {

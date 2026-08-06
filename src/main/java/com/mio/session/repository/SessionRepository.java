@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -69,8 +70,13 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
      * <p>WHERE 절이 실행 시점에 pending 을 다시 확인하므로, 뒤늦게 완료된 컨솔리데이션의
      * done 을 덮어쓰지 않는다.
      *
+     * <p>트랜잭션 경계를 이 메서드에 두어, 호출자의 try/catch 가 커밋 실패까지 감싸게 한다.
+     * 호출자 메서드에 {@code @Transactional} 을 걸면 커밋이 메서드 반환 뒤에 일어나 예외가
+     * catch 밖으로 새어 나간다.
+     *
      * @return 실패로 전환된 세션 수
      */
+    @Transactional
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Session s
