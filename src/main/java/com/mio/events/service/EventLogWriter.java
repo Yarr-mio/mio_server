@@ -2,6 +2,7 @@ package com.mio.events.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.events.config.EventSchemaProperties;
 import com.mio.events.config.EventWhitelist;
 import com.mio.events.dto.EventEnvelope;
 import lombok.RequiredArgsConstructor;
@@ -25,8 +26,10 @@ public class EventLogWriter {
 
     private static final Logger JOURNEY_LOG = LoggerFactory.getLogger("journey-events");
     private static final Logger JOURNEY_REJECTED_LOG = LoggerFactory.getLogger("journey-events-rejected");
+    private static final Logger JOURNEY_INTERNAL_LOG = LoggerFactory.getLogger("journey-events-internal");
 
     private final EventWhitelist eventWhitelist;
+    private final EventSchemaProperties eventSchemaProperties;
     private final ObjectMapper objectMapper;
 
     public void write(EventEnvelope event, String requestId) {
@@ -64,8 +67,13 @@ public class EventLogWriter {
         line.put("os_version", event.osVersion());
         line.put("properties", filteredProperties);
 
+        // 이슈 #353 — 검증 기기 트래픽은 버리지 않되 실사용자 지표 집계와 물리적으로 분리한다.
+        Logger destination = eventSchemaProperties.getInternalAnonymousIds().contains(event.anonymousId())
+                ? JOURNEY_INTERNAL_LOG
+                : JOURNEY_LOG;
+
         try {
-            JOURNEY_LOG.info(objectMapper.writeValueAsString(line));
+            destination.info(objectMapper.writeValueAsString(line));
         } catch (JsonProcessingException e) {
             // 이벤트 로그 기록 실패는 통계적 손실일 뿐 — 요청 자체를 막지 않는다 (감사로그와 다른 성격)
             log.error("Failed to serialize journey event: event_id={}", event.eventId(), e);

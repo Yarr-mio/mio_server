@@ -32,7 +32,7 @@ events:
   profile_submitted:
     age_range: {enum: ["10대", "20대", "30대", "40대+"]}
     gender: {enum: [male, female, other]}
-    employment_status: {enum: [job_seeker, employed]}
+    employment_status: {enum: [student_or_unemployed, job_seeker, employed]}
   signup_completed: {}
   onboarding_step_completed:
     step: {type: int}

@@ -6,9 +6,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MissingRequestHeaderException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
@@ -45,5 +47,25 @@ class GlobalExceptionHandlerTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
         assertThat(response.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isNull();
+    }
+
+    @Test
+    @DisplayName("이슈 #348 — X-Device-Id 같은 필수 헤더 누락은 500이 아니라 400을 반환한다")
+    void handleServletRequestBindingException_missingHeader_returns400() throws NoSuchMethodException {
+        when(request.getAttribute("traceId")).thenReturn("trace-3");
+        MethodParameter parameter = new MethodParameter(
+                GlobalExceptionHandlerTest.class.getDeclaredMethod("dummyEndpoint", String.class), 0);
+        MissingRequestHeaderException exception = new MissingRequestHeaderException("X-Device-Id", parameter);
+
+        ResponseEntity<ErrorResponse> response =
+                handler.handleServletRequestBindingException(exception, request);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThat(response.getBody().error().code()).isEqualTo(ErrorCode.INVALID_INPUT.getCode());
+        assertThat(response.getBody().error().traceId()).isEqualTo("trace-3");
+    }
+
+    @SuppressWarnings("unused")
+    private void dummyEndpoint(String deviceId) {
     }
 }

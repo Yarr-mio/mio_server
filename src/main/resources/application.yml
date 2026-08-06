@@ -148,3 +148,9 @@ events:
   # 이슈 #322 — 앱 버전 혼재 시 구버전이 영구 소실되는 걸 막기 위해 거부가 아니라
   # 통과+태깅으로 처리한다. 명세 개정 시 [3, 4]로 잠시 병행한다.
   accepted-schema-versions: [3]
+  # 이슈 #353 — 검증 기기 anonymous_id 목록. 여기 등록된 값은 journey-events가 아니라
+  # journey-events-internal로 격리된다(실사용자 지표 오염 방지). 빈 목록이면 기존과 동일하게
+  # 전부 journey-events로 간다 — 실제 검증 기기 값은 필요할 때 채운다.
+  internal-anonymous-ids: []
+  # journey-events-internal 전용 로그 파일 경로. journey-events/-rejected와 물리적으로 분리한다.
+  internal-log-file-path: ${EVENTS_INTERNAL_LOG_FILE_PATH:./logs/journey-events-internal.jsonl}
