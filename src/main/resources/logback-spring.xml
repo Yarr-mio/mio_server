@@ -54,6 +54,30 @@
         <appender-ref ref="JOURNEY_EVENTS_REJECTED"/>
     </logger>
 
+    <!--
+        이슈 #353: 검증 기기(events.internal-anonymous-ids) 이벤트를 journey-events와
+        물리적으로 분리한다 — 실사용자 지표 집계 파이프라인에 검증 트래픽이 섞여 들어가지
+        않게 한다. journey-events-rejected와 같은 패턴.
+    -->
+    <springProperty scope="context" name="journeyEventsInternalLogFile"
+                     source="events.internal-log-file-path" defaultValue="./logs/journey-events-internal.jsonl"/>
+
+    <appender name="JOURNEY_EVENTS_INTERNAL" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${journeyEventsInternalLogFile}</file>
+        <encoder>
+            <pattern>%msg%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${journeyEventsInternalLogFile}.%d{yyyy-MM-dd}</fileNamePattern>
+            <maxHistory>3</maxHistory>
+            <totalSizeCap>100MB</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <logger name="journey-events-internal" level="INFO" additivity="false">
+        <appender-ref ref="JOURNEY_EVENTS_INTERNAL"/>
+    </logger>
+
     <root level="INFO">
         <appender-ref ref="CONSOLE"/>
     </root>
