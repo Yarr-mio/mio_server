@@ -59,6 +59,29 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
     void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);
 
+    /**
+     * 유예 시간이 지나도 pending 인 종료 세션의 요약을 실패로 확정한다 (이슈 #356).
+     *
+     * <p>컨솔리데이션은 종료 트랜잭션 커밋 후 비동기로 돌기 때문에, 그 사이 서버가 재시작되면
+     * 상태가 pending 에 영구히 남는다. 요약 조회는 pending 을 202 로 응답하므로 클라이언트는
+     * 무한 로딩에 갇힌다. 되살릴 방법이 없는 상태를 종결시켜 사용자가 빠져나올 수 있게 한다.
+     *
+     * <p>WHERE 절이 실행 시점에 pending 을 다시 확인하므로, 뒤늦게 완료된 컨솔리데이션의
+     * done 을 덮어쓰지 않는다.
+     *
+     * @return 실패로 전환된 세션 수
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED
+            WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
+              AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
+              AND s.endedAt IS NOT NULL
+              AND s.endedAt <= :cutoff
+            """)
+    int markStalePendingSummariesFailed(@Param("cutoff") OffsetDateTime cutoff);
+
     @Query("SELECT s FROM Session s WHERE s.user.id = :userId AND s.startedAt >= :start AND s.startedAt < :end AND s.status = com.mio.session.domain.SessionStatus.ENDED AND s.endedAt IS NOT NULL")
     List<Session> findEndedSessionsByUserAndPeriod(@Param("userId") UUID userId,
                                                    @Param("start") OffsetDateTime start,

@@ -222,6 +222,25 @@ class SessionConsolidatorTest {
     }
 
     @Test
+    @DisplayName("요약할 대화가 없으면 pending 을 방치하지 않고 실패로 확정한다")
+    void onSessionEnded_whenNothingToSummarize_marksFailed() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        when(self.getObject()).thenReturn(proxy);
+        // 메시지 0건 세션·세션 부재·복호화 전량 실패는 모두 consolidate 가 null 을 반환한다.
+        when(proxy.consolidate(sessionId, userId, "mio", 0)).thenReturn(null);
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
+
+        // 상태를 그대로 두면 pending 에 영구 고착되어 요약 조회가 무한히 202 를 반환한다 (이슈 #356).
+        verify(summaryStatusWriter).markFailed(sessionId);
+        verify(summaryStatusWriter, never()).markDone(sessionId);
+        verifyNoInteractions(todoRecommendationService, crisisEpisodePromoter, sessionSummaryRenderer);
+    }
+
+    @Test
     @DisplayName("세션 종료 요약은 최근 40개로 자르지 않고 전체 대화를 시간순으로 조회한다")
     void loadConversationLines_does_not_limit_to_recent_40_messages() {
         SessionConsolidator consolidator = newConsolidator();
