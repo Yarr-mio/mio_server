@@ -10,9 +10,9 @@
 ALTER TABLE behavior_tasks
     ADD COLUMN template_code TEXT REFERENCES behavior_template(code);
 
--- 최근 발급 이력 조회는 (user_id, created_at DESC) 로 스캔한다.
-CREATE INDEX idx_behavior_tasks_user_created_at
-    ON behavior_tasks (user_id, created_at DESC);
+-- 인덱스는 새로 만들지 않는다. 최근 발급 이력 조회
+-- (WHERE user_id = ? ORDER BY created_at DESC)는 V5 에서 만든
+-- idx_behavior_tasks_user (user_id, created_at DESC) 가 그대로 커버한다.
 
 COMMENT ON COLUMN behavior_tasks.template_code IS
     '생성 출처 behavior_template.code. 최근 발급 감점 판정에 사용한다. 템플릿을 거치지 않은 생성 경로는 NULL.';
