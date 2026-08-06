@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -76,4 +77,38 @@ public interface MessageTurnRepository extends JpaRepository<MessageTurn, UUID> 
                      @Param("assistantMessageId") UUID assistantMessageId,
                      @Param("crisisSeverity") Integer crisisSeverity,
                      @Param("now") OffsetDateTime now);
+
+    /**
+     * 오래 {@code generating} 에 머문 턴을 터미널 상태로 회수한다 (이슈 #365).
+     *
+     * <p>프로세스가 죽으면 그 순간 진행 중이던 턴은 터미널 전이를 남기지 못한다. 회수하는
+     * 코드가 없으면 영원히 {@code generating} 으로 남는다 — 스키마는
+     * {@code idx_message_turns_generating} 부분 인덱스까지 두고 회수를 전제했지만 스위퍼가
+     * 없었다.
+     *
+     * <p><b>리스 토큰을 보지 않는다.</b> 회수 대상은 정의상 소유자가 사라진 턴이고, 살아 있는
+     * 시도는 {@code touchIfHeld} 로 {@code updated_at} 을 밀고 있으므로 시간 조건만으로
+     * 충분하다. 토큰까지 맞추려 하면 죽은 프로세스의 토큰을 알 방법이 없어 아무것도 회수하지
+     * 못한다.
+     *
+     * <p><b>트랜잭션 경계가 이 메서드 안에 있다.</b> 스케줄러 메서드에 {@code @Transactional}
+     * 을 걸면 커밋이 메서드 반환 뒤 프록시에서 일어나, 스케줄러를 지키려고 감싼
+     * {@code try/catch} 가 쿼리 실패만 잡고 커밋 실패는 놓친다 — 잡이 정상 종료한 것처럼
+     * 보이면서 회수는 일어나지 않는 조합이다.
+     *
+     * @return 회수한 턴 수
+     */
+    @Transactional
+    @Modifying(clearAutomatically = true)
+    @Query("""
+            update MessageTurn t
+               set t.status = com.mio.session.domain.TurnStatus.FAILED,
+                   t.finishedReason = :finishedReason,
+                   t.updatedAt = :now
+             where t.status = com.mio.session.domain.TurnStatus.GENERATING
+               and t.updatedAt < :staleBefore
+            """)
+    int abandonStaleGeneratingTurns(@Param("staleBefore") OffsetDateTime staleBefore,
+                                    @Param("finishedReason") String finishedReason,
+                                    @Param("now") OffsetDateTime now);
 }
