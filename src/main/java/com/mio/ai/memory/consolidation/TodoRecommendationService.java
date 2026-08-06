@@ -16,6 +16,7 @@ import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,16 +25,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
  * CBT 개입 완료 세션 종료 시 behavior_template 기반으로 Todo 3건 자동 생성 (MIO-CBT-015).
  * 3가지 카테고리(심리_안정 / 인지_재구성 / 행동_활성화) 각 1건씩 균형 배정.
  *
- * <p>선택은 세션 신호(전체 왜곡코드·지배 감정)로 템플릿을 스코어링하고, 최고점 동점 후보 중
- * 무작위로 뽑아 다양성을 확보한다. 이후 {@link TodoActionPersonalizer}가 선택된 템플릿의
- * action_text를 세션 맥락으로 개인화한다(실패 시 원본 문구 폴백). — 이슈 #228
+ * <p>선택은 세션 신호(전체 왜곡코드·지배 감정)로 템플릿을 스코어링한 뒤
+ * {@link ScoreWeightedSelector}로 가중 확률 추출한다. 이후 {@link TodoActionPersonalizer}가
+ * 선택된 템플릿의 action_text를 세션 맥락으로 개인화한다(실패 시 원본 문구 폴백). — 이슈 #228
+ *
+ * <p>최근 발급한 템플릿은 <b>후보에서 빼지 않고 감점</b>한다(이슈 #337). 배제하면 그 사용자에게
+ * 가장 잘 맞는 과제를 일정 기간 아예 못 주게 되고, 남은 후보가 적은 카테고리에서는 임상 적합도가
+ * 크게 떨어진다. 감점은 직전 세션 발급분의 선택 가중치를 약 0.37배로 낮출 뿐 여전히 뽑힐 수 있다.
  */
 @Slf4j
 @Service
@@ -44,9 +48,25 @@ public class TodoRecommendationService {
     private static final int TODOS_PER_SESSION = 3;
     private static final int DISTORTION_MATCH_WEIGHT = 2;
     private static final int EMOTION_MATCH_WEIGHT = 1;
-    // 과거 성과(intervention_outcomes) 반영 상한. 왜곡 매칭 1건(+2)과 동일 크기로 제한해
+    // 과거 성과(intervention_outcomes) 반영 상한. 왜곡 매칭 1건(+2)보다 작게 두어
     // 임상 적합도가 이력보다 우선하도록 한다.
-    private static final int HISTORY_AFFINITY_CAP = 2;
+    //
+    // 상한이 +2 였을 때는 긍정 반응이 쌓인 intervention_kind 가 왜곡 매칭 1건과 같은 무게를
+    // 얻어 상위에 고정됐다 — 좋아했던 과제일수록 계속 같은 것만 나오는 자기강화 루프다(이슈 #337).
+    private static final int HISTORY_AFFINITY_CAP = 1;
+
+    // 최근 발급 감점 — 배열 index 가 세션 거리(0 = 직전 세션)다.
+    // temperature 2.0 기준 감점 -2 는 선택 가중치 약 0.37배, -1 은 약 0.61배에 해당한다.
+    // 배제가 아니라 "덜 뽑히게" 하는 크기다.
+    private static final int[] RECENCY_PENALTY_BY_SESSION_DISTANCE = {2, 1};
+
+    // 감점 창(2세션)을 덮기에 충분한 조회 상한. 세션당 3건이므로 12건이면 4세션 분량이다.
+    private static final int RECENT_TEMPLATE_LOOKBACK = 12;
+
+    // softmax 온도. 낮을수록 최고점에 몰리고 높을수록 평평해진다. 2.0 은 시드 데이터 기준
+    // 임상 최적 후보를 여전히 최다 선택으로 유지하면서(예: self_blame+ashamed → 35% vs 차순위 13%)
+    // 연속 세션 동일 과제 확률을 65% → 7% 로 낮추는 지점이다.
+    private static final double SELECTION_TEMPERATURE = 2.0;
 
     private final BehaviorTemplateRepository templateRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
@@ -55,6 +75,7 @@ public class TodoRecommendationService {
     private final UserRepository userRepository;
     private final SessionRepository sessionRepository;
     private final TodoActionPersonalizer actionPersonalizer;
+    private final ScoreWeightedSelector selector;
     private final ObjectMapper objectMapper;
 
     /**
@@ -80,7 +101,9 @@ public class TodoRecommendationService {
         }
 
         Map<String, Integer> historyAffinity = loadHistoryAffinity(userId);
-        List<BehaviorTemplate> selected = selectBalanced(pool, distortions, emotion, historyAffinity);
+        Map<String, Integer> recencyPenalty = loadRecencyPenalty(userId);
+        List<BehaviorTemplate> selected =
+                selectBalanced(pool, distortions, emotion, historyAffinity, recencyPenalty);
         if (selected.isEmpty()) {
             return 0;
         }
@@ -116,10 +139,11 @@ public class TodoRecommendationService {
         return tasks.size();
     }
 
-    /** 카테고리별로 세션 신호 스코어 최고점 후보 중 무작위 1건 선택. */
+    /** 카테고리별로 세션 신호 스코어를 가중치로 환산해 1건씩 추출. */
     private List<BehaviorTemplate> selectBalanced(List<BehaviorTemplate> pool,
                                                   Set<String> distortions, String emotion,
-                                                  Map<String, Integer> historyAffinity) {
+                                                  Map<String, Integer> historyAffinity,
+                                                  Map<String, Integer> recencyPenalty) {
         Map<String, List<BehaviorTemplate>> byCategory = pool.stream()
                 .collect(Collectors.groupingBy(BehaviorTemplate::getCategory));
 
@@ -128,22 +152,22 @@ public class TodoRecommendationService {
             List<BehaviorTemplate> group = byCategory.getOrDefault(category, List.of());
             if (group.isEmpty()) continue;
 
-            int topScore = group.stream()
-                    .mapToInt(t -> score(t, distortions, emotion, historyAffinity))
-                    .max()
-                    .orElse(0);
-            List<BehaviorTemplate> best = group.stream()
-                    .filter(t -> score(t, distortions, emotion, historyAffinity) == topScore)
+            List<ScoreWeightedSelector.Scored<BehaviorTemplate>> scored = group.stream()
+                    .map(t -> new ScoreWeightedSelector.Scored<>(
+                            t, score(t, distortions, emotion, historyAffinity, recencyPenalty)))
                     .toList();
 
-            result.add(best.get(ThreadLocalRandom.current().nextInt(best.size())));
+            BehaviorTemplate picked = selector.select(scored, SELECTION_TEMPERATURE);
+            if (picked != null) {
+                result.add(picked);
+            }
             if (result.size() >= TODOS_PER_SESSION) break;
         }
         return result;
     }
 
     private int score(BehaviorTemplate template, Set<String> distortions, String emotion,
-                      Map<String, Integer> historyAffinity) {
+                      Map<String, Integer> historyAffinity, Map<String, Integer> recencyPenalty) {
         int score = 0;
         List<String> fitsDistortions = template.getFitsDistortions();
         if (fitsDistortions != null) {
@@ -160,7 +184,37 @@ public class TodoRecommendationService {
         }
         // 과거 성과: 감정이 개선됐던 개입은 가점, 악화됐던 개입은 감점 (상한/하한 클램프).
         score += historyAffinity.getOrDefault(template.getInterventionKind(), 0);
+        // 최근 발급: 가까운 세션에서 준 과제일수록 크게 감점한다. 배제가 아니라 확률 하향이다.
+        score -= recencyPenalty.getOrDefault(template.getCode(), 0);
         return score;
+    }
+
+    /**
+     * 최근 세션에서 발급한 템플릿의 감점을 세션 거리별로 집계한다 (이슈 #337).
+     *
+     * <p>조회는 최신순이므로 같은 코드가 여러 번 나오면 <b>먼저 만난 것이 더 가까운 세션</b>이다.
+     * {@code Math::max} 로 병합해 가장 최근 발급 기준 감점을 남긴다.
+     */
+    private Map<String, Integer> loadRecencyPenalty(UUID userId) {
+        List<BehaviorTaskRepository.RecentTemplateRow> rows =
+                behaviorTaskRepository.findRecentSessionTemplates(
+                        userId, PageRequest.of(0, RECENT_TEMPLATE_LOOKBACK));
+
+        List<UUID> sessionsNewestFirst = new ArrayList<>();
+        Map<String, Integer> penalty = new HashMap<>();
+        for (BehaviorTaskRepository.RecentTemplateRow row : rows) {
+            int distance = sessionsNewestFirst.indexOf(row.getSessionId());
+            if (distance < 0) {
+                sessionsNewestFirst.add(row.getSessionId());
+                distance = sessionsNewestFirst.size() - 1;
+            }
+            if (distance >= RECENCY_PENALTY_BY_SESSION_DISTANCE.length) {
+                continue;
+            }
+            penalty.merge(row.getTemplateCode(),
+                    RECENCY_PENALTY_BY_SESSION_DISTANCE[distance], Math::max);
+        }
+        return penalty;
     }
 
     /**
@@ -197,6 +251,7 @@ public class TodoRecommendationService {
                 .difficulty(template.getDifficulty())
                 .estimatedMinutes(template.getEstimatedMinutes())
                 .interventionKind(template.getInterventionKind())
+                .templateCode(template.getCode())
                 .build();
     }
 

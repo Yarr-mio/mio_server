@@ -1,5 +1,6 @@
 package com.mio.character.service;
 
+import com.mio.character.domain.CharacterPersona;
 import com.mio.character.dto.*;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -16,7 +17,10 @@ import java.util.*;
 @RequiredArgsConstructor
 public class CharacterService {
 
-    private static final Set<String> VALID_IDS = Set.of("mio", "bau", "rumi", "momo", "chichi");
+    // 유효 id 는 CharacterPersona 를 단일 출처로 삼는다 (이슈 #339). 캐릭터를 추가할 때
+    // 어조 정의와 허용 목록이 따로 놀지 않게 한다. 아래 카탈로그의 사용자 노출 문구
+    // (설명·태그·인사말)는 표현 층이 아니라 제품 카피라 여기 남겨 둔다.
+    private static final Set<String> VALID_IDS = CharacterPersona.validIds();
 
     // 내부 카탈로그 (character_id → CharacterDto)
     private static final Map<String, CharacterDto> CATALOG_MAP;

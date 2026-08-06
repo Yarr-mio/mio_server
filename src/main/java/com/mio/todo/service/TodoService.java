@@ -86,8 +86,11 @@ public class TodoService {
     }
 
     private boolean isExpired(BehaviorTask task, LocalDate today) {
+        // Postgres 세션 타임존이 UTC라 DB에서 다시 읽은 OffsetDateTime은 +00:00으로 오는데,
+        // KST 00:00~08:59에 생성된 값은 그대로 toLocalDate()하면 UTC 기준 "전날"이 나온다.
+        // atZoneSameInstant로 KST 인스턴트를 다시 계산해야 오프셋과 무관하게 날짜가 맞는다.
         return TaskStatus.SUGGESTED == task.getStatus()
-                && task.getCreatedAt().toLocalDate().isBefore(today);
+                && task.getCreatedAt().atZoneSameInstant(AppConstants.ZONE).toLocalDate().isBefore(today);
     }
 
     private TaskStatus effectiveStatus(BehaviorTask task, LocalDate today) {
