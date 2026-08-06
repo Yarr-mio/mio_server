@@ -18,4 +18,7 @@ import java.util.List;
 public class EventSchemaProperties {
 
     private List<Integer> acceptedSchemaVersions = List.of(3);
+
+    // 이슈 #353 — 검증 기기 격리. 비어 있으면(기본값) 전부 journey-events로 간다.
+    private List<String> internalAnonymousIds = List.of();
 }
