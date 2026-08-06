@@ -97,6 +97,8 @@ public class SessionConsolidator {
     private final ObjectMapper objectMapper;
     private final OntologyValidator ontologyValidator;
     private final TodoRecommendationService todoRecommendationService;
+    private final SessionSummaryRenderer sessionSummaryRenderer;
+    private final UserSummaryWriter userSummaryWriter;
     private final SummaryStatusWriter summaryStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
@@ -152,6 +154,21 @@ public class SessionConsolidator {
                 self.getObject().enrichMemory(enrichInput);
             } catch (Exception e) {
                 log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
+                        event.sessionId(), e);
+            }
+
+            // 사용자 노출용 요약 렌더링 (이슈 #339). 블로킹 LLM 호출이므로 요약 트랜잭션 밖에서
+            // 실행하고, 쓰기만 별도 트랜잭션으로 분리한다.
+            // 실패해도 진행한다 — user_summary_text 가 비면 조회 시 summary_text 로 폴백되므로
+            // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
+            try {
+                String userSummary = sessionSummaryRenderer.render(
+                        enrichInput.summaryText(), event.characterId());
+                if (userSummary != null) {
+                    userSummaryWriter.write(enrichInput.sessionId(), userSummary);
+                }
+            } catch (Exception e) {
+                log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                         event.sessionId(), e);
             }
 

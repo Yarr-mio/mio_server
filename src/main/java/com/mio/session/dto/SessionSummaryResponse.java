@@ -61,7 +61,7 @@ public record SessionSummaryResponse(
                 session.getEndedAt(),
                 session.durationSeconds(),
                 session.getMessageCount(),
-                summary.getSummaryText(),
+                userFacingSummary(summary),
                 summary.getDominantEmotion(),
                 session.getAvgEmotionScore(),
                 summary.getBiasTypesDetected(),
@@ -70,5 +70,16 @@ public record SessionSummaryResponse(
                 summary.getSocraticCount(),
                 todos.stream().map(TodoItem::from).toList()
         );
+    }
+
+    /**
+     * 사용자 노출용 요약을 고른다 (이슈 #339).
+     *
+     * <p>렌더링이 끝난 세션은 캐릭터 톤 요약을, 아직 없는 세션(기존 데이터·렌더링 실패)은
+     * 내부용 요약을 그대로 내보낸다. 톤은 아쉬워도 요약이 사라지는 것보다 낫다.
+     */
+    private static String userFacingSummary(SessionSummary summary) {
+        String rendered = summary.getUserSummaryText();
+        return rendered != null && !rendered.isBlank() ? rendered : summary.getSummaryText();
     }
 }

@@ -50,6 +50,8 @@ class SessionConsolidatorTest {
     private SessionRepository sessionRepository;
     private TodoRecommendationService todoRecommendationService;
     private SummaryStatusWriter summaryStatusWriter;
+    private SessionSummaryRenderer sessionSummaryRenderer;
+    private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
     private ObjectProvider<SessionConsolidator> self;
 
@@ -63,6 +65,8 @@ class SessionConsolidatorTest {
         sessionRepository = mock(SessionRepository.class);
         todoRecommendationService = mock(TodoRecommendationService.class);
         summaryStatusWriter = mock(SummaryStatusWriter.class);
+        sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
+        userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
@@ -88,6 +92,8 @@ class SessionConsolidatorTest {
                 new ObjectMapper(),
                 mock(OntologyValidator.class),
                 todoRecommendationService,
+                sessionSummaryRenderer,
+                userSummaryWriter,
                 summaryStatusWriter,
                 crisisEpisodePromoter,
                 selfProvider
@@ -130,6 +136,69 @@ class SessionConsolidatorTest {
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
+    }
+
+    @Test
+    @DisplayName("사용자 노출용 요약은 내부 요약과 세션 캐릭터로 렌더링해 저장한다")
+    void onSessionEnded_persistsRenderedUserSummary() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "내부 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "chichi", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
+        when(sessionSummaryRenderer.render("내부 요약", "chichi")).thenReturn("오늘 이야기 정리해봤어요.");
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "chichi", 2));
+
+        verify(sessionSummaryRenderer).render("내부 요약", "chichi");
+        verify(userSummaryWriter).write(sessionId, "오늘 이야기 정리해봤어요.");
+        verify(summaryStatusWriter).markDone(sessionId);
+    }
+
+    @Test
+    @DisplayName("렌더링이 계약 위반으로 비면 저장을 건너뛰고 요약은 그대로 노출한다")
+    void onSessionEnded_whenRenderReturnsNull_skipsWriteButKeepsSummary() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "내부 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
+        when(sessionSummaryRenderer.render(any(), any())).thenReturn(null);
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verifyNoInteractions(userSummaryWriter);
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+    }
+
+    @Test
+    @DisplayName("렌더링이 예외로 죽어도 요약과 Todo 흐름은 그대로 완료된다")
+    void onSessionEnded_whenRenderThrows_summaryStillCompletes() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "내부 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
+        when(sessionSummaryRenderer.render(any(), any())).thenThrow(new RuntimeException("LLM down"));
+
+        assertThatCode(() -> consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2)))
+                .doesNotThrowAnyException();
+
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
     }
 
     @Test

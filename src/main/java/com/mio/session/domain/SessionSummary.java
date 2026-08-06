@@ -33,8 +33,19 @@ public class SessionSummary {
     @Column(name = "character_id", nullable = false)
     private String characterId;
 
+    /**
+     * 내부용 요약. ExtractorLLM 과 Retriever 3종이 읽는 기억 원문이라 분석 시점으로 쓰여 있다.
+     * 사용자에게 그대로 노출하지 않는다 — {@link #userSummaryText} 참조.
+     */
     @Column(name = "summary_text", nullable = false)
     private String summaryText;
+
+    /**
+     * 사용자 노출용 요약 (이슈 #339). 캐릭터 톤의 해요체로 렌더링한 결과.
+     * 렌더링 실패·기존 세션은 null 이며, 조회 시 {@link #summaryText} 로 폴백한다.
+     */
+    @Column(name = "user_summary_text")
+    private String userSummaryText;
 
     /** AES-256 암호화된 요약 원문 */
     @Column(name = "summary_ciphertext")
