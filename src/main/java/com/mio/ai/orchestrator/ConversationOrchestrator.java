@@ -10,6 +10,7 @@ import com.mio.ai.memory.ontology.OntologyRelationExpander;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivationDispatcher;
 import com.mio.ai.memory.ontology.ReactiveOntologyEligibility;
+import com.mio.ai.memory.retrieval.MemoryContextResult;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -218,8 +219,9 @@ public class ConversationOrchestrator {
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
-            String liveMemory = contextPreWarmer.buildContextSync(
+            MemoryContextResult liveMemoryResult = contextPreWarmer.buildContextSync(
                     sessionId, userId, combined, profile, normalized, userSignal.biasType());
+            String liveMemory = liveMemoryResult.text();
             boolean memoryCacheFallbackUsed = (liveMemory == null || liveMemory.isBlank())
                     && cachedMemory != null && !cachedMemory.isBlank();
             String memoryContext = memoryCacheFallbackUsed ? cachedMemory : liveMemory;
@@ -428,8 +430,10 @@ public class ConversationOrchestrator {
                         try {
                             judgeActionResult = judgeFuture.orTimeout(5, TimeUnit.SECONDS).join();
                         } catch (Exception e) {
+                            // 타임아웃은 판정이 아니다 (이슈 #364). 동작은 REPLACE 로 같지만
+                            // trace 에는 판정 실패로 남아야 REPLACE 판정률과 섞이지 않는다.
                             log.warn("OutputJudge async failed, defaulting to REPLACE: {}", e.getMessage());
-                            judgeActionResult = OutputJudgeResult.replace();
+                            judgeActionResult = OutputJudgeResult.fallback();
                         }
                         log.warn("OutputGuard action: session={} action={}", sessionId,
                                 judgeActionResult.action());
@@ -539,7 +543,7 @@ public class ConversationOrchestrator {
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, heldBackChars);
+                    firstSubstantiveTokenMs, heldBackChars, liveMemoryResult);
 
             emitter.complete();
 

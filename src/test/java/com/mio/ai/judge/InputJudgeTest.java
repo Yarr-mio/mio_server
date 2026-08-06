@@ -167,7 +167,8 @@ class InputJudgeTest {
                 return responseJson;
             }
         };
-        return new InputJudge(llmClient, new com.fasterxml.jackson.databind.ObjectMapper());
+        return new InputJudge(llmClient, new com.fasterxml.jackson.databind.ObjectMapper(),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
     /**

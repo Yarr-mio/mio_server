@@ -8,9 +8,11 @@ import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmUsage;
+import com.mio.ai.memory.retrieval.MemoryContextResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponsePlan;
+import com.mio.ai.policy.JudgeStatus;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
 import com.mio.ai.safety.SafetyL1Result;
@@ -62,7 +64,8 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
-            int heldBackChars) {
+            int heldBackChars,
+            MemoryContextResult memoryContextResult) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -71,7 +74,7 @@ public class AiDecisionLogger {
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, heldBackChars);
+                    firstSubstantiveTokenMs, heldBackChars, memoryContextResult);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -123,7 +126,7 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
                 preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
                 memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
-                ResponseContractResult.notApplicable(), -1, 0);
+                ResponseContractResult.notApplicable(), -1, 0, null);
     }
 
     /** Phase 1 호환 오버로드 */
@@ -142,7 +145,7 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
                 "default", false, false, false, decision.crisisTrigger(), null,
-                ResponseContractResult.notApplicable(), -1, 0);
+                ResponseContractResult.notApplicable(), -1, 0, null);
     }
 
     private Map<String, Object> buildTrace(
@@ -163,7 +166,8 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
-            int heldBackChars) {
+            int heldBackChars,
+            MemoryContextResult memoryContextResult) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -201,6 +205,16 @@ public class AiDecisionLogger {
         // 위기 이력을 확인하지 못한 턴은 임계값·force_judge 가 실제 이력과 무관하게 결정된다.
         trace.put("safety_profile_degraded", safetyProfileDegraded);
         trace.put("memory_cache_hit", memoryCacheHit);
+        // 검색이 실패한 턴과 "관련 기억이 없는" 턴을 구분한다 (이슈 #364, §10.1).
+        //   retrieval_status == null      → 이 턴은 검색을 돌리지 않았다 (호환 오버로드 경로)
+        //   OK                            → 계획한 소스가 전부 응답했다. 결과가 비어도 정상이다
+        //   PARTIAL                       → 일부 소스가 죽었다. retrieval_failed_sources 참조
+        //   FAILED                        → 컨텍스트 조립 자체가 실패했다
+        // 이 값이 없으면 DB 장애로 기억 없이 생성된 턴이 신규 사용자와 완전히 동일하게 보인다.
+        trace.put("retrieval_status",
+                memoryContextResult != null ? memoryContextResult.status().name() : null);
+        trace.put("retrieval_failed_sources",
+                memoryContextResult != null ? memoryContextResult.failedSourcesLabel() : null);
         // LLM 관련 필드는 전부 null 이 될 수 있고, null 은 각각 다른 뜻이다.
         //   llmUsage == null              → 이 턴은 LLM 을 호출하지 않았다 (보안 거절·위기·폴백)
         //   llmUsage.resolved() == false  → 호출했지만 사용량을 받지 못했다
@@ -241,6 +255,12 @@ public class AiDecisionLogger {
                 ? preFilterResult.failReasons() : null);
         trace.put("output_judge_action", outputJudgeResult != null
                 ? outputJudgeResult.action().name() : null);
+        // action 만으로는 "위험하다고 판정해서 REPLACE" 와 "판정을 못 받아서 REPLACE" 가
+        // 구별되지 않는다 (이슈 #364). Input Judge 의 judge_status 와 같은 계약이다.
+        //   SKIPPED   → Judge 를 부르지 않았다 (pre-filter 통과)
+        //   SUCCEEDED → 판정을 받았다
+        //   FAILED    → 예외·타임아웃·파싱 실패. 동작은 REPLACE 지만 판정은 없다
+        trace.put("output_judge_status", outputJudgeStatus(outputJudgeResult));
         trace.put("crisis_flow_triggered", crisisFlowTriggered);
         // 위기 진입 경로. 이게 없으면 "왜 위기로 갔는지"를 사후에 알 수 없고, 특히 자해 질의가
         // 거절이 아니라 위기로 라우팅됐는지 확인할 방법이 없다. 조작 시도 쪽은 action 이
@@ -254,6 +274,19 @@ public class AiDecisionLogger {
         trace.put("total_pipeline_ms", totalMs);
 
         return trace;
+    }
+
+    /**
+     * Output Judge 호출 상태 (이슈 #364).
+     *
+     * <p>Input Judge 의 {@code judge_status} 와 같은 세 값을 쓴다. 두 판정원이 다른 어휘를
+     * 쓰면 실패율을 한 쿼리로 볼 수 없다.
+     */
+    private String outputJudgeStatus(OutputJudgeResult result) {
+        if (result == null) {
+            return JudgeStatus.SKIPPED.name();
+        }
+        return result.failed() ? JudgeStatus.FAILED.name() : JudgeStatus.SUCCEEDED.name();
     }
 
     /** 사용량을 실제로 받았을 때만 토큰 수를 남긴다. 못 받았으면 0 이 아니라 null 이다. */

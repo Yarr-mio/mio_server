@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -43,8 +44,12 @@ public class OutputJudge {
     private static final String SAFE_FALLBACK =
             "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
 
+    /** 판정 호출 결과 카운터 (이슈 #364). 실패율을 알람으로 걸 수 있어야 한다. */
+    private static final String OUTPUT_JUDGE_METRIC = "mio.judge.output";
+
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult) {
         try {
@@ -52,10 +57,14 @@ public class OutputJudge {
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
                     .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
             String responseJson = llmClient.completeJson(request);
-            return parseJudgeResult(responseJson);
+            OutputJudgeResult result = parseJudgeResult(responseJson);
+            meterRegistry.counter(OUTPUT_JUDGE_METRIC, "outcome", "succeeded").increment();
+            return result;
         } catch (Exception e) {
+            // 동작은 그대로 REPLACE 다. 달라지는 것은 이것이 판정이 아니라 판정 실패라는 표시다.
             log.warn("OutputJudge failed, defaulting to REPLACE: {}", e.getMessage());
-            return OutputJudgeResult.replace();
+            meterRegistry.counter(OUTPUT_JUDGE_METRIC, "outcome", "failed").increment();
+            return OutputJudgeResult.fallback();
         }
     }
 
