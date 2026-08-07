@@ -1,0 +1,127 @@
+name: Crisis Eval (full path)
+
+# 위기 탐지 전체 경로 평가 — 릴리스 게이트 (이슈 #371, 로드맵 §12 P0-1)
+#
+# 왜 기본 CI 에 넣지 않는가.
+#   이 평가는 실 InputJudge 를 172건 코퍼스에 통과시키므로 실행마다 과금된다(약 $0.05).
+#   매 PR 마다 돌리면 비용이 감당되지 않는다.
+#
+# 왜 그래도 워크플로로 두는가.
+#   지금까지 이 평가는 "각자 로컬에서 알아서 돌리는 것" 이었다. 그래서 (1) 실행 방식이
+#   사람마다 다르고, (2) 실행 기록이 저장소에 남지 않으며, (3) 아카이브가 보존되지 않았다.
+#   실제로 커밋된 아카이브 4건은 전부 dirty worktree 에서 나왔고, 최신본조차 P0-3·P0-4
+#   머지 이전이다 — 재현 가능한 기준선이 하나도 없다는 뜻이다.
+#
+#   수동 트리거라도 워크플로가 있으면 위 셋이 해결된다. 게이트가 깨지면 빨간불이 뜬다.
+#
+# 언제 돌리는가.
+#   main 머지 전, 그리고 SafetyL1·InputJudge 프롬프트·PolicyEngine 을 바꾼 PR 에서.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: '평가할 브랜치 또는 커밋 (비우면 기본 브랜치)'
+        required: false
+        type: string
+      archive:
+        description: '결과를 docs/eval/runs 경로 규칙으로 남길지 (아티팩트 업로드는 항상 함)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  crisis-eval:
+    runs-on: ubuntu-latest
+    # 172건 × 실 LLM 호출. 로컬 실측 약 50초지만 API 지연을 넉넉히 잡는다.
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: mio
+          POSTGRES_USER: mio
+          POSTGRES_PASSWORD: mio
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # 아카이브에 "dirty worktree" 가 아닌 리비전이 찍히도록 커밋 해시를 남긴다.
+      # 기준선이 어느 코드에서 나왔는지 복원할 수 없으면 회귀 비교가 불가능하다.
+      - name: Record revision
+        run: |
+          echo "평가 리비전: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          git status --porcelain | head -20
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run crisis full-path evaluation
+        run: |
+          ./gradlew test -PllmTests \
+            -PevalArchiveDir=docs/eval/runs \
+            --tests "com.mio.ai.qa.CrisisDetectionFullPathQaTest" \
+            --tests "com.mio.ai.qa.CrisisDetectionCorpusQaTest"
+        env:
+          SPRING_PROFILES_ACTIVE: local
+          DB_URL: jdbc:postgresql://localhost:5432/mio
+          DB_USERNAME: mio
+          DB_PASSWORD: mio
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_PASSWORD: ""
+          JWT_SECRET: ci-test-secret-key-minimum-256bits-long-for-hs256-algorithm-padding
+          JWT_ACCESS_TOKEN_EXPIRE_MS: 900000
+          JWT_REFRESH_TOKEN_EXPIRE_MS: 2592000000
+          APP_ENCRYPTION_KEY: Y2l0ZXN0a2V5MzJieXRlc2xvbmdrZXlmb3JhZXM=
+          APP_BELIEF_IDENTITY_HMAC_KEY: ci-test-belief-identity-hmac-key-at-least-32-bytes
+          APPLE_APP_ID: com.example.mio
+          APPLE_JWKS_URL: https://appleid.apple.com/auth/keys
+          KAKAO_APP_ID: 0
+          # 이 워크플로의 존재 이유. 기본 CI 는 placeholder 를 넣어 이 평가를 건너뛴다.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # 게이트가 깨져도 결과는 봐야 원인을 안다.
+      - name: Upload eval archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crisis-eval-runs
+          path: docs/eval/runs/
+          retention-days: 90
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crisis-eval-test-report
+          path: build/reports/tests/
+          retention-days: 30
