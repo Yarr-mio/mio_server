@@ -128,4 +128,14 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             @Param("increment") int increment,
             @Param("lastMessageAt") OffsetDateTime lastMessageAt
     );
+
+    /**
+     * 사용자의 모든 세션 ID (이슈 #373).
+     *
+     * <p>Redis 캐시 키가 {@code session:{sessionId}:*} 라 사용자 단위 purge 를 하려면
+     * 세션 ID 목록이 필요하다. 엔티티 전체를 읽으면 삭제 한 번에 세션 수만큼의 행을
+     * 메모리에 올리게 되므로 ID 만 가져온다.
+     */
+    @Query("SELECT s.id FROM Session s WHERE s.user.id = :userId")
+    List<UUID> findAllIdsByUserId(@Param("userId") UUID userId);
 }

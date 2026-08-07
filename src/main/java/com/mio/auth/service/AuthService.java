@@ -5,6 +5,7 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.user.domain.DataDeletionRequest;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserConsent;
@@ -12,6 +13,7 @@ import com.mio.user.domain.UserDevice;
 import com.mio.user.repository.UserConsentRepository;
 import com.mio.user.repository.UserDeviceRepository;
 import com.mio.user.repository.UserRepository;
+import com.mio.user.service.DataDeletionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -45,8 +47,7 @@ public class AuthService {
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
     private final AuditLogService auditLogService;
-
-    private static final int WITHDRAW_RETENTION_DAYS = 30;
+    private final DataDeletionService dataDeletionService;
 
     @Transactional
     public LoginResponse login(LoginRequest request) {
@@ -231,12 +232,19 @@ public class AuthService {
         String anonymizedSocialId = sha256(user.getSocialId());
         user.softDelete(anonymizedSocialId);
 
+        // 삭제 요청을 같은 트랜잭션에서 접수한다 (이슈 #373). 소프트 삭제만 커밋되고
+        // 요청이 없으면 "탈퇴했는데 삭제 작업이 없는" 사용자가 생기고, 그 사용자의 데이터는
+        // 아무도 지우지 않는다. scheduled_at 은 여기서 계산해 고정한다 — 정책이 바뀌어도
+        // 이미 접수된 요청의 약속은 바뀌지 않아야 한다.
+        DataDeletionRequest deletionRequest =
+                dataDeletionService.requestDeletion(userId, user.getDeletedAt());
+
         auditLogService.record(userId, "USER_WITHDRAW", "user", userId.toString(), Map.of(
                 "anonymized_at", user.getDeletedAt().toString(),
-                "hard_delete_scheduled_at", user.getDeletedAt().plusDays(WITHDRAW_RETENTION_DAYS).toString()
+                "hard_delete_scheduled_at", deletionRequest.getScheduledAt().toString()
         ));
 
-        return new WithdrawResponse(user.getDeletedAt());
+        return new WithdrawResponse(user.getDeletedAt(), deletionRequest.getScheduledAt());
     }
 
     private SocialAuthProvider getProvider(String providerName) {

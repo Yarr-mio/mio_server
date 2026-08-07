@@ -38,6 +38,9 @@ class AuthServiceTest {
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private AuditLogService auditLogService;
 
+    @Mock
+    private com.mio.user.service.DataDeletionService dataDeletionService;
+
     private AuthService authService;
 
     private static final UUID USER_ID = UUID.randomUUID();
@@ -51,7 +54,8 @@ class AuthServiceTest {
                 .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
-                userDeviceRepository, jwtTokenService, refreshTokenService, auditLogService
+                userDeviceRepository, jwtTokenService, refreshTokenService, auditLogService,
+                dataDeletionService
         );
     }
 
@@ -338,15 +342,24 @@ class AuthServiceTest {
     void withdraw_anonymizesSocialIdAndSetsDeleted() {
         User user = buildUser(USER_ID, "kakao", "original-social-id", SignupStep.COMPLETED, "ACTIVE");
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        // 탈퇴는 삭제 요청 접수와 한 트랜잭션이다 (이슈 #373). 접수가 없으면 "탈퇴했는데
+        // 삭제 작업이 없는" 사용자가 되고, 그 데이터는 아무도 지우지 않는다.
+        var deletionRequest = com.mio.user.domain.DataDeletionRequest.open(
+                USER_ID, java.time.OffsetDateTime.now().plusDays(30));
+        when(dataDeletionService.requestDeletion(eq(USER_ID), any())).thenReturn(deletionRequest);
 
-        authService.withdraw(USER_ID);
+        var response = authService.withdraw(USER_ID);
 
         verify(refreshTokenService).invalidateAll(USER_ID.toString());
         verify(userDeviceRepository).deleteAllByUser_Id(USER_ID);
+        verify(dataDeletionService).requestDeletion(eq(USER_ID), any());
         assertThat(user.getStatus()).isEqualTo("DELETED");
         assertThat(user.getSocialId()).isNotEqualTo("original-social-id"); // SHA-256 해시로 대체
         assertThat(user.getNickname()).isEqualTo("탈퇴한 사용자");
         assertThat(user.getEmail()).isNull();
+        // 응답의 예정 시각은 접수된 요청이 들고 있는 값이어야 한다 — 응답에서 다시 계산하면
+        // 실제 배치가 지우는 시점과 어긋난다.
+        assertThat(response.hardDeleteScheduledAt()).isEqualTo(deletionRequest.getScheduledAt());
     }
 
     // ──────────────── helpers ────────────────
