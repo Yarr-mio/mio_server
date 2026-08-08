@@ -36,17 +36,25 @@ public interface DeviceTokenRepository extends JpaRepository<DeviceToken, UUID> 
                                          @Param("token") String token);
 
     /**
-     * 토큰을 등록한 적은 있으나 현재 유효 토큰이 0개인 유저를 집계한다 (이슈 #392).
+     * 토큰을 등록한 적은 있으나 현재 유효 토큰이 0개인 <b>발송 대상 유저</b>를 집계한다 (이슈 #392).
      *
      * <p>APNs 400/410 응답으로 토큰이 무효화된 뒤 앱이 재등록을 호출하지 않으면 그 유저의 발송은
      * 전부 유령 SENT 가 된다. 무효화 자체는 정상 동작이므로 없애지 않고, 끊긴 유저를 관측 가능하게 만든다.
+     *
+     * <p>탈퇴·정지 유저는 애초에 발송 대상이 아니므로 목록에서 제외한다. 판정 기준은 스케줄 발송 대상
+     * 조회({@code NotificationSettingRepository#findSendableTargets}, 이슈 #388)와 동일하게
+     * {@code deleted_at IS NULL AND status NOT IN ('DELETED', 'SUSPENDED')} 를 쓴다. 두 곳이 다른
+     * 기준을 쓰면 "발송은 되는데 목록에는 없는" 유저가 생겨 관측 자체를 신뢰할 수 없게 된다.
      */
     @Query("""
-            select d.user.id as userId,
+            select u.id as userId,
                    max(d.updatedAt) as lastTokenUpdatedAt,
-                   count(d) as invalidTokenCount
+                   sum(case when d.isValid = false then 1 else 0 end) as invalidTokenCount
             from DeviceToken d
-            group by d.user.id
+            join d.user u
+            where u.deletedAt is null
+              and u.status not in ('DELETED', 'SUSPENDED')
+            group by u.id
             having sum(case when d.isValid = true then 1 else 0 end) = 0
             order by max(d.updatedAt) desc
             """)

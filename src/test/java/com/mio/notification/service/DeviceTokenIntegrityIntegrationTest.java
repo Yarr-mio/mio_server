@@ -1,5 +1,7 @@
 package com.mio.notification.service;
 
+import com.mio.common.error.BusinessException;
+import com.mio.common.error.ErrorCode;
 import com.mio.notification.dto.DeviceTokenRegisterRequest;
 import com.mio.notification.dto.StaleDeviceTokenUserResponse;
 import com.mio.user.domain.User;
@@ -23,6 +25,11 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -144,6 +151,82 @@ class DeviceTokenIntegrityIntegrationTest {
                         """,
                 userB.getId(), "device-" + UUID.randomUUID(), pushToken))
                 .isInstanceOf(DuplicateKeyException.class);
+    }
+
+    @Test
+    @DisplayName("한 유저가 기기 2대에 등록하면 둘 다 유효하게 유지된다")
+    void register_sameUserTwoDevices_bothStayValid() {
+        String deviceOne = "device-" + UUID.randomUUID();
+        String deviceTwo = "device-" + UUID.randomUUID();
+
+        deviceTokenService.register(userA.getId(),
+                new DeviceTokenRegisterRequest(deviceOne, "apns-" + UUID.randomUUID(), "ios", "1.2.0"));
+        deviceTokenService.register(userA.getId(),
+                new DeviceTokenRegisterRequest(deviceTwo, "apns-" + UUID.randomUUID(), "android", "1.2.0"));
+
+        Long validCount = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM device_tokens WHERE user_id = ? AND is_valid", Long.class, userA.getId());
+
+        assertThat(validCount).isEqualTo(2L);
+    }
+
+    /**
+     * 두 계정이 같은 기기 토큰을 동시에 등록하는 경합. 서로의 미커밋 행을 볼 수 없어 나중에 커밋하는
+     * 쪽이 부분 유니크 인덱스를 위반한다. 재시도 없이는 그 요청이 500 으로 새면서 등록이 유실된다.
+     */
+    @Test
+    @DisplayName("두 계정이 같은 기기 토큰을 동시에 등록해도 500 없이 유효 행이 하나만 남는다")
+    void register_concurrentSameDevice_doesNotLeak500() throws Exception {
+        String deviceId = "device-" + UUID.randomUUID();
+        String pushToken = "apns-" + UUID.randomUUID();
+        CyclicBarrier startLine = new CyclicBarrier(2);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+
+        try {
+            List<Future<Throwable>> results = List.of(userA, userB).stream()
+                    .map(user -> pool.submit(() -> {
+                        try {
+                            startLine.await(5, TimeUnit.SECONDS);
+                            deviceTokenService.register(user.getId(),
+                                    new DeviceTokenRegisterRequest(deviceId, pushToken, "ios", "1.2.0"));
+                            return (Throwable) null;
+                        } catch (Throwable t) {
+                            return t;
+                        }
+                    }))
+                    .toList();
+
+            for (Future<Throwable> result : results) {
+                Throwable failure = result.get(20, TimeUnit.SECONDS);
+                // 경합에서 밀렸다면 재시도 가능한 409 여야 하고, 500 으로 새는 원시 예외는 허용하지 않는다.
+                if (failure != null) {
+                    assertThat(failure).isInstanceOf(BusinessException.class);
+                    assertThat(((BusinessException) failure).getErrorCode())
+                            .isEqualTo(ErrorCode.DEVICE_TOKEN_REGISTER_CONFLICT);
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        Long validCount = jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM device_tokens WHERE device_id = ? AND is_valid", Long.class, deviceId);
+        assertThat(validCount).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("탈퇴한 유저는 유효 토큰이 0개여도 조회 대상에서 빠진다")
+    void findUsersWithoutValidToken_excludesWithdrawnUsers() {
+        deviceTokenService.register(userA.getId(),
+                new DeviceTokenRegisterRequest("device-" + UUID.randomUUID(),
+                        "apns-" + UUID.randomUUID(), "ios", "1.2.0"));
+        jdbcTemplate.update("UPDATE device_tokens SET is_valid = false WHERE user_id = ?", userA.getId());
+        jdbcTemplate.update(
+                "UPDATE users SET status = 'DELETED', deleted_at = now() WHERE id = ?", userA.getId());
+
+        List<StaleDeviceTokenUserResponse> stale = deviceTokenService.findUsersWithoutValidToken();
+
+        assertThat(stale).extracting(StaleDeviceTokenUserResponse::userId).doesNotContain(userA.getId());
     }
 
     @Test
