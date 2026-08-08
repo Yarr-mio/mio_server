@@ -18,7 +18,7 @@ ALTER TABLE proactive_care_logs
     ADD COLUMN failure_reason TEXT;
 
 COMMENT ON COLUMN proactive_care_logs.failure_reason IS
-    '발송 실패 사유. APNs 는 HTTP 상태와 reason(APNS_410:Unregistered), FCM 은 오류 코드(FCM_UNREGISTERED). 성공 시 NULL.';
+    '발송 실패 사유. APNs 는 HTTP 상태와 reason(APNS_410:Unregistered), FCM 은 오류 코드(FCM_UNREGISTERED). 일부 단말만 실패한 경우 notification_status=SENT 이면서 사유가 남는다. 전부 성공 시 NULL.';
 
 ALTER TABLE proactive_care_logs
     DROP CONSTRAINT IF EXISTS proactive_care_logs_notification_status_check;

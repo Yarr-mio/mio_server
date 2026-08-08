@@ -22,9 +22,17 @@ public record NotificationDeliveryResult(String status, String failureReason) {
         }
     }
 
-    /** 최소 1개 단말에 발송이 성공한 경우. */
+    /** 모든 단말에 발송이 성공한 경우. */
     public static NotificationDeliveryResult sent() {
-        return new NotificationDeliveryResult(ProactiveCareLog.STATUS_SENT, null);
+        return sent(List.of());
+    }
+
+    /**
+     * 최소 1개 단말에 발송이 성공한 경우. 일부 단말이 실패했다면 그 사유도 함께 남긴다 —
+     * iOS 는 실패하고 Android 만 성공한 상황을 사후에 추적할 수 있어야 한다.
+     */
+    public static NotificationDeliveryResult sent(List<String> partialFailureReasons) {
+        return new NotificationDeliveryResult(ProactiveCareLog.STATUS_SENT, joinReasons(partialFailureReasons));
     }
 
     /** 보낼 유효 디바이스 토큰이 없어 발송을 시도조차 하지 않은 경우. */
@@ -32,20 +40,28 @@ public record NotificationDeliveryResult(String status, String failureReason) {
         return new NotificationDeliveryResult(ProactiveCareLog.STATUS_NO_DEVICE, NO_DEVICE_REASON);
     }
 
-    /** 발송을 시도했으나 모든 단말에서 실패한 경우. 사유는 중복을 제거해 합친다. */
+    /** 발송을 시도했으나 모든 단말에서 실패한 경우. */
     public static NotificationDeliveryResult failed(List<String> reasons) {
+        return new NotificationDeliveryResult(ProactiveCareLog.STATUS_FAILED, joinReasons(reasons));
+    }
+
+    /** 사유는 중복을 제거해 합친다. 남길 사유가 없으면 null. */
+    private static String joinReasons(List<String> reasons) {
         String joined = reasons.stream()
                 .filter(Objects::nonNull)
                 .filter(reason -> !reason.isBlank())
                 .distinct()
                 .collect(Collectors.joining(REASON_DELIMITER));
-        return new NotificationDeliveryResult(
-                ProactiveCareLog.STATUS_FAILED,
-                joined.isBlank() ? null : joined
-        );
+        return joined.isBlank() ? null : joined;
     }
 
-    /** 실제로 단말까지 발송된 결과인지 여부 — 일일 한도 차감·재발송 억제의 기준이 된다. */
+    /**
+     * 실제로 단말까지 발송된 결과인지 여부 — 일일 한도 차감의 기준이 된다.
+     *
+     * <p>{@code SENT} 만 검사하는 것으로 충분하다. 이 record 는 신규 기록 시점의 결과만 표현하며,
+     * 그 시점에 {@code DELIVERED}·{@code OPENED} 는 나올 수 없다. 이미 저장된 행을 대상으로 하는
+     * 판정은 {@link ProactiveCareLog#DELIVERED_STATUSES} 를 쓴다.
+     */
     public boolean isDelivered() {
         return ProactiveCareLog.STATUS_SENT.equals(status);
     }

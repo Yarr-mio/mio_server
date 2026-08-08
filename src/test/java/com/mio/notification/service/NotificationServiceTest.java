@@ -326,6 +326,79 @@ class NotificationServiceTest {
     }
 
     @Test
+    @DisplayName("[#396] 일부 단말만 실패하면 SENT로 기록하면서 실패 사유는 보존한다")
+    void sendNotificationToUser_partialFailure_keepsFailureReason() {
+        DeviceToken iosToken = DeviceToken.builder()
+                .user(user).deviceId("device-ios").platform("ios").token("apns-token").build();
+        DeviceToken androidToken = DeviceToken.builder()
+                .user(user).deviceId("device-android").platform("android").token("fcm-token").build();
+        setField(iosToken, "id", UUID.randomUUID());
+        setField(androidToken, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
+                .thenReturn(List.of(iosToken, androidToken));
+        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
+        when(pushSender.send("fcm-token", "android", "제목", "본문"))
+                .thenReturn(PushSendResult.sent());
+
+        notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("todo_incomplete"), captor.capture(), eq(List.of(iosToken.getId())), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_SENT);
+        assertThat(captor.getValue().isDelivered()).isTrue();
+        assertThat(captor.getValue().failureReason()).isEqualTo("APNS_410:Unregistered");
+    }
+
+    @Test
+    @DisplayName("[#387] NO_DEVICE 로그는 읽음 처리해도 OPENED로 전이되지 않는다")
+    void markNotificationAsRead_noDeviceLog_doesNotTransitionToOpened() {
+        UUID notificationId = UUID.randomUUID();
+        ProactiveCareLog logEntry = ProactiveCareLog.builder()
+                .id(notificationId)
+                .user(user)
+                .triggerCode("checkin_reminder_evening")
+                .notificationStatus(ProactiveCareLog.STATUS_NO_DEVICE)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
+
+        NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
+
+        // OPENED 가 되면 DELIVERED_STATUSES 에 편입돼 억제·한도에 새어 들어간다
+        assertThat(logEntry.getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        assertThat(ProactiveCareLog.DELIVERED_STATUSES).doesNotContain(logEntry.getNotificationStatus());
+        assertThat(logEntry.getRespondedAt()).isNull();
+        assertThat(logEntry.getResponseAction()).isNull();
+        assertThat(response.notificationStatus()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        assertThat(response.respondedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("[#387] FAILED 로그도 읽음 처리로 OPENED가 되지 않는다")
+    void markNotificationAsRead_failedLog_doesNotTransitionToOpened() {
+        UUID notificationId = UUID.randomUUID();
+        ProactiveCareLog logEntry = ProactiveCareLog.builder()
+                .id(notificationId)
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus(ProactiveCareLog.STATUS_FAILED)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
+
+        NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
+
+        assertThat(logEntry.getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_FAILED);
+        assertThat(ProactiveCareLog.DELIVERED_STATUSES).doesNotContain(logEntry.getNotificationStatus());
+        assertThat(logEntry.getRespondedAt()).isNull();
+        assertThat(response.notificationStatus()).isEqualTo(ProactiveCareLog.STATUS_FAILED);
+    }
+
+    @Test
     @DisplayName("[#389] 재발송 억제는 실제로 발송된 상태의 이력만 대상으로 한다")
     void processScheduledNotifications_suppressionChecksDeliveredStatusesOnly() {
         OffsetDateTime fixedNow = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);

@@ -185,7 +185,10 @@ public class NotificationService {
         notificationPersistenceService.persistNotificationResult(
                 user.getId(),
                 triggerCode,
-                anySucceeded ? NotificationDeliveryResult.sent() : NotificationDeliveryResult.failed(failureReasons),
+                // 부분 실패도 사유를 남긴다 — 한 단말만 성공했다고 나머지 실패 사유를 버리면 안 된다.
+                anySucceeded
+                        ? NotificationDeliveryResult.sent(failureReasons)
+                        : NotificationDeliveryResult.failed(failureReasons),
                 tokensToInvalidate,
                 countTowardDailyLimit
         );

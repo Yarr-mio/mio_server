@@ -230,12 +230,15 @@ public class PushSender {
             FirebaseMessaging.getInstance().send(message);
             return PushSendResult.sent();
         } catch (FirebaseMessagingException e) {
-            String failureReason = "FCM_" + e.getMessagingErrorCode();
-            if (e.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
+            MessagingErrorCode errorCode = e.getMessagingErrorCode();
+            String failureReason = "FCM_" + errorCode;
+            if (errorCode == MessagingErrorCode.UNREGISTERED) {
                 log.warn("FCM token expired: {}", maskToken(fcmToken));
                 return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);
             }
-            log.warn("FCM rejected token {}: code={}", maskToken(fcmToken), e.getMessagingErrorCode());
+            // UNREGISTERED 외의 오류는 개별 토큰 문제가 아니라 쿼터 소진·FCM 장애일 수 있다.
+            // 대량 장애를 ERROR 알람으로 잡을 수 있도록 심각도를 낮추지 않는다.
+            log.error("FCM send failed for token {}: code={}", maskToken(fcmToken), errorCode);
             return PushSendResult.of(PushSendStatus.FAILED, failureReason);
         }
     }
