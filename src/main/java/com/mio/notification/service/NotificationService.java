@@ -134,7 +134,7 @@ public class NotificationService {
         }
         logEntry.markOpened();
         proactiveCareLogRepository.save(logEntry);
-        return new NotificationReadResponse(logEntry.getId(), logEntry.getNotificationStatus(), logEntry.getRespondedAt());
+        return NotificationReadResponse.from(logEntry);
     }
 
     public void processScheduledNotifications() {
@@ -168,6 +168,7 @@ public class NotificationService {
         }
 
         boolean anySucceeded = false;
+        boolean anyAmbiguous = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
         List<String> failureReasons = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
@@ -175,6 +176,7 @@ public class NotificationService {
             if (result.isSent()) {
                 anySucceeded = true;
             } else {
+                anyAmbiguous |= result.isAmbiguous();
                 failureReasons.add(result.failureReason());
             }
             if (result.invalidatesToken()) {
@@ -185,13 +187,31 @@ public class NotificationService {
         notificationPersistenceService.persistNotificationResult(
                 user.getId(),
                 triggerCode,
-                // 부분 실패도 사유를 남긴다 — 한 단말만 성공했다고 나머지 실패 사유를 버리면 안 된다.
-                anySucceeded
-                        ? NotificationDeliveryResult.sent(failureReasons)
-                        : NotificationDeliveryResult.failed(failureReasons),
+                resolveDeliveryResult(anySucceeded, anyAmbiguous, failureReasons),
                 tokensToInvalidate,
                 countTowardDailyLimit
         );
+    }
+
+    /**
+     * 발송 결과를 기록할 상태로 접는다.
+     *
+     * <p>성공한 단말이 없을 때 {@code FAILED} 와 {@code UNCONFIRMED} 를 가른다. 게이트웨이가 명시적으로
+     * 거절했다면 확실히 미발송이므로 다음 틱에 재시도해야 하지만(#389), 타임아웃처럼 응답을 못 받은
+     * 경우는 이미 발송됐을 수 있어 재시도하면 유저 기기에 푸시가 두 번 도착한다.
+     */
+    private NotificationDeliveryResult resolveDeliveryResult(
+            boolean anySucceeded,
+            boolean anyAmbiguous,
+            List<String> failureReasons
+    ) {
+        if (anySucceeded) {
+            // 부분 실패도 사유를 남긴다 — 한 단말만 성공했다고 나머지 실패 사유를 버리면 안 된다.
+            return NotificationDeliveryResult.sent(failureReasons);
+        }
+        return anyAmbiguous
+                ? NotificationDeliveryResult.unconfirmed(failureReasons)
+                : NotificationDeliveryResult.failed(failureReasons);
     }
 
     private void evaluateAndSend(NotificationSetting setting, OffsetDateTime now) {
@@ -343,11 +363,12 @@ public class NotificationService {
     }
 
     private boolean shouldSuppressTrigger(UUID userId, String triggerCode, OffsetDateTime now) {
-        // 실제로 발송된 이력만 24시간 재발송을 억제한다. 실패·미발송 건은 재시도를 막지 않는다.
+        // 확실히 미발송인 건(FAILED·NO_DEVICE)은 재시도를 막지 않는다. 발송 여부가 불명인 건은
+        // 중복 도착을 피하려고 억제한다 — 그래서 일일 한도 기준과 다른 집합을 쓴다.
         return proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
                 userId,
                 triggerCode,
-                ProactiveCareLog.DELIVERED_STATUSES,
+                ProactiveCareLog.SUPPRESSING_STATUSES,
                 now.minusHours(24)
         );
     }
@@ -365,7 +386,7 @@ public class NotificationService {
 
         OffsetDateTime from = now.toLocalDate().atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
         OffsetDateTime to = from.plusDays(1);
-        // 실제로 발송된 이력만 일일 한도에 반영한다.
+        // 발송이 확인된 이력만 일일 한도에 반영한다 (불명 건은 제외 — 억제 기준과 다르다).
         return proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
                 userId,
                 ProactiveCareLog.DELIVERED_STATUSES,

@@ -26,6 +26,11 @@ public record PushSendResult(PushSendStatus status, String failureReason) {
         return status == PushSendStatus.SENT;
     }
 
+    /** 발송 여부를 알 수 없는 결과인지 — 재시도하면 중복 발송이 될 수 있다. */
+    public boolean isAmbiguous() {
+        return status == PushSendStatus.AMBIGUOUS;
+    }
+
     /** 토큰이 더 이상 유효하지 않아 무효화해야 하는 결과인지 여부. */
     public boolean invalidatesToken() {
         return status == PushSendStatus.TOKEN_EXPIRED || status == PushSendStatus.INVALID_TOKEN;

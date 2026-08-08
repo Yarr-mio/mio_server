@@ -40,9 +40,17 @@ public record NotificationDeliveryResult(String status, String failureReason) {
         return new NotificationDeliveryResult(ProactiveCareLog.STATUS_NO_DEVICE, NO_DEVICE_REASON);
     }
 
-    /** 발송을 시도했으나 모든 단말에서 실패한 경우. */
+    /** 발송을 시도했고 모든 단말이 게이트웨이에서 <b>명시적으로 거절</b>된 경우 — 확실히 미발송. */
     public static NotificationDeliveryResult failed(List<String> reasons) {
         return new NotificationDeliveryResult(ProactiveCareLog.STATUS_FAILED, joinReasons(reasons));
+    }
+
+    /**
+     * 성공한 단말이 없고, 최소 1개 단말의 결과가 불명(타임아웃 등)인 경우.
+     * 이미 발송됐을 수 있으므로 재발송 억제 대상이지만, 일일 한도에는 넣지 않는다.
+     */
+    public static NotificationDeliveryResult unconfirmed(List<String> reasons) {
+        return new NotificationDeliveryResult(ProactiveCareLog.STATUS_UNCONFIRMED, joinReasons(reasons));
     }
 
     /** 사유는 중복을 제거해 합친다. 남길 사유가 없으면 null. */

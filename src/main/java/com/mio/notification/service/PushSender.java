@@ -147,8 +147,10 @@ public class PushSender {
                 return PushSendResult.of(PushSendStatus.SKIPPED, "UNSUPPORTED_PLATFORM:" + platform);
             }
         } catch (Exception e) {
+            // 요청은 나갔는데 응답을 못 받은 것일 수 있다(타임아웃 등). 게이트웨이가 이미 처리했다면
+            // 재시도가 중복 발송이 되므로, 확실한 실패와 구분해 AMBIGUOUS 로 분류한다.
             log.error("Push send failed for platform={} token={}: {}", platform, maskToken(token), e.getMessage());
-            return PushSendResult.of(PushSendStatus.FAILED, "EXCEPTION:" + e.getClass().getSimpleName());
+            return PushSendResult.of(PushSendStatus.AMBIGUOUS, "EXCEPTION:" + e.getClass().getSimpleName());
         }
     }
 
@@ -232,6 +234,11 @@ public class PushSender {
         } catch (FirebaseMessagingException e) {
             MessagingErrorCode errorCode = e.getMessagingErrorCode();
             String failureReason = "FCM_" + errorCode;
+            if (errorCode == null) {
+                // FCM 오류 코드가 없으면 전송 계층 실패다 — 도달 여부를 알 수 없다.
+                log.error("FCM send failed without error code for token {}: {}", maskToken(fcmToken), e.getMessage());
+                return PushSendResult.of(PushSendStatus.AMBIGUOUS, "FCM_TRANSPORT_ERROR");
+            }
             if (errorCode == MessagingErrorCode.UNREGISTERED) {
                 log.warn("FCM token expired: {}", maskToken(fcmToken));
                 return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);

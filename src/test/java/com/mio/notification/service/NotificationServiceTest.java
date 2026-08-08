@@ -5,6 +5,7 @@ import com.mio.checkin.repository.CheckinRepository;
 import com.mio.notification.domain.DeviceToken;
 import com.mio.notification.domain.NotificationSetting;
 import com.mio.notification.domain.ProactiveCareLog;
+import com.mio.notification.dto.NotificationHistoryItemResponse;
 import com.mio.notification.dto.NotificationHistoryResponse;
 import com.mio.notification.dto.NotificationReadResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
@@ -52,6 +53,9 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class NotificationServiceTest {
+
+    /** API 명세(10_Notification_알림.md §알림 수신 상태)에 고정된 노출값. 이 밖의 값은 나갈 수 없다. */
+    private static final List<String> DOCUMENTED_STATUSES = List.of("SENT", "DELIVERED", "OPENED", "FAILED");
 
     @Mock private UserRepository userRepository;
     @Mock private DeviceTokenRepository deviceTokenRepository;
@@ -373,8 +377,77 @@ class NotificationServiceTest {
         assertThat(ProactiveCareLog.DELIVERED_STATUSES).doesNotContain(logEntry.getNotificationStatus());
         assertThat(logEntry.getRespondedAt()).isNull();
         assertThat(logEntry.getResponseAction()).isNull();
-        assertThat(response.notificationStatus()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        // 응답은 문서화된 4종 안에 있어야 한다 — 내부값 NO_DEVICE 는 FAILED 로 접어서 내보낸다
+        assertThat(response.notificationStatus()).isEqualTo("FAILED");
         assertThat(response.respondedAt()).isNull();
+    }
+
+    @Test
+    @DisplayName("[계약] 읽음 처리 응답의 상태값은 문서화된 4종을 벗어나지 않는다")
+    void markNotificationAsRead_noDeviceLog_exposesDocumentedStatusOnly() {
+        UUID notificationId = UUID.randomUUID();
+        ProactiveCareLog logEntry = ProactiveCareLog.builder()
+                .id(notificationId)
+                .user(user)
+                .triggerCode("checkin_reminder_evening")
+                .notificationStatus(ProactiveCareLog.STATUS_NO_DEVICE)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
+
+        NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
+
+        assertThat(response.notificationStatus()).isIn(DOCUMENTED_STATUSES);
+        assertThat(response.notificationStatus()).isNotEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        assertThat(response.notificationId()).isEqualTo(notificationId);
+    }
+
+    @Test
+    @DisplayName("[계약] 알림 이력의 NO_DEVICE 항목은 FAILED로 노출된다")
+    void getNotificationHistory_noDeviceLog_exposedAsFailed() {
+        ProactiveCareLog noDeviceLog = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus(ProactiveCareLog.STATUS_NO_DEVICE)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+                .thenReturn(List.of(noDeviceLog));
+
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
+
+        assertThat(response.items()).hasSize(1);
+        assertThat(response.items().get(0).notificationStatus()).isEqualTo("FAILED");
+        assertThat(response.items().get(0).notificationStatus()).isIn(DOCUMENTED_STATUSES);
+        // 내부 저장값은 그대로 유지된다 — 구분은 억제·한도·지표에 계속 필요하다
+        assertThat(noDeviceLog.getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+    }
+
+    @Test
+    @DisplayName("[계약] 발송된 알림의 상태값은 매핑 없이 그대로 노출된다")
+    void getNotificationHistory_deliveredStatuses_passThroughUnchanged() {
+        ProactiveCareLog sentLog = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus(ProactiveCareLog.STATUS_SENT)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        ProactiveCareLog openedLog = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("todo_incomplete")
+                .notificationStatus(ProactiveCareLog.STATUS_OPENED)
+                .sentAt(OffsetDateTime.now(fixedClock).minusMinutes(1))
+                .build();
+        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+                .thenReturn(List.of(sentLog, openedLog));
+
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
+
+        assertThat(response.items()).extracting(NotificationHistoryItemResponse::notificationStatus)
+                .containsExactly(ProactiveCareLog.STATUS_SENT, ProactiveCareLog.STATUS_OPENED);
     }
 
     @Test
@@ -399,8 +472,8 @@ class NotificationServiceTest {
     }
 
     @Test
-    @DisplayName("[#389] 재발송 억제는 실제로 발송된 상태의 이력만 대상으로 한다")
-    void processScheduledNotifications_suppressionChecksDeliveredStatusesOnly() {
+    @DisplayName("[#389] 재발송 억제는 확실한 미발송 건을 제외하고 불명 건은 포함한다")
+    void processScheduledNotifications_suppressionChecksSuppressingStatusesOnly() {
         OffsetDateTime fixedNow = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
         NotificationSetting setting = NotificationSetting.builder().user(user).build();
         setField(setting, "checkinMorningTime", fixedNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
@@ -424,8 +497,11 @@ class NotificationServiceTest {
         verify(proactiveCareLogRepository).existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
                 eq(userId), eq("checkin_reminder_morning"), statusCaptor.capture(), any());
         assertThat(statusCaptor.getValue())
-                .containsExactlyInAnyOrderElementsOf(ProactiveCareLog.DELIVERED_STATUSES)
-                .doesNotContain(ProactiveCareLog.STATUS_FAILED, ProactiveCareLog.STATUS_NO_DEVICE);
+                .containsExactlyInAnyOrderElementsOf(ProactiveCareLog.SUPPRESSING_STATUSES)
+                // 확실한 미발송은 재시도 대상이라 억제 기준에 없다
+                .doesNotContain(ProactiveCareLog.STATUS_FAILED, ProactiveCareLog.STATUS_NO_DEVICE)
+                // 발송 여부가 불명인 건은 중복 도착을 막기 위해 억제한다
+                .contains(ProactiveCareLog.STATUS_UNCONFIRMED);
         // 억제되지 않았으므로 발송 경로까지 진행된다
         verify(notificationPersistenceService).persistNotificationResult(
                 eq(userId), eq("checkin_reminder_morning"), any(), any(), eq(true));
@@ -452,8 +528,129 @@ class NotificationServiceTest {
                 eq(userId), statusCaptor.capture(), any(), any());
         assertThat(statusCaptor.getValue())
                 .containsExactlyInAnyOrderElementsOf(ProactiveCareLog.DELIVERED_STATUSES)
-                .doesNotContain(ProactiveCareLog.STATUS_FAILED, ProactiveCareLog.STATUS_NO_DEVICE);
+                // 한도는 "실제로 몇 건 나갔나"이므로 불명 건까지 차감하면 안 된다 (억제 기준과 다른 지점)
+                .doesNotContain(
+                        ProactiveCareLog.STATUS_FAILED,
+                        ProactiveCareLog.STATUS_NO_DEVICE,
+                        ProactiveCareLog.STATUS_UNCONFIRMED);
         verifyNoInteractions(notificationPersistenceService);
+    }
+
+    @Test
+    @DisplayName("[중복발송] 타임아웃 등 발송 여부 불명은 FAILED가 아닌 UNCONFIRMED로 기록한다")
+    void sendNotificationToUser_ambiguousResult_recordsUnconfirmed() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("ios").token("apns-token").build();
+        setField(token, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "EXCEPTION:HttpTimeoutException"));
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), captor.capture(), eq(List.of()), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_UNCONFIRMED);
+        // 다음 틱에서 재발송되면 유저 기기에 두 번 도착한다 → 억제 대상
+        assertThat(ProactiveCareLog.SUPPRESSING_STATUSES).contains(captor.getValue().status());
+        // 실제로 나갔는지 모르므로 일일 한도에는 넣지 않는다
+        assertThat(ProactiveCareLog.DELIVERED_STATUSES).doesNotContain(captor.getValue().status());
+        assertThat(captor.getValue().isDelivered()).isFalse();
+        // "타임아웃이라 재시도 안 했다"를 사후에 추적할 수 있어야 한다
+        assertThat(captor.getValue().failureReason()).isEqualTo("EXCEPTION:HttpTimeoutException");
+    }
+
+    @Test
+    @DisplayName("[중복발송] 게이트웨이가 명시적으로 거절한 건은 FAILED로 남아 재시도 대상이 된다")
+    void sendNotificationToUser_explicitRejection_staysRetryable() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("ios").token("apns-token").build();
+        setField(token, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), captor.capture(), any(), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_FAILED);
+        // 확실히 미발송이므로 억제하지 않는다 — #389 가 의도한 재시도
+        assertThat(ProactiveCareLog.SUPPRESSING_STATUSES).doesNotContain(captor.getValue().status());
+    }
+
+    @Test
+    @DisplayName("[중복발송] 한 단말이라도 불명이면 나머지가 확실한 실패여도 UNCONFIRMED로 접는다")
+    void sendNotificationToUser_mixedFailures_prefersUnconfirmed() {
+        DeviceToken iosToken = DeviceToken.builder()
+                .user(user).deviceId("device-ios").platform("ios").token("apns-token").build();
+        DeviceToken androidToken = DeviceToken.builder()
+                .user(user).deviceId("device-android").platform("android").token("fcm-token").build();
+        setField(iosToken, "id", UUID.randomUUID());
+        setField(androidToken, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
+                .thenReturn(List.of(iosToken, androidToken));
+        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
+        when(pushSender.send("fcm-token", "android", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "FCM_TRANSPORT_ERROR"));
+
+        notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("todo_incomplete"), captor.capture(), eq(List.of(iosToken.getId())), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_UNCONFIRMED);
+        assertThat(captor.getValue().failureReason())
+                .isEqualTo("APNS_410:Unregistered; FCM_TRANSPORT_ERROR");
+    }
+
+    @Test
+    @DisplayName("[계약] UNCONFIRMED 항목도 응답에서는 FAILED로 노출된다")
+    void getNotificationHistory_unconfirmedLog_exposedAsFailed() {
+        ProactiveCareLog unconfirmedLog = ProactiveCareLog.builder()
+                .id(UUID.randomUUID())
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus(ProactiveCareLog.STATUS_UNCONFIRMED)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+                .thenReturn(List.of(unconfirmedLog));
+
+        NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
+
+        assertThat(response.items().get(0).notificationStatus()).isEqualTo("FAILED");
+        assertThat(response.items().get(0).notificationStatus()).isIn(DOCUMENTED_STATUSES);
+        assertThat(unconfirmedLog.getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_UNCONFIRMED);
+    }
+
+    @Test
+    @DisplayName("[#387] UNCONFIRMED 로그도 읽음 처리로 OPENED가 되지 않는다")
+    void markNotificationAsRead_unconfirmedLog_doesNotTransitionToOpened() {
+        UUID notificationId = UUID.randomUUID();
+        ProactiveCareLog logEntry = ProactiveCareLog.builder()
+                .id(notificationId)
+                .user(user)
+                .triggerCode("checkin_reminder_morning")
+                .notificationStatus(ProactiveCareLog.STATUS_UNCONFIRMED)
+                .sentAt(OffsetDateTime.now(fixedClock))
+                .build();
+        when(proactiveCareLogRepository.findById(notificationId)).thenReturn(Optional.of(logEntry));
+
+        NotificationReadResponse response = notificationService.markNotificationAsRead(userId, notificationId);
+
+        assertThat(logEntry.getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_UNCONFIRMED);
+        assertThat(ProactiveCareLog.DELIVERED_STATUSES).doesNotContain(logEntry.getNotificationStatus());
+        assertThat(response.notificationStatus()).isEqualTo("FAILED");
     }
 
     @Test
