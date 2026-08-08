@@ -234,7 +234,7 @@ class DeviceTokenServiceTest {
                     assertThat(errorCode).isEqualTo(ErrorCode.DEVICE_TOKEN_REGISTER_CONFLICT);
                     assertThat(errorCode.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
-        verify(deviceTokenRepository, times(3)).save(any());
+        verify(deviceTokenRepository, times(5)).save(any());
     }
 
     @Test

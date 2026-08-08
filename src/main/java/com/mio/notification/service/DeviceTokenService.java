@@ -18,15 +18,28 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceTokenService {
 
-    /** 경합 재시도 횟수. 충돌 상대가 커밋을 끝내면 다음 시도에서 그 행을 보고 회수한다. */
-    private static final int MAX_REGISTER_ATTEMPTS = 3;
+    /**
+     * 경합 재시도 횟수. 충돌 상대가 커밋을 끝내면 다음 시도에서 그 행을 보고 회수하므로, 회차가 늘수록
+     * 성공 확률이 올라간다. 409 로 떨어지는 경로를 최대한 좁히려고 넉넉히 잡았다.
+     */
+    private static final int MAX_REGISTER_ATTEMPTS = 5;
+
+    /**
+     * 재시도 지연: {@code 20ms * 회차 + 0~20ms 지터}.
+     *
+     * <p>고정 지연만 쓰면 배포 직후처럼 다수 기기가 한꺼번에 재등록할 때 밀려난 요청들이 같은 타이밍에
+     * 깨어나 다시 충돌한다. 지터로 깨어나는 시점을 흩어 재충돌 확률을 낮춘다. 4회 재시도 기준 총 지연은
+     * 최악이라도 (20+40+60+80) + 최대 80 = 280ms 로, 요청 응답으로 체감되지 않는 선이다.
+     */
     private static final long RETRY_BACKOFF_MILLIS = 20L;
+    private static final long RETRY_JITTER_MILLIS = 20L;
 
     private final DeviceTokenRepository deviceTokenRepository;
     private final UserRepository userRepository;
@@ -42,7 +55,8 @@ public class DeviceTokenService {
      * <p>두 계정이 거의 동시에 등록하면 서로의 미커밋 행을 볼 수 없어 나중에 커밋하는 쪽이 부분 유니크
      * 인덱스를 위반한다. 이때 500 으로 새어 등록이 유실되지 않도록, 트랜잭션 경계를 메서드 밖으로 꺼내
      * <b>짧은 backoff 후 새 트랜잭션에서 재시도</b>한다. 재시도는 이미 커밋된 상대 행을 보고 정상적으로
-     * 회수한다. 끝내 실패하면 재시도 가능한 409 로 응답한다.
+     * 회수한다. {@value #MAX_REGISTER_ATTEMPTS} 회를 모두 소진해야만 409 로 응답하며, 이 엔드포인트는
+     * 앱 시작 시마다 호출되므로 그마저도 다음 실행에서 자동 복구된다.
      *
      * <p>기존 행이 무효화된 상태였다면 {@link DeviceToken#refreshToken} 이 다시 유효로 되돌린다.
      * APNs 거절로 끊긴 유저의 유일한 복구 경로이므로 (이슈 #392) 이 동작을 유지한다.
@@ -131,8 +145,10 @@ public class DeviceTokenService {
     }
 
     private void backoff(int attempt) {
+        long delay = RETRY_BACKOFF_MILLIS * attempt
+                + ThreadLocalRandom.current().nextLong(RETRY_JITTER_MILLIS + 1);
         try {
-            Thread.sleep(RETRY_BACKOFF_MILLIS * attempt);
+            Thread.sleep(delay);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new BusinessException(ErrorCode.DEVICE_TOKEN_REGISTER_CONFLICT);
