@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       {@code SENT} 만 세면 사용자가 열람한 알림이 곧바로 재발송된다</li>
  *   <li>{@code UNCONFIRMED} 행은 <b>억제는 걸지만 한도에는 잡히지 않는다</b> — 억제 기준
  *       ({@code SUPPRESSING_STATUSES})과 한도 기준({@code DELIVERED_STATUSES})이 갈리는 지점이다</li>
- *   <li>{@code NO_DEVICE}·{@code UNCONFIRMED} 가 {@code notification_status} CHECK 제약을 통과한다 (V53)</li>
+ *   <li>{@code NO_DEVICE}·{@code UNCONFIRMED} 가 {@code notification_status} CHECK 제약을 통과한다 (V55)</li>
  * </ul>
  */
 @SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
