@@ -41,6 +41,7 @@ import com.mio.common.error.ErrorCode;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -329,6 +330,134 @@ class NotificationServiceTest {
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(notificationSettingRepository).findSendableTargets(pageableCaptor.capture());
         assertThat(pageableCaptor.getValue().getSort().getOrderFor("id")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("판정 창 시작 경계(설정 시각 정각)에는 발송한다")
+    void isDue_windowStart_sends() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:00:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("판정 창 끝 직전(설정 시각 +9분)에는 발송한다")
+    void isDue_justBeforeWindowEnd_sends() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:09:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("판정 창을 벗어나면(설정 시각 +10분) 발송하지 않는다")
+    void isDue_windowEnd_doesNotSend() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:10:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("설정 시각 이전(-1분)에는 발송하지 않는다")
+    void isDue_beforeTarget_doesNotSend() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T12:59:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘기는 설정 시각(23:55)도 다음 날 00:04까지 발송한다")
+    void isDue_windowCrossingMidnight_sends() {
+        runEveningScenario(LocalTime.of(23, 55), "2026-05-26T15:04:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘긴 뒤 판정 창을 벗어나면(00:05) 발송하지 않는다")
+    void isDue_afterWindowCrossingMidnight_doesNotSend() {
+        runEveningScenario(LocalTime.of(23, 55), "2026-05-26T15:05:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("새벽 시각(01:08)으로 설정한 알림도 조용시간 없이 발송한다")
+    void quietHoursRemoved_dawnScheduleSends() {
+        runEveningScenario(LocalTime.of(1, 8), "2026-05-26T16:08:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("00:00 설정도 조용시간에 폐기되지 않고 발송한다")
+    void quietHoursRemoved_midnightScheduleSends() {
+        runEveningScenario(LocalTime.of(0, 0), "2026-05-26T15:00:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    /**
+     * 저녁 체크인 슬롯만 대상으로 스케줄러를 한 번 실행한다.
+     * 아침(09:00)·오후(12:00) 기본값과 주간 리포트(08:00)·To-do(21:00) 시각은
+     * 테스트에서 쓰는 시각들과 겹치지 않으므로 저녁 트리거만 격리된다.
+     */
+    private void runEveningScenario(LocalTime eveningTime, String utcInstant) {
+        Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.of("+09:00"));
+        NotificationService service = new NotificationService(
+                clock,
+                userRepository,
+                deviceTokenRepository,
+                notificationSettingRepository,
+                proactiveCareLogRepository,
+                checkinRepository,
+                behaviorTaskRepository,
+                stringRedisTemplate,
+                new NotificationMessageMapper(),
+                pushSender,
+                notificationPersistenceService
+        );
+
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinEveningTime", eveningTime);
+        DeviceToken token = DeviceToken.builder()
+                .user(user)
+                .deviceId("device-1")
+                .platform("android")
+                .token("fcm-token")
+                .build();
+
+        lenient().when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting))
+        );
+        lenient().when(valueOperations.get(anyString())).thenReturn(null);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
+                .thenReturn(false);
+        lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenReturn(false);
+        lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());
+        lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(PushSendResult.SENT);
+
+        service.processScheduledNotifications();
+    }
+
+    private void assertEveningReminderSent() {
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("checkin_reminder_evening"),
+                eq(true),
+                eq(List.of()),
+                eq(true)
+        );
+    }
+
+    private void assertNoReminderSent() {
+        verify(notificationPersistenceService, never()).persistNotificationResult(
+                any(), anyString(), anyBoolean(), any(), anyBoolean()
+        );
     }
 
     private void setUserId(User u, UUID id) {

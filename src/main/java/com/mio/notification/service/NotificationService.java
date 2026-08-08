@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
@@ -45,10 +46,11 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class NotificationService {
 
-    private static final LocalTime QUIET_HOURS_END = LocalTime.of(8, 0);
     private static final LocalTime TODO_REMINDER_TIME = LocalTime.of(21, 0);
     private static final LocalTime WEEKLY_REPORT_TIME = LocalTime.of(8, 0);
     private static final int DAILY_SEND_LIMIT = 3;
+    private static final int DUE_WINDOW_MINUTES = 10;
+    private static final int MINUTES_PER_DAY = 1440;
     private static final int DEFAULT_HISTORY_LIMIT = 20;
     private static final int MAX_HISTORY_LIMIT = 50;
     private static final int SCHEDULER_BATCH_SIZE = 200;
@@ -134,9 +136,6 @@ public class NotificationService {
 
     public void processScheduledNotifications() {
         OffsetDateTime now = OffsetDateTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
-        if (now.toLocalTime().isBefore(QUIET_HOURS_END)) {
-            return;
-        }
 
         Pageable pageable = PageRequest.of(0, SCHEDULER_BATCH_SIZE, SCHEDULER_SORT);
         Slice<NotificationSetting> batch;
@@ -253,9 +252,24 @@ public class NotificationService {
         return tasks.stream().noneMatch(task -> task.getStatus() == TaskStatus.COMPLETED);
     }
 
+    /**
+     * 설정 시각 {@code target} 이 도래했는지 판정한다.
+     *
+     * <p>판정 창은 {@code [target, target + 10분)} 이다. 스케줄러가 5분 주기로 실행되므로
+     * 하나의 설정 시각에 대해 최소 2회의 실행 기회가 생기고, 배포·재기동으로 한 틱을
+     * 건너뛰어도 다음 틱에서 보정 발송된다. 창을 넓혀 생기는 중복 발송은
+     * {@code shouldSuppressTrigger} 의 24시간 억제가 막는다.
+     *
+     * <p>스케줄러 주기 특성상 알림은 <b>설정 시각 이후 최초 스케줄러 틱</b>에 발송되며,
+     * 5분 배수가 아닌 시각을 설정한 경우 최대 5분까지 지연될 수 있다.
+     *
+     * <p>{@code 23:55} 처럼 판정 창이 자정을 넘어가는 경우를 위해 단순 비교 대신
+     * 하루(1440분)를 주기로 하는 순환 경과 시간으로 계산한다.
+     */
     private boolean isDue(LocalTime target, OffsetDateTime now) {
         LocalTime current = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES);
-        return !current.isBefore(target) && current.isBefore(target.plusMinutes(5));
+        long elapsedMinutes = Math.floorMod(Duration.between(target, current).toMinutes(), MINUTES_PER_DAY);
+        return elapsedMinutes < DUE_WINDOW_MINUTES;
     }
 
     private boolean shouldSuppressTrigger(UUID userId, String triggerCode, OffsetDateTime now) {
