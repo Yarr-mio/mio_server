@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -41,6 +42,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -57,6 +59,14 @@ public class NotificationService {
     private static final int DEFAULT_HISTORY_LIMIT = 20;
     private static final int MAX_HISTORY_LIMIT = 50;
     private static final int SCHEDULER_BATCH_SIZE = 200;
+    /**
+     * legacy 커서(raw UUID) 판별 패턴 — 커서 형식을 <b>모양으로</b> 결정적으로 가른다 (이슈 #405).
+     *
+     * <p>{@link #encodeCursor} 가 만드는 커서는 base64url 이라 길이가 36자를 훌쩍 넘고 hex 밖의
+     * 문자를 포함하므로 이 패턴에 걸리지 않는다.
+     */
+    private static final Pattern LEGACY_UUID_CURSOR =
+            Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
     private static final Sort SCHEDULER_SORT = Sort.by(Sort.Direction.ASC, "id");
     private static final Set<String> NEGATIVE_EMOTIONS = Set.of(
             "anxious", "sad", "angry", "ashamed", "numb", "tired", "confused"
@@ -424,26 +434,63 @@ public class NotificationService {
         return "proactive:" + userId + ":daily_count";
     }
 
+    /**
+     * 커서를 정렬 위치로 되돌린다. 형식은 <b>모양으로</b> 판별한다 — 예외가 나는지 여부로 갈라서는 안 된다.
+     *
+     * <p>이전 구현은 base64 디코딩 실패를 legacy(raw UUID) 판별 기준으로 삼았다. 그런데 UUID 문자열은
+     * 36자에 구성 문자가 hex 와 {@code -} 뿐이고 {@code -} 는 base64url 문자이며 36 % 4 == 0 이라
+     * <b>디코딩이 항상 성공한다</b>. 그 결과 27바이트 쓰레기에 우연히 {@code |} 가 섞이면(무작위 UUID 의
+     * 약 9%) {@code OffsetDateTime.parse(<쓰레기>)} 가 불렸고, {@code DateTimeParseException} 은
+     * {@code IllegalArgumentException} 의 하위 타입이 아니라 그대로 500 이 됐다 (이슈 #405).
+     *
+     * <p>그래서 {@link #LEGACY_UUID_CURSOR} 로 먼저 모양을 확인해 경로를 <b>결정적으로</b> 고른다.
+     * {@link #encodeCursor} 가 만드는 커서는 {@code "<sentAt>|<id>"} 를 base64url 로 인코딩한 것이라
+     * 항상 36자보다 길고 hex 밖의 문자를 포함하므로 이 패턴과 겹치지 않는다.
+     */
     private NotificationCursor decodeCursor(UUID userId, String cursor) {
+        if (LEGACY_UUID_CURSOR.matcher(cursor).matches()) {
+            return resolveLegacyCursor(userId, UUID.fromString(cursor));
+        }
+        return decodeEncodedCursor(cursor);
+    }
+
+    /**
+     * legacy 커서(raw UUID) 를 위치로 해석한다.
+     *
+     * <p>커서는 "값"이 아니라 정렬상의 "위치"다. 그래서 여기서는 이력에서 제외되는 상태
+     * (INTERNAL_ONLY_STATUSES)의 로그도 그대로 위치로 받아들인다. 제외는 결과 집합에
+     * 걸리므로 그 뒤 페이지에 미발송 건이 섞이지 않고, 반대로 여기서 거부해 버리면
+     * 수정 이전 응답으로 받은 legacy 커서를 들고 있는 클라이언트가 400 을 맞는다.
+     */
+    private NotificationCursor resolveLegacyCursor(UUID userId, UUID legacyCursorId) {
+        ProactiveCareLog legacyCursorLog = proactiveCareLogRepository.findByIdAndUser_Id(legacyCursorId, userId)
+                .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
+        return new NotificationCursor(legacyCursorLog.getSentAt(), legacyCursorLog.getId());
+    }
+
+    /**
+     * {@link #encodeCursor} 가 만든 {@code base64url("<sentAt>|<id>")} 커서를 되돌린다.
+     *
+     * <p>단계마다 실패를 {@link ErrorCode#INVALID_INPUT} 으로 좁혀 잡는다. {@code Base64.decode} 와
+     * {@code UUID.fromString} 은 {@link IllegalArgumentException} 을, {@code OffsetDateTime.parse} 는
+     * {@link java.time.DateTimeException} 을 던지는데 둘은 상속 관계가 없어 한쪽만 잡으면 다른 쪽이
+     * 500 으로 샌다.
+     */
+    private NotificationCursor decodeEncodedCursor(String cursor) {
+        String decoded;
         try {
-            String decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
-            String[] parts = decoded.split("\\|", 2);
-            if (parts.length != 2) {
-                throw new IllegalArgumentException("Invalid cursor payload");
-            }
+            decoded = new String(Base64.getUrlDecoder().decode(cursor), StandardCharsets.UTF_8);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        String[] parts = decoded.split("\\|", 2);
+        if (parts.length != 2) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
+        }
+        try {
             return new NotificationCursor(OffsetDateTime.parse(parts[0]), UUID.fromString(parts[1]));
-        } catch (IllegalArgumentException ignored) {
-            try {
-                // 커서는 "값"이 아니라 정렬상의 "위치"다. 그래서 여기서는 이력에서 제외되는 상태
-                // (INTERNAL_ONLY_STATUSES)의 로그도 그대로 위치로 받아들인다. 제외는 결과 집합에
-                // 걸리므로 그 뒤 페이지에 미발송 건이 섞이지 않고, 반대로 여기서 거부해 버리면
-                // 수정 이전 응답으로 받은 legacy 커서를 들고 있는 클라이언트가 400 을 맞는다.
-                ProactiveCareLog legacyCursorLog = proactiveCareLogRepository.findByIdAndUser_Id(UUID.fromString(cursor), userId)
-                        .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
-                return new NotificationCursor(legacyCursorLog.getSentAt(), legacyCursorLog.getId());
-            } catch (IllegalArgumentException e) {
-                throw new BusinessException(ErrorCode.INVALID_INPUT);
-            }
+        } catch (DateTimeException | IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_INPUT);
         }
     }
 
