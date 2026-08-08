@@ -23,6 +23,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
  * <p>프로파일 조건({@code @Profile("!test & !integration-test")})을 쓰지 않은 이유는,
  * CI 가 {@code SPRING_PROFILES_ACTIVE=local} 로 테스트를 돌리고 {@code MioApplicationTests} 도
  * {@code local} 프로파일을 쓰기 때문이다. 프로파일만으로는 "테스트 실행"과 "로컬 구동"을 구분할 수 없다.
+ *
+ * <p>주의: 테스트 컨텍스트에서는 {@code @SpringBootTest(properties = "scheduling.enabled=true")} 로도
+ * 스케줄링을 되켤 수 없다. 위 커스터마이저가 더 나중에 적용되어 값을 덮기 때문이다 — 자세한 근거는
+ * 해당 클래스의 Javadoc 에 있다.
+ *
+ * <p>기동 시 실제 활성 여부는 {@link SchedulingStartupLogger} 가 로그로 남긴다.
  */
 @Configuration
 @EnableScheduling
