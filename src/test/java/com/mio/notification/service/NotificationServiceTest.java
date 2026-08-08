@@ -511,7 +511,7 @@ class NotificationServiceTest {
                 .token("fcm-token")
                 .build();
 
-        lenient().when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+        lenient().when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         lenient().when(valueOperations.get(anyString())).thenReturn(null);
