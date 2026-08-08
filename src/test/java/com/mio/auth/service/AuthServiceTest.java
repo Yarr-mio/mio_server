@@ -5,6 +5,8 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.notification.domain.DeviceToken;
+import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
 import com.mio.user.domain.UserDevice;
@@ -34,6 +36,7 @@ class AuthServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private UserConsentRepository userConsentRepository;
     @Mock private UserDeviceRepository userDeviceRepository;
+    @Mock private DeviceTokenRepository deviceTokenRepository;
     @Mock private JwtTokenService jwtTokenService;
     @Mock private RefreshTokenService refreshTokenService;
     @Mock private AuditLogService auditLogService;
@@ -51,7 +54,7 @@ class AuthServiceTest {
                 .thenReturn(Optional.empty());
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
-                userDeviceRepository, jwtTokenService, refreshTokenService, auditLogService
+                userDeviceRepository, deviceTokenRepository, jwtTokenService, refreshTokenService, auditLogService
         );
     }
 
@@ -349,7 +352,47 @@ class AuthServiceTest {
         assertThat(user.getEmail()).isNull();
     }
 
+    @Test
+    @DisplayName("회원탈퇴 시 유효한 디바이스 토큰을 모두 무효화한다")
+    void withdraw_invalidatesAllDeviceTokens() {
+        User user = buildUser(USER_ID, "kakao", "original-social-id", SignupStep.COMPLETED, "ACTIVE");
+        DeviceToken iosToken = buildDeviceToken(user, "device-ios", "ios", "apns-token");
+        DeviceToken androidToken = buildDeviceToken(user, "device-android", "android", "fcm-token");
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(USER_ID))
+                .thenReturn(List.of(iosToken, androidToken));
+
+        authService.withdraw(USER_ID);
+
+        assertThat(iosToken.isValid()).isFalse();
+        assertThat(androidToken.isValid()).isFalse();
+        verify(deviceTokenRepository).saveAll(List.of(iosToken, androidToken));
+    }
+
+    @Test
+    @DisplayName("유효한 디바이스 토큰이 없으면 탈퇴 시 저장을 시도하지 않는다")
+    void withdraw_withoutDeviceTokens_skipsSave() {
+        User user = buildUser(USER_ID, "kakao", "original-social-id", SignupStep.COMPLETED, "ACTIVE");
+
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(USER_ID)).thenReturn(List.of());
+
+        authService.withdraw(USER_ID);
+
+        verify(deviceTokenRepository, never()).saveAll(any());
+    }
+
     // ──────────────── helpers ────────────────
+
+    private DeviceToken buildDeviceToken(User user, String deviceId, String platform, String token) {
+        return DeviceToken.builder()
+                .user(user)
+                .deviceId(deviceId)
+                .platform(platform)
+                .token(token)
+                .build();
+    }
 
     private User buildUser(UUID id, String provider, String socialId, SignupStep signupStep, String status) {
         return User.builder()

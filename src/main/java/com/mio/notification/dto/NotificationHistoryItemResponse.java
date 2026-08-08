@@ -26,7 +26,7 @@ public record NotificationHistoryItemResponse(
                 log.getTriggerCode(),
                 message.title(),
                 message.body(),
-                log.getNotificationStatus(),
+                NotificationStatusView.of(log.getNotificationStatus()),
                 log.getSentAt(),
                 log.getRespondedAt()
         );
