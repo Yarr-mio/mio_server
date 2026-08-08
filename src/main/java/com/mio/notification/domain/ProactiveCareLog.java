@@ -54,6 +54,32 @@ public class ProactiveCareLog {
     public static final Set<String> SUPPRESSING_STATUSES =
             Set.of(STATUS_SENT, STATUS_DELIVERED, STATUS_OPENED, STATUS_UNCONFIRMED);
 
+    /**
+     * <b>API 명세에 없는 내부 전용</b> 상태 집합 — 외부 경계를 그대로 통과해서는 안 된다.
+     *
+     * <p>명세({@code 10_Notification_알림.md} §알림 수신 상태, {@code State_공통상태값정의.md} §19)의
+     * 상태값은 {@code SENT / DELIVERED / OPENED / FAILED} 4종이다. 여기 담긴 값들은 발송 결과를
+     * 내부적으로 더 잘게 나누려고 추가한 것이므로(이슈 #387, #389, #390) 문서에 존재하지 않는다.
+     *
+     * <p>이 집합이 API 경계에서 두 가지로 쓰인다. 둘 다 "발송된 적이 없거나 발송 여부를 확인할 수
+     * 없는 건"이라는 <b>같은 사실</b>에서 나오므로 목록을 하나로 유지한다.
+     * <ul>
+     *   <li><b>이력 목록에서 제외</b>({@code ProactiveCareLogRepository} 의 이력 조회) — 유저 입장에서
+     *       존재한 적 없는(또는 받았다고 단정할 수 없는) 알림을 목록에 올리면, 앱에는 알림이 있는데
+     *       푸시는 오지 않은 불일치가 된다 (이슈 #397).</li>
+     *   <li><b>단건 응답에서 {@code FAILED} 로 접기</b>({@code NotificationStatusView}) — 목록에서
+     *       빠져도 {@code PATCH /v1/notifications/{id}/read} 처럼 id 로 직접 도달하는 경로가 남아 있어,
+     *       문서에 없는 값이 FE 분기로 새어 나가는 것을 막아야 한다.</li>
+     * </ul>
+     *
+     * <p>새 상태를 추가할 때는 반드시 이 목록에 넣을지 먼저 정한다. 목록에 넣지 않으면 그 값은
+     * 명세에 있는 값이라는 뜻이고, 곧바로 이력에 노출되며 FE 분기 대상이 된다.
+     *
+     * <p>{@code FAILED} 는 <b>포함하지 않는다</b>. 명세에 정의된 값이고 "재시도 불가 안내 UI"가
+     * 이미 FE 에 있으므로 이력에 그대로 노출한다.
+     */
+    public static final Set<String> INTERNAL_ONLY_STATUSES = Set.of(STATUS_NO_DEVICE, STATUS_UNCONFIRMED);
+
     /** {@code OPENED} 로 전이할 수 있는 상태 — 실제로 발송된 알림만 열람될 수 있다. */
     private static final Set<String> OPENABLE_STATUSES = Set.of(STATUS_SENT, STATUS_DELIVERED);
 

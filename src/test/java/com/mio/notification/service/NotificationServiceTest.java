@@ -138,7 +138,7 @@ class NotificationServiceTest {
                 .sentAt(OffsetDateTime.now().minusMinutes(1))
                 .build();
 
-        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserId(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 1);
@@ -231,7 +231,7 @@ class NotificationServiceTest {
                 .sentAt(now.minusMinutes(1))
                 .build();
 
-        when(proactiveCareLogRepository.findPageByUserIdAfterCursor(eq(userId), eq(first.getSentAt()), eq(first.getId()), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserIdAfterCursor(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), eq(first.getSentAt()), eq(first.getId()), any(Pageable.class)))
                 .thenReturn(List.of(second));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(
@@ -412,7 +412,7 @@ class NotificationServiceTest {
                 .notificationStatus(ProactiveCareLog.STATUS_NO_DEVICE)
                 .sentAt(OffsetDateTime.now(fixedClock))
                 .build();
-        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserId(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), any(Pageable.class)))
                 .thenReturn(List.of(noDeviceLog));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
@@ -441,7 +441,7 @@ class NotificationServiceTest {
                 .notificationStatus(ProactiveCareLog.STATUS_OPENED)
                 .sentAt(OffsetDateTime.now(fixedClock).minusMinutes(1))
                 .build();
-        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserId(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), any(Pageable.class)))
                 .thenReturn(List.of(sentLog, openedLog));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
@@ -623,7 +623,7 @@ class NotificationServiceTest {
                 .notificationStatus(ProactiveCareLog.STATUS_UNCONFIRMED)
                 .sentAt(OffsetDateTime.now(fixedClock))
                 .build();
-        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserId(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), any(Pageable.class)))
                 .thenReturn(List.of(unconfirmedLog));
 
         NotificationHistoryResponse response = notificationService.getNotificationHistory(userId, null, 20);
@@ -680,9 +680,9 @@ class NotificationServiceTest {
                 .sentAt(sentAt)
                 .build();
 
-        when(proactiveCareLogRepository.findPageByUserId(eq(userId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserId(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
-        when(proactiveCareLogRepository.findPageByUserIdAfterCursor(eq(userId), eq(sentAt), eq(firstId), any(Pageable.class)))
+        when(proactiveCareLogRepository.findVisiblePageByUserIdAfterCursor(eq(userId), eq(ProactiveCareLog.INTERNAL_ONLY_STATUSES), eq(sentAt), eq(firstId), any(Pageable.class)))
                 .thenReturn(List.of(second));
 
         NotificationHistoryResponse firstPage = notificationService.getNotificationHistory(userId, null, 1);

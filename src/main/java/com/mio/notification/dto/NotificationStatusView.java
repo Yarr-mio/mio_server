@@ -2,8 +2,6 @@ package com.mio.notification.dto;
 
 import com.mio.notification.domain.ProactiveCareLog;
 
-import java.util.Set;
-
 /**
  * {@code notification_status} 의 내부값 → 노출값 변환. API 경계의 유일한 매핑 지점이다.
  *
@@ -20,20 +18,18 @@ import java.util.Set;
  *
  * <p>즉 구분은 DB·내부 로직에만 남기고, 계약은 그대로 지킨다. 새 상태값을 FE 에 노출하려면
  * 명세와 공통 상태값 정의를 먼저 개정해야 한다.
+ *
+ * <p>대상 목록은 {@link ProactiveCareLog#INTERNAL_ONLY_STATUSES} 하나뿐이다. 이력 목록에서
+ * 제외하는 기준(이슈 #397)과 같은 목록을 쓴다 — 상태가 늘었을 때 한쪽만 갱신되면
+ * "목록에는 보이는데 값은 접힌다"(또는 그 반대)로 갈라진다.
  */
 final class NotificationStatusView {
-
-    /** 명세에 없는 내부 전용 상태 — 응답에서는 모두 {@code FAILED} 로 접는다. */
-    private static final Set<String> INTERNAL_ONLY_STATUSES = Set.of(
-            ProactiveCareLog.STATUS_NO_DEVICE,
-            ProactiveCareLog.STATUS_UNCONFIRMED
-    );
 
     private NotificationStatusView() {
     }
 
     static String of(String internalStatus) {
-        return INTERNAL_ONLY_STATUSES.contains(internalStatus)
+        return ProactiveCareLog.INTERNAL_ONLY_STATUSES.contains(internalStatus)
                 ? ProactiveCareLog.STATUS_FAILED
                 : internalStatus;
     }
