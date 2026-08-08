@@ -405,7 +405,7 @@ class NotificationServiceTest {
         NotificationSetting setting = NotificationSetting.builder().user(user).build();
         setField(setting, "checkinMorningTime", fixedNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
 
-        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         when(valueOperations.get(anyString())).thenReturn(null);
@@ -438,7 +438,7 @@ class NotificationServiceTest {
         NotificationSetting setting = NotificationSetting.builder().user(user).build();
         setField(setting, "checkinMorningTime", fixedNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
 
-        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         when(valueOperations.get(anyString())).thenReturn(null);
