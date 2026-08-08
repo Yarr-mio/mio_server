@@ -181,6 +181,14 @@ class NotificationHistoryIntegrationTest {
         assertThat(response.nextCursor()).isNull();
     }
 
+    /**
+     * 실 DB 로 확인하는 legacy 커서 대표 시나리오. 여기 쓰이는 id 는 DB 가 생성한 무작위 UUID 다.
+     *
+     * <p>예전에는 그 무작위성이 결과를 갈랐다 — 커서 형식을 예외 발생 여부로 판별해서 UUID 의
+     * 비트에 따라 약 9% 가 500 이 됐다(이슈 #405). 지금은 형식을 모양으로 판별하므로 어떤 UUID 든
+     * 같은 경로를 탄다. 그 불변식 자체는 {@code NotificationCursorDecodingTest} 가 시드 고정 표본으로
+     * 검증하고, 이 테스트는 "제외 대상 로그 id 도 위치로 받아들인다"는 계약만 실 DB 로 고정한다.
+     */
     @Test
     @DisplayName("[#397] 제외 대상 로그 id 를 legacy 커서로 받아도 그 위치부터 노출분만 이어진다")
     void history_legacyCursorOnHiddenLog_stillPagesVisibleItems() {
