@@ -817,7 +817,7 @@ class NotificationServiceTest {
 
         assertEveningReminderSent();
         verify(notificationPersistenceService, never()).persistNotificationResult(
-                any(), eq("negative_emotion_streak"), anyBoolean(), any(), anyBoolean()
+                any(), eq("negative_emotion_streak"), any(), any(), anyBoolean()
         );
     }
 
@@ -875,7 +875,7 @@ class NotificationServiceTest {
         verify(notificationPersistenceService).persistNotificationResult(
                 eq(userId),
                 eq("negative_emotion_streak"),
-                eq(true),
+                eq(NotificationDeliveryResult.sent()),
                 eq(List.of()),
                 eq(true)
         );
@@ -933,9 +933,10 @@ class NotificationServiceTest {
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         lenient().when(valueOperations.get(anyString())).thenReturn(null);
-        lenient().when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
-        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
-                .thenReturn(false);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(false);
         lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(recentCheckins);
         lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
                 .thenAnswer(invocation -> completedEveningDate != null
@@ -944,7 +945,7 @@ class NotificationServiceTest {
         lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());
         lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
         lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString()))
-                .thenReturn(PushSendResult.SENT);
+                .thenReturn(PushSendResult.sent());
 
         service.processScheduledNotifications();
     }
@@ -953,7 +954,8 @@ class NotificationServiceTest {
         verify(notificationPersistenceService).persistNotificationResult(
                 eq(userId),
                 eq("checkin_reminder_evening"),
-                eq(true),
+                // 발송이 전부 성공했으므로 실패 사유 없는 SENT 결과가 넘어간다
+                eq(NotificationDeliveryResult.sent()),
                 eq(List.of()),
                 eq(true)
         );
@@ -961,7 +963,7 @@ class NotificationServiceTest {
 
     private void assertNoReminderSent() {
         verify(notificationPersistenceService, never()).persistNotificationResult(
-                any(), anyString(), anyBoolean(), any(), anyBoolean()
+                any(), anyString(), any(), any(), anyBoolean()
         );
     }
 

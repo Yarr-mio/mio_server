@@ -17,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.net.http.HttpClient;
@@ -147,10 +148,13 @@ public class PushSender {
                 return PushSendResult.of(PushSendStatus.SKIPPED, "UNSUPPORTED_PLATFORM:" + platform);
             }
         } catch (Exception e) {
-            // 요청은 나갔는데 응답을 못 받은 것일 수 있다(타임아웃 등). 게이트웨이가 이미 처리했다면
-            // 재시도가 중복 발송이 되므로, 확실한 실패와 구분해 AMBIGUOUS 로 분류한다.
-            log.error("Push send failed for platform={} token={}: {}", platform, maskToken(token), e.getMessage());
-            return PushSendResult.of(PushSendStatus.AMBIGUOUS, "EXCEPTION:" + e.getClass().getSimpleName());
+            // 여기까지 오는 예외는 게이트웨이 호출 <b>이전</b>의 로컬 준비 단계에서 터진 것이다
+            // (payload 직렬화, JWT 서명, FCM 메시지 빌드). 요청이 나가지 않았으므로 확실한 미발송이며,
+            // 재시도해도 중복 발송이 되지 않는다. AMBIGUOUS 로 접으면 억제 대상이 되어 결정적 버그가
+            // 로그·지표에서 가려지므로 FAILED 로 남긴다. 응답을 못 받은 경우는 호출 지점에서 따로 잡는다.
+            log.error("Push send failed before dispatch for platform={} token={}: {}",
+                    platform, maskToken(token), e.getMessage());
+            return PushSendResult.of(PushSendStatus.FAILED, "EXCEPTION:" + e.getClass().getSimpleName());
         }
     }
 
@@ -179,7 +183,19 @@ public class PushSender {
                 .header("content-type", "application/json")
                 .build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        } catch (IOException e) {
+            // 여기서만 발송 여부가 불명이다 — 요청이 APNs 에 닿았는지 알 수 없다.
+            log.error("APNs request failed without response for token {}: {}", maskToken(deviceToken), e.getMessage());
+            return PushSendResult.of(PushSendStatus.AMBIGUOUS, "APNS_NO_RESPONSE:" + e.getClass().getSimpleName());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.error("APNs request interrupted for token {}", maskToken(deviceToken));
+            return PushSendResult.of(PushSendStatus.AMBIGUOUS, "APNS_NO_RESPONSE:InterruptedException");
+        }
+
         if (response.statusCode() == 200) {
             return PushSendResult.sent();
         }
