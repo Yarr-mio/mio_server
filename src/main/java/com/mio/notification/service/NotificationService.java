@@ -86,7 +86,7 @@ public class NotificationService {
 
         for (DeviceToken token : tokens) {
             PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
-            if (result == PushSendResult.TOKEN_EXPIRED || result == PushSendResult.INVALID_TOKEN) {
+            if (result.invalidatesToken()) {
                 token.invalidate();
                 deviceTokenRepository.save(token);
             }
@@ -155,10 +155,12 @@ public class NotificationService {
     public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
+            // 보낸 것이 없으므로 SENT 로 기록하지 않는다 (미발송이 지표에 그대로 드러나야 한다).
+            log.warn("No valid device tokens for user={} trigger={}", user.getId(), triggerCode);
             notificationPersistenceService.persistNotificationResult(
                     user.getId(),
                     triggerCode,
-                    true,
+                    NotificationDeliveryResult.noDevice(),
                     List.of(),
                     countTowardDailyLimit
             );
@@ -167,12 +169,15 @@ public class NotificationService {
 
         boolean anySucceeded = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
+        List<String> failureReasons = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
             PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
-            if (result == PushSendResult.SENT) {
+            if (result.isSent()) {
                 anySucceeded = true;
+            } else {
+                failureReasons.add(result.failureReason());
             }
-            if (result == PushSendResult.TOKEN_EXPIRED || result == PushSendResult.INVALID_TOKEN) {
+            if (result.invalidatesToken()) {
                 tokensToInvalidate.add(token.getId());
             }
         }
@@ -180,7 +185,7 @@ public class NotificationService {
         notificationPersistenceService.persistNotificationResult(
                 user.getId(),
                 triggerCode,
-                anySucceeded,
+                anySucceeded ? NotificationDeliveryResult.sent() : NotificationDeliveryResult.failed(failureReasons),
                 tokensToInvalidate,
                 countTowardDailyLimit
         );
@@ -335,9 +340,11 @@ public class NotificationService {
     }
 
     private boolean shouldSuppressTrigger(UUID userId, String triggerCode, OffsetDateTime now) {
-        return proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(
+        // 실제로 발송된 이력만 24시간 재발송을 억제한다. 실패·미발송 건은 재시도를 막지 않는다.
+        return proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
                 userId,
                 triggerCode,
+                ProactiveCareLog.DELIVERED_STATUSES,
                 now.minusHours(24)
         );
     }
@@ -355,7 +362,13 @@ public class NotificationService {
 
         OffsetDateTime from = now.toLocalDate().atStartOfDay(AppConstants.ZONE).toOffsetDateTime();
         OffsetDateTime to = from.plusDays(1);
-        return proactiveCareLogRepository.countByUser_IdAndSentAtBetween(userId, from, to) >= DAILY_SEND_LIMIT;
+        // 실제로 발송된 이력만 일일 한도에 반영한다.
+        return proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                userId,
+                ProactiveCareLog.DELIVERED_STATUSES,
+                from,
+                to
+        ) >= DAILY_SEND_LIMIT;
     }
 
     private int normalizeLimit(Integer limit) {

@@ -1,5 +1,6 @@
 package com.mio.notification.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.auth.oauth2.GoogleCredentials;
 import com.google.firebase.FirebaseApp;
@@ -143,22 +144,22 @@ public class PushSender {
                 return sendFcm(token, title, body);
             } else {
                 log.warn("Unknown platform '{}', skipping push", platform);
-                return PushSendResult.SKIPPED;
+                return PushSendResult.of(PushSendStatus.SKIPPED, "UNSUPPORTED_PLATFORM:" + platform);
             }
         } catch (Exception e) {
             log.error("Push send failed for platform={} token={}: {}", platform, maskToken(token), e.getMessage());
-            return PushSendResult.FAILED;
+            return PushSendResult.of(PushSendStatus.FAILED, "EXCEPTION:" + e.getClass().getSimpleName());
         }
     }
 
     private PushSendResult sendApns(String deviceToken, String title, String body) throws Exception {
         if (!apnsEnabled) {
             log.debug("APNs disabled, skipping send");
-            return PushSendResult.SKIPPED;
+            return PushSendResult.of(PushSendStatus.SKIPPED, "APNS_DISABLED");
         }
         if (deviceToken == null || !deviceToken.matches(APNS_TOKEN_PATTERN)) {
             log.warn("APNs token has invalid format: {}", maskToken(deviceToken));
-            return PushSendResult.INVALID_TOKEN;
+            return PushSendResult.of(PushSendStatus.INVALID_TOKEN, "APNS_MALFORMED_TOKEN");
         }
 
         String host = apnsIsProduction ? APNS_HOST_PROD : APNS_HOST_SANDBOX;
@@ -178,23 +179,43 @@ public class PushSender {
 
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() == 200) {
-            return PushSendResult.SENT;
+            return PushSendResult.sent();
         }
 
         log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
+        String failureReason = buildApnsFailureReason(response.statusCode(), response.body());
         if (response.statusCode() == 410) {
-            return PushSendResult.TOKEN_EXPIRED;
+            return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);
         }
         if (response.statusCode() == 400) {
-            return PushSendResult.INVALID_TOKEN;
+            return PushSendResult.of(PushSendStatus.INVALID_TOKEN, failureReason);
         }
-        return PushSendResult.FAILED;
+        return PushSendResult.of(PushSendStatus.FAILED, failureReason);
+    }
+
+    /** APNs 응답에서 사후 추적용 사유를 만든다. 토큰 등 민감 정보는 포함하지 않는다. */
+    private String buildApnsFailureReason(int statusCode, String responseBody) {
+        String reason = extractApnsReason(responseBody);
+        return reason == null ? "APNS_" + statusCode : "APNS_" + statusCode + ":" + reason;
+    }
+
+    private String extractApnsReason(String responseBody) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode reasonNode = objectMapper.readTree(responseBody).get("reason");
+            return reasonNode == null || reasonNode.isNull() ? null : reasonNode.asText();
+        } catch (Exception e) {
+            log.debug("Failed to parse APNs response body for reason: {}", e.getMessage());
+            return null;
+        }
     }
 
     private PushSendResult sendFcm(String fcmToken, String title, String body) throws Exception {
         if (!fcmEnabled) {
             log.debug("FCM disabled, skipping send");
-            return PushSendResult.SKIPPED;
+            return PushSendResult.of(PushSendStatus.SKIPPED, "FCM_DISABLED");
         }
 
         Message message = Message.builder()
@@ -207,13 +228,15 @@ public class PushSender {
 
         try {
             FirebaseMessaging.getInstance().send(message);
-            return PushSendResult.SENT;
+            return PushSendResult.sent();
         } catch (FirebaseMessagingException e) {
+            String failureReason = "FCM_" + e.getMessagingErrorCode();
             if (e.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
                 log.warn("FCM token expired: {}", maskToken(fcmToken));
-                return PushSendResult.TOKEN_EXPIRED;
+                return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);
             }
-            throw e;
+            log.warn("FCM rejected token {}: code={}", maskToken(fcmToken), e.getMessagingErrorCode());
+            return PushSendResult.of(PushSendStatus.FAILED, failureReason);
         }
     }
 

@@ -33,6 +33,7 @@ import java.time.OffsetDateTime;
 import java.nio.charset.StandardCharsets;
 import java.time.temporal.ChronoUnit;
 import java.util.Base64;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -106,7 +107,8 @@ class NotificationServiceTest {
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("abcd1234", "ios", "제목", "본문")).thenReturn(PushSendResult.TOKEN_EXPIRED);
+        when(pushSender.send("abcd1234", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
         notificationService.sendTestNotification(userId, "제목", "본문");
 
@@ -260,24 +262,125 @@ class NotificationServiceTest {
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         when(valueOperations.get(anyString())).thenReturn(null);
-        when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
-        when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
-                .thenReturn(false);
+        when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(false);
         when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
         when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), eq("morning"))).thenReturn(false);
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
         when(pushSender.send("fcm-token", "android", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!"))
-                .thenReturn(PushSendResult.SENT);
+                .thenReturn(PushSendResult.sent());
 
         notificationService.processScheduledNotifications();
 
         verify(notificationPersistenceService).persistNotificationResult(
                 eq(userId),
                 eq("checkin_reminder_morning"),
-                eq(true),
+                eq(NotificationDeliveryResult.sent()),
                 eq(List.of()),
                 eq(true)
         );
+    }
+
+    @Test
+    @DisplayName("[#387] 유효한 디바이스 토큰이 없으면 SENT가 아닌 NO_DEVICE로 기록한다")
+    void sendNotificationToUser_noValidTokens_recordsNoDevice() {
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of());
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_evening", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_evening"), captor.capture(), eq(List.of()), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        assertThat(captor.getValue().status()).isNotEqualTo(ProactiveCareLog.STATUS_SENT);
+        assertThat(captor.getValue().isDelivered()).isFalse();
+        verifyNoInteractions(pushSender);
+    }
+
+    @Test
+    @DisplayName("[#396] 모든 단말 발송이 실패하면 FAILED와 실패 사유를 함께 넘긴다")
+    void sendNotificationToUser_allSendsFail_carriesFailureReason() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user)
+                .deviceId("device-1")
+                .platform("ios")
+                .token("apns-token")
+                .build();
+        setField(token, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+                .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), captor.capture(), eq(List.of(token.getId())), eq(true));
+        assertThat(captor.getValue().status()).isEqualTo(ProactiveCareLog.STATUS_FAILED);
+        assertThat(captor.getValue().failureReason()).isEqualTo("APNS_410:Unregistered");
+    }
+
+    @Test
+    @DisplayName("[#389] 재발송 억제는 실제로 발송된 상태의 이력만 대상으로 한다")
+    void processScheduledNotifications_suppressionChecksDeliveredStatusesOnly() {
+        OffsetDateTime fixedNow = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", fixedNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+
+        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting))
+        );
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), eq("morning"))).thenReturn(false);
+        // FAILED / NO_DEVICE 이력만 있는 상태 — 억제 대상 상태 조회 결과는 false
+        when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(false);
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of());
+
+        notificationService.processScheduledNotifications();
+
+        ArgumentCaptor<Collection<String>> statusCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(proactiveCareLogRepository).existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), eq("checkin_reminder_morning"), statusCaptor.capture(), any());
+        assertThat(statusCaptor.getValue())
+                .containsExactlyInAnyOrderElementsOf(ProactiveCareLog.DELIVERED_STATUSES)
+                .doesNotContain(ProactiveCareLog.STATUS_FAILED, ProactiveCareLog.STATUS_NO_DEVICE);
+        // 억제되지 않았으므로 발송 경로까지 진행된다
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), any(), any(), eq(true));
+    }
+
+    @Test
+    @DisplayName("[#390] 일일 한도 DB 폴백은 실제로 발송된 이력만 센다")
+    void processScheduledNotifications_dailyLimitCountsDeliveredStatusesOnly() {
+        OffsetDateTime fixedNow = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", fixedNow.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+
+        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting))
+        );
+        when(valueOperations.get(anyString())).thenReturn(null);
+        when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(3L);
+
+        notificationService.processScheduledNotifications();
+
+        ArgumentCaptor<Collection<String>> statusCaptor = ArgumentCaptor.forClass(Collection.class);
+        verify(proactiveCareLogRepository).countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), statusCaptor.capture(), any(), any());
+        assertThat(statusCaptor.getValue())
+                .containsExactlyInAnyOrderElementsOf(ProactiveCareLog.DELIVERED_STATUSES)
+                .doesNotContain(ProactiveCareLog.STATUS_FAILED, ProactiveCareLog.STATUS_NO_DEVICE);
+        verifyNoInteractions(notificationPersistenceService);
     }
 
     @Test

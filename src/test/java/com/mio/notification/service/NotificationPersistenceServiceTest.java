@@ -27,6 +27,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,7 +54,7 @@ class NotificationPersistenceServiceTest {
                 proactiveCareLogRepository,
                 stringRedisTemplate
         );
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
 
         userId = UUID.randomUUID();
         user = User.builder()
@@ -82,7 +84,7 @@ class NotificationPersistenceServiceTest {
         notificationPersistenceService.persistNotificationResult(
                 userId,
                 "todo_incomplete",
-                true,
+                NotificationDeliveryResult.sent(),
                 List.of(tokenId),
                 true
         );
@@ -93,8 +95,49 @@ class NotificationPersistenceServiceTest {
         ArgumentCaptor<ProactiveCareLog> captor = ArgumentCaptor.forClass(ProactiveCareLog.class);
         verify(proactiveCareLogRepository).save(captor.capture());
         assertThat(captor.getValue().getTriggerCode()).isEqualTo("todo_incomplete");
-        assertThat(captor.getValue().getNotificationStatus()).isEqualTo("SENT");
+        assertThat(captor.getValue().getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_SENT);
+        assertThat(captor.getValue().getFailureReason()).isNull();
         verify(valueOperations).increment(anyString());
+    }
+
+    @Test
+    @DisplayName("[#387][#390] 발송 대상 단말이 없으면 NO_DEVICE로 저장하고 일일 카운터를 올리지 않는다")
+    void persistNotificationResult_noDevice_doesNotConsumeDailyLimit() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        notificationPersistenceService.persistNotificationResult(
+                userId,
+                "checkin_reminder_evening",
+                NotificationDeliveryResult.noDevice(),
+                List.of(),
+                true
+        );
+
+        ArgumentCaptor<ProactiveCareLog> captor = ArgumentCaptor.forClass(ProactiveCareLog.class);
+        verify(proactiveCareLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_NO_DEVICE);
+        assertThat(captor.getValue().getFailureReason()).isEqualTo("NO_VALID_DEVICE_TOKEN");
+        verify(valueOperations, never()).increment(anyString());
+    }
+
+    @Test
+    @DisplayName("[#396] 발송 실패 시 실패 사유가 영속화되고 일일 카운터는 오르지 않는다")
+    void persistNotificationResult_failed_persistsFailureReason() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        notificationPersistenceService.persistNotificationResult(
+                userId,
+                "checkin_reminder_morning",
+                NotificationDeliveryResult.failed(List.of("APNS_410:Unregistered", "FCM_UNREGISTERED")),
+                List.of(),
+                true
+        );
+
+        ArgumentCaptor<ProactiveCareLog> captor = ArgumentCaptor.forClass(ProactiveCareLog.class);
+        verify(proactiveCareLogRepository).save(captor.capture());
+        assertThat(captor.getValue().getNotificationStatus()).isEqualTo(ProactiveCareLog.STATUS_FAILED);
+        assertThat(captor.getValue().getFailureReason()).isEqualTo("APNS_410:Unregistered; FCM_UNREGISTERED");
+        verify(valueOperations, never()).increment(anyString());
     }
 
     private void setField(Object target, String name, Object value) {

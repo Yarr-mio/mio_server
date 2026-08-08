@@ -6,6 +6,7 @@ import lombok.*;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -15,6 +16,16 @@ import java.util.UUID;
 @Builder
 @AllArgsConstructor(access = AccessLevel.PRIVATE)
 public class ProactiveCareLog {
+
+    public static final String STATUS_SENT = "SENT";
+    public static final String STATUS_DELIVERED = "DELIVERED";
+    public static final String STATUS_OPENED = "OPENED";
+    public static final String STATUS_FAILED = "FAILED";
+    /** 보낼 유효 디바이스 토큰이 없어 발송 자체가 일어나지 않은 상태. */
+    public static final String STATUS_NO_DEVICE = "NO_DEVICE";
+
+    /** 실제로 단말까지 발송된 것으로 간주하는 상태 집합 (재발송 억제·일일 한도 산정 기준). */
+    public static final Set<String> DELIVERED_STATUSES = Set.of(STATUS_SENT, STATUS_DELIVERED, STATUS_OPENED);
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -35,10 +46,14 @@ public class ProactiveCareLog {
     @Column(name = "sent_at", nullable = false)
     private OffsetDateTime sentAt;
 
-    /** SENT / DELIVERED / OPENED / FAILED */
+    /** SENT / DELIVERED / OPENED / FAILED / NO_DEVICE */
     @Column(name = "notification_status", nullable = false)
     @Builder.Default
-    private String notificationStatus = "SENT";
+    private String notificationStatus = STATUS_SENT;
+
+    /** 발송 실패 사유 (APNs HTTP 상태·reason, FCM 오류 코드). 성공 시 null */
+    @Column(name = "failure_reason")
+    private String failureReason;
 
     @Column(name = "responded_at")
     private OffsetDateTime respondedAt;
@@ -48,10 +63,10 @@ public class ProactiveCareLog {
     private String responseAction;
 
     public void markOpened() {
-        if ("OPENED".equals(this.notificationStatus) || this.respondedAt != null) {
+        if (STATUS_OPENED.equals(this.notificationStatus) || this.respondedAt != null) {
             return;
         }
-        this.notificationStatus = "OPENED";
+        this.notificationStatus = STATUS_OPENED;
         this.respondedAt = OffsetDateTime.now(ZoneOffset.UTC);
         this.responseAction = "tapped";
     }
