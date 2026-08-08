@@ -399,6 +399,37 @@ class NotificationServiceTest {
     }
 
     @Test
+    @DisplayName("자정을 넘는 창에서는 체크인 완료 여부를 발생일(전날) 기준으로 조회한다")
+    void midnightCrossingWindow_checksCompletionOnOccurrenceDate() {
+        // 저녁 체크인 23:58 설정. 유저는 05-26 23:56 에 스스로 체크인을 마쳤다.
+        // 05-27 00:00 틱에서도 isDue 는 여전히 true(경과 2분)이므로,
+        // 완료 여부는 판정 시점(05-27)이 아니라 발생일(05-26)로 조회해야 한다.
+        runEveningScenario(LocalTime.of(23, 58), "2026-05-26T15:00:00Z", LocalDate.of(2026, 5, 26));
+
+        verify(checkinRepository).existsByUser_IdAndCheckinDateAndTimeOfDay(
+                userId, LocalDate.of(2026, 5, 26), "evening");
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘는 창이어도 전날 체크인이 없으면 정상 발송한다")
+    void midnightCrossingWindow_notCompleted_sends() {
+        runEveningScenario(LocalTime.of(23, 58), "2026-05-26T15:00:00Z", null);
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘지 않는 창에서는 발생일이 판정 당일과 같다")
+    void sameDayWindow_checksCompletionOnSameDate() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:05:00Z", null);
+
+        verify(checkinRepository).existsByUser_IdAndCheckinDateAndTimeOfDay(
+                userId, LocalDate.of(2026, 5, 26), "evening");
+        assertEveningReminderSent();
+    }
+
+    @Test
     @DisplayName("새벽에는 서버가 시점을 정하는 negative_emotion_streak 를 발송하지 않는다")
     void serverInitiatedTrigger_atDawn_isSkipped() {
         runStreakScenario(LocalTime.of(23, 30), "2026-05-25T18:00:00Z");
@@ -486,7 +517,21 @@ class NotificationServiceTest {
         runScenario(eveningTime, utcInstant, List.of());
     }
 
+    private void runEveningScenario(LocalTime eveningTime, String utcInstant, LocalDate completedEveningDate) {
+        runScenario(eveningTime, utcInstant, List.of(), completedEveningDate);
+    }
+
     private void runScenario(LocalTime eveningTime, String utcInstant, List<Checkin> recentCheckins) {
+        runScenario(eveningTime, utcInstant, recentCheckins, null);
+    }
+
+    /**
+     * @param completedEveningDate 유저가 저녁 체크인을 완료한 날짜. {@code null} 이면 미완료.
+     *                             날짜를 {@code any()} 로 뭉개지 않고 실제 전달된 값과 대조해,
+     *                             잘못된 날짜로 조회하면 완료 기록을 못 찾도록 한다.
+     */
+    private void runScenario(LocalTime eveningTime, String utcInstant, List<Checkin> recentCheckins,
+                             LocalDate completedEveningDate) {
         Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.of("+09:00"));
         NotificationService service = new NotificationService(
                 clock,
@@ -520,7 +565,9 @@ class NotificationServiceTest {
                 .thenReturn(false);
         lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(recentCheckins);
         lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
-                .thenReturn(false);
+                .thenAnswer(invocation -> completedEveningDate != null
+                        && completedEveningDate.equals(invocation.getArgument(1))
+                        && "evening".equals(invocation.getArgument(2)));
         lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());
         lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
         lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString()))
