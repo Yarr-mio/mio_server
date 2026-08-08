@@ -1,5 +1,6 @@
 package com.mio.notification.service;
 
+import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.repository.CheckinRepository;
 import com.mio.notification.domain.DeviceToken;
 import com.mio.notification.domain.NotificationSetting;
@@ -25,6 +26,7 @@ import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
@@ -41,6 +43,7 @@ import com.mio.common.error.ErrorCode;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -329,6 +332,264 @@ class NotificationServiceTest {
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
         verify(notificationSettingRepository).findSendableTargets(pageableCaptor.capture());
         assertThat(pageableCaptor.getValue().getSort().getOrderFor("id")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("판정 창 시작 경계(설정 시각 정각)에는 발송한다")
+    void isDue_windowStart_sends() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:00:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("판정 창 끝 직전(설정 시각 +9분)에는 발송한다")
+    void isDue_justBeforeWindowEnd_sends() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:09:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("판정 창을 벗어나면(설정 시각 +10분) 발송하지 않는다")
+    void isDue_windowEnd_doesNotSend() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:10:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("설정 시각 이전(-1분)에는 발송하지 않는다")
+    void isDue_beforeTarget_doesNotSend() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T12:59:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘기는 설정 시각(23:55)도 다음 날 00:04까지 발송한다")
+    void isDue_windowCrossingMidnight_sends() {
+        runEveningScenario(LocalTime.of(23, 55), "2026-05-26T15:04:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘긴 뒤 판정 창을 벗어나면(00:05) 발송하지 않는다")
+    void isDue_afterWindowCrossingMidnight_doesNotSend() {
+        runEveningScenario(LocalTime.of(23, 55), "2026-05-26T15:05:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("새벽 시각(01:08)으로 설정한 알림도 조용시간 없이 발송한다")
+    void quietHoursRemoved_dawnScheduleSends() {
+        runEveningScenario(LocalTime.of(1, 8), "2026-05-26T16:08:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("00:00 설정도 조용시간에 폐기되지 않고 발송한다")
+    void quietHoursRemoved_midnightScheduleSends() {
+        runEveningScenario(LocalTime.of(0, 0), "2026-05-26T15:00:00Z");
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘는 창에서는 체크인 완료 여부를 발생일(전날) 기준으로 조회한다")
+    void midnightCrossingWindow_checksCompletionOnOccurrenceDate() {
+        // 저녁 체크인 23:58 설정. 유저는 05-26 23:56 에 스스로 체크인을 마쳤다.
+        // 05-27 00:00 틱에서도 isDue 는 여전히 true(경과 2분)이므로,
+        // 완료 여부는 판정 시점(05-27)이 아니라 발생일(05-26)로 조회해야 한다.
+        runEveningScenario(LocalTime.of(23, 58), "2026-05-26T15:00:00Z", LocalDate.of(2026, 5, 26));
+
+        verify(checkinRepository).existsByUser_IdAndCheckinDateAndTimeOfDay(
+                userId, LocalDate.of(2026, 5, 26), "evening");
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘는 창이어도 전날 체크인이 없으면 정상 발송한다")
+    void midnightCrossingWindow_notCompleted_sends() {
+        runEveningScenario(LocalTime.of(23, 58), "2026-05-26T15:00:00Z", null);
+
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("자정을 넘지 않는 창에서는 발생일이 판정 당일과 같다")
+    void sameDayWindow_checksCompletionOnSameDate() {
+        runEveningScenario(LocalTime.of(22, 0), "2026-05-26T13:05:00Z", null);
+
+        verify(checkinRepository).existsByUser_IdAndCheckinDateAndTimeOfDay(
+                userId, LocalDate.of(2026, 5, 26), "evening");
+        assertEveningReminderSent();
+    }
+
+    @Test
+    @DisplayName("새벽에는 서버가 시점을 정하는 negative_emotion_streak 를 발송하지 않는다")
+    void serverInitiatedTrigger_atDawn_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T18:00:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("새벽이어도 유저가 직접 설정한 체크인 알림은 발송한다 (두 정책이 간섭하지 않는다)")
+    void userScheduledTrigger_atDawn_stillSends_whileServerTriggerSkipped() {
+        runStreakScenario(LocalTime.of(3, 0), "2026-05-25T18:00:00Z");
+
+        assertEveningReminderSent();
+        verify(notificationPersistenceService, never()).persistNotificationResult(
+                any(), eq("negative_emotion_streak"), anyBoolean(), any(), anyBoolean()
+        );
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 시작(08:00)에는 발송한다")
+    void serverInitiatedTrigger_atWindowStart_sends() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T23:00:00Z");
+
+        assertStreakNotificationSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 시작 직전(07:59)에는 발송하지 않는다")
+    void serverInitiatedTrigger_justBeforeWindowStart_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T22:59:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 끝(22:00)에는 발송한다")
+    void serverInitiatedTrigger_atWindowEnd_sends() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-26T13:00:00Z");
+
+        assertStreakNotificationSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창을 넘기면(22:01) 발송하지 않는다")
+    void serverInitiatedTrigger_afterWindowEnd_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-26T13:01:00Z");
+
+        assertNoReminderSent();
+    }
+
+    /**
+     * 최근 체크인 3건이 모두 부정 감정인 상태(negative_emotion_streak 조건 충족)로
+     * 스케줄러를 한 번 실행한다.
+     */
+    private void runStreakScenario(LocalTime eveningTime, String utcInstant) {
+        runScenario(eveningTime, utcInstant, List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+    }
+
+    private Checkin negativeCheckin() {
+        return Checkin.builder()
+                .user(user)
+                .timeOfDay("evening")
+                .emotionType("sad")
+                .conditionScore(1)
+                .checkinDate(LocalDate.of(2026, 5, 25))
+                .build();
+    }
+
+    private void assertStreakNotificationSent() {
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("negative_emotion_streak"),
+                eq(true),
+                eq(List.of()),
+                eq(true)
+        );
+    }
+
+    /**
+     * 저녁 체크인 슬롯만 대상으로 스케줄러를 한 번 실행한다.
+     * 아침(09:00)·오후(12:00) 기본값과 주간 리포트(08:00)·To-do(21:00) 시각은
+     * 테스트에서 쓰는 시각들과 겹치지 않으므로 저녁 트리거만 격리된다.
+     */
+    private void runEveningScenario(LocalTime eveningTime, String utcInstant) {
+        runScenario(eveningTime, utcInstant, List.of());
+    }
+
+    private void runEveningScenario(LocalTime eveningTime, String utcInstant, LocalDate completedEveningDate) {
+        runScenario(eveningTime, utcInstant, List.of(), completedEveningDate);
+    }
+
+    private void runScenario(LocalTime eveningTime, String utcInstant, List<Checkin> recentCheckins) {
+        runScenario(eveningTime, utcInstant, recentCheckins, null);
+    }
+
+    /**
+     * @param completedEveningDate 유저가 저녁 체크인을 완료한 날짜. {@code null} 이면 미완료.
+     *                             날짜를 {@code any()} 로 뭉개지 않고 실제 전달된 값과 대조해,
+     *                             잘못된 날짜로 조회하면 완료 기록을 못 찾도록 한다.
+     */
+    private void runScenario(LocalTime eveningTime, String utcInstant, List<Checkin> recentCheckins,
+                             LocalDate completedEveningDate) {
+        Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.of("+09:00"));
+        NotificationService service = new NotificationService(
+                clock,
+                userRepository,
+                deviceTokenRepository,
+                notificationSettingRepository,
+                proactiveCareLogRepository,
+                checkinRepository,
+                behaviorTaskRepository,
+                stringRedisTemplate,
+                new NotificationMessageMapper(),
+                pushSender,
+                notificationPersistenceService
+        );
+
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinEveningTime", eveningTime);
+        DeviceToken token = DeviceToken.builder()
+                .user(user)
+                .deviceId("device-1")
+                .platform("android")
+                .token("fcm-token")
+                .build();
+
+        lenient().when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting))
+        );
+        lenient().when(valueOperations.get(anyString())).thenReturn(null);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
+                .thenReturn(false);
+        lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(recentCheckins);
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenAnswer(invocation -> completedEveningDate != null
+                        && completedEveningDate.equals(invocation.getArgument(1))
+                        && "evening".equals(invocation.getArgument(2)));
+        lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());
+        lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(PushSendResult.SENT);
+
+        service.processScheduledNotifications();
+    }
+
+    private void assertEveningReminderSent() {
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("checkin_reminder_evening"),
+                eq(true),
+                eq(List.of()),
+                eq(true)
+        );
+    }
+
+    private void assertNoReminderSent() {
+        verify(notificationPersistenceService, never()).persistNotificationResult(
+                any(), anyString(), anyBoolean(), any(), anyBoolean()
+        );
     }
 
     private void setUserId(User u, UUID id) {
