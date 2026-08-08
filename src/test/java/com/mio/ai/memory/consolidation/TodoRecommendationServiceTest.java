@@ -388,11 +388,16 @@ class TodoRecommendationServiceTest {
         ReflectionTestUtils.setField(t, "category", category);
         ReflectionTestUtils.setField(t, "actionTextKo", actionText);
         ReflectionTestUtils.setField(t, "interventionKind", kind);
-        ReflectionTestUtils.setField(t, "fitsDistortions", fitsDistortions);
-        ReflectionTestUtils.setField(t, "fitsEmotions", fitsEmotions);
+        // #374 — 저장 필드는 String[]다(List<String>이면 JSON 매핑과 Java 타입이 겹쳐 오염된다).
+        ReflectionTestUtils.setField(t, "fitsDistortions", toArray(fitsDistortions));
+        ReflectionTestUtils.setField(t, "fitsEmotions", toArray(fitsEmotions));
         ReflectionTestUtils.setField(t, "difficulty", difficulty);
         ReflectionTestUtils.setField(t, "estimatedMinutes", 5);
         return t;
+    }
+
+    private static String[] toArray(List<String> values) {
+        return values == null ? null : values.toArray(new String[0]);
     }
 
     private BehaviorTemplate newTemplate() {
