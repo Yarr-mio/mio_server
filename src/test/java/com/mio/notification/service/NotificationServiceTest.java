@@ -1,5 +1,6 @@
 package com.mio.notification.service;
 
+import com.mio.checkin.domain.Checkin;
 import com.mio.checkin.repository.CheckinRepository;
 import com.mio.notification.domain.DeviceToken;
 import com.mio.notification.domain.NotificationSetting;
@@ -25,6 +26,7 @@ import org.springframework.data.redis.core.ValueOperations;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.time.OffsetDateTime;
@@ -396,12 +398,95 @@ class NotificationServiceTest {
         assertEveningReminderSent();
     }
 
+    @Test
+    @DisplayName("새벽에는 서버가 시점을 정하는 negative_emotion_streak 를 발송하지 않는다")
+    void serverInitiatedTrigger_atDawn_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T18:00:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("새벽이어도 유저가 직접 설정한 체크인 알림은 발송한다 (두 정책이 간섭하지 않는다)")
+    void userScheduledTrigger_atDawn_stillSends_whileServerTriggerSkipped() {
+        runStreakScenario(LocalTime.of(3, 0), "2026-05-25T18:00:00Z");
+
+        assertEveningReminderSent();
+        verify(notificationPersistenceService, never()).persistNotificationResult(
+                any(), eq("negative_emotion_streak"), anyBoolean(), any(), anyBoolean()
+        );
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 시작(08:00)에는 발송한다")
+    void serverInitiatedTrigger_atWindowStart_sends() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T23:00:00Z");
+
+        assertStreakNotificationSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 시작 직전(07:59)에는 발송하지 않는다")
+    void serverInitiatedTrigger_justBeforeWindowStart_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-25T22:59:00Z");
+
+        assertNoReminderSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창 끝(22:00)에는 발송한다")
+    void serverInitiatedTrigger_atWindowEnd_sends() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-26T13:00:00Z");
+
+        assertStreakNotificationSent();
+    }
+
+    @Test
+    @DisplayName("서버 발생 트리거 허용 창을 넘기면(22:01) 발송하지 않는다")
+    void serverInitiatedTrigger_afterWindowEnd_isSkipped() {
+        runStreakScenario(LocalTime.of(23, 30), "2026-05-26T13:01:00Z");
+
+        assertNoReminderSent();
+    }
+
+    /**
+     * 최근 체크인 3건이 모두 부정 감정인 상태(negative_emotion_streak 조건 충족)로
+     * 스케줄러를 한 번 실행한다.
+     */
+    private void runStreakScenario(LocalTime eveningTime, String utcInstant) {
+        runScenario(eveningTime, utcInstant, List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+    }
+
+    private Checkin negativeCheckin() {
+        return Checkin.builder()
+                .user(user)
+                .timeOfDay("evening")
+                .emotionType("sad")
+                .conditionScore(1)
+                .checkinDate(LocalDate.of(2026, 5, 25))
+                .build();
+    }
+
+    private void assertStreakNotificationSent() {
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("negative_emotion_streak"),
+                eq(true),
+                eq(List.of()),
+                eq(true)
+        );
+    }
+
     /**
      * 저녁 체크인 슬롯만 대상으로 스케줄러를 한 번 실행한다.
      * 아침(09:00)·오후(12:00) 기본값과 주간 리포트(08:00)·To-do(21:00) 시각은
      * 테스트에서 쓰는 시각들과 겹치지 않으므로 저녁 트리거만 격리된다.
      */
     private void runEveningScenario(LocalTime eveningTime, String utcInstant) {
+        runScenario(eveningTime, utcInstant, List.of());
+    }
+
+    private void runScenario(LocalTime eveningTime, String utcInstant, List<Checkin> recentCheckins) {
         Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.of("+09:00"));
         NotificationService service = new NotificationService(
                 clock,
@@ -433,7 +518,7 @@ class NotificationServiceTest {
         lenient().when(proactiveCareLogRepository.countByUser_IdAndSentAtBetween(eq(userId), any(), any())).thenReturn(0L);
         lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndSentAtAfter(eq(userId), anyString(), any()))
                 .thenReturn(false);
-        lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(recentCheckins);
         lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
                 .thenReturn(false);
         lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());

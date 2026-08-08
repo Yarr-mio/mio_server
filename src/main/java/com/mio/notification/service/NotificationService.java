@@ -48,6 +48,8 @@ public class NotificationService {
 
     private static final LocalTime TODO_REMINDER_TIME = LocalTime.of(21, 0);
     private static final LocalTime WEEKLY_REPORT_TIME = LocalTime.of(8, 0);
+    private static final LocalTime SERVER_INITIATED_WINDOW_START = LocalTime.of(8, 0);
+    private static final LocalTime SERVER_INITIATED_WINDOW_END = LocalTime.of(22, 0);
     private static final int DAILY_SEND_LIMIT = 3;
     private static final int DUE_WINDOW_MINUTES = 10;
     private static final int MINUTES_PER_DAY = 1440;
@@ -201,10 +203,12 @@ public class NotificationService {
     private String determineTrigger(NotificationSetting setting, OffsetDateTime now) {
         UUID userId = setting.getUser().getId();
         LocalDate today = now.toLocalDate();
+        boolean serverInitiatedAllowed = isWithinServerInitiatedWindow(now);
 
-        if (setting.isCheckinEnabled() && hasNegativeEmotionStreak(userId)) {
+        if (setting.isCheckinEnabled() && serverInitiatedAllowed && hasNegativeEmotionStreak(userId)) {
             return "negative_emotion_streak";
         }
+        // 아래 체크인 리마인더는 유저가 직접 고른 시각이므로 시간대 제한을 두지 않는다.
         if (setting.isCheckinEnabled()) {
             if (isDue(setting.getCheckinMorningTime(), now) && !hasCompletedCheckin(userId, today, "morning")) {
                 return "checkin_reminder_morning";
@@ -216,16 +220,39 @@ public class NotificationService {
                 return "checkin_reminder_evening";
             }
         }
-        if (setting.isReportEnabled() && isWeeklyReportDue(now)) {
+        if (setting.isReportEnabled() && serverInitiatedAllowed && isWeeklyReportDue(now)) {
             return "report_weekly";
         }
         if (setting.isCharacterEnabled()
                 && setting.isTodoReminderOn()
+                && serverInitiatedAllowed
                 && isDue(TODO_REMINDER_TIME, now)
                 && hasIncompleteTodoToday(userId, now)) {
             return "todo_incomplete";
         }
         return null;
+    }
+
+    /**
+     * 서버가 시점을 정하는 알림을 지금 보내도 되는지 판정한다. (KST 08:00~22:00, 양끝 포함)
+     *
+     * <p>알림 트리거는 두 종류로 나뉜다.
+     * <ul>
+     *   <li><b>유저가 시각을 직접 설정하는 트리거</b> — 체크인 리마인더(아침·오후·저녁).
+     *       유저가 새벽 01:08 을 골랐다면 그건 본인의 선택이므로 그대로 존중하고
+     *       이 창을 적용하지 않는다.</li>
+     *   <li><b>서버가 시점을 정하는 개입성 트리거</b> — {@code negative_emotion_streak}(시각 조건이
+     *       아예 없어 아무 틱에서나 발생), {@code report_weekly}, {@code todo_incomplete}.
+     *       유저가 동의한 적 없는 시점에 서버가 임의로 깨우는 셈이므로 심야를 피한다.</li>
+     * </ul>
+     *
+     * <p>창 밖이면 해당 트리거를 <b>건너뛰기만</b> 한다. 이월하거나 큐에 쌓지 않으며,
+     * 다음 날에도 조건이 여전히 충족되면 자연히 다시 잡힌다.
+     */
+    private boolean isWithinServerInitiatedWindow(OffsetDateTime now) {
+        LocalTime current = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES);
+        return !current.isBefore(SERVER_INITIATED_WINDOW_START)
+                && !current.isAfter(SERVER_INITIATED_WINDOW_END);
     }
 
     private boolean hasCompletedCheckin(UUID userId, LocalDate today, String slot) {
