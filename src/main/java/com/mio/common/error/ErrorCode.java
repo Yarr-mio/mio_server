@@ -67,6 +67,8 @@ public enum ErrorCode {
     // Notification
     NOTIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "NOTIFICATION_NOT_FOUND", "알림 설정을 찾을 수 없습니다."),
     DEVICE_TOKEN_NOT_FOUND(HttpStatus.NOT_FOUND, "DEVICE_TOKEN_NOT_FOUND", "디바이스 토큰을 찾을 수 없습니다."),
+    DEVICE_TOKEN_REGISTER_CONFLICT(HttpStatus.CONFLICT, "DEVICE_TOKEN_REGISTER_CONFLICT",
+            "다른 요청이 같은 기기의 토큰을 등록 중입니다. 잠시 후 다시 시도해 주세요."),
 
     // Report
     REPORT_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "SERVER_ERROR", "서버 오류로 리포트 조회에 실패했습니다."),
