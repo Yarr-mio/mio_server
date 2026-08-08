@@ -2,6 +2,12 @@ services:
   app:
     image: ghcr.io/yarr-mio/mio_server:latest
     restart: unless-stopped
+    # 상한은 예약이 아니라 보호 장치다. 상한이 없으면 메모리를 폭주시킨 컨테이너를
+    # cgroup 이 막지 못해 호스트 전체가 페이지 캐시 스래싱에 빠진다(2026-08-07 장애).
+    # 당시 커널은 회수 가능한 캐시가 남아 있다고 보아 OOM Killer 를 발동하지 않았고,
+    # 컨테이너가 죽지 않아 restart 정책도 작동하지 못했다.
+    # t4g.small(1841MB) 실사용 381MB 기준. JVM MaxRAMPercentage=55 와 짝을 이룬다.
+    mem_limit: 800m
     ports:
       - "127.0.0.1:8080:8080"
     env_file:
@@ -42,6 +48,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    # 실사용 57MB. shared_buffers 128MB + HikariCP 풀(20) x work_mem 4MB 를
+    # 고려해 320m. maxmemory 정책이 아니라 폭주 차단용 상한이다.
+    mem_limit: 320m
     environment:
       POSTGRES_DB: ${DB_NAME:-mio}
       POSTGRES_USER: ${DB_USERNAME}
@@ -57,6 +66,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    # 실사용 11MB. 세션 버퍼가 예상 밖으로 커지는 경우를 막는 상한이다.
+    # redis 자체의 maxmemory/eviction 정책 도입은 별건으로 둔다.
+    mem_limit: 128m
     command: >
       redis-server
       ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
