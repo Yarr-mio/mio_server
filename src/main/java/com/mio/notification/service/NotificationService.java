@@ -93,17 +93,35 @@ public class NotificationService {
         }
     }
 
+    /**
+     * 알림 이력 조회. <b>실제로 유저에게 도달했거나 도달을 시도한 알림만</b> 내려준다 (이슈 #397).
+     *
+     * <p>제외 대상은 {@link ProactiveCareLog#INTERNAL_ONLY_STATUSES} — 보낼 단말이 없어 시도조차
+     * 안 한 건({@code NO_DEVICE})과 발송 여부가 불명인 건({@code UNCONFIRMED})이다. 이들이 목록에
+     * 남으면 앱에는 알림이 있는데 푸시는 오지 않은 불일치가 된다.
+     *
+     * <p>{@code FAILED} 는 <b>제외하지 않는다</b>. 명세가 "{@code FAILED} 항목은 이력 화면에서
+     * 재시도 불가 안내 UI 처리 권장"이라고 규정해 FE 에 이미 표시 경로가 있다.
+     *
+     * <p>제외는 반드시 쿼리에서 이뤄진다 — 아래 {@code pageSize + 1} 판정이 조회 결과를
+     * 그대로 신뢰하기 때문이다.
+     */
     @Transactional(readOnly = true)
     public NotificationHistoryResponse getNotificationHistory(UUID userId, String cursor, Integer limit) {
         int pageSize = normalizeLimit(limit);
         List<ProactiveCareLog> logs;
 
         if (cursor == null) {
-            logs = proactiveCareLogRepository.findPageByUserId(userId, PageRequest.of(0, pageSize + 1));
+            logs = proactiveCareLogRepository.findVisiblePageByUserId(
+                    userId,
+                    ProactiveCareLog.INTERNAL_ONLY_STATUSES,
+                    PageRequest.of(0, pageSize + 1)
+            );
         } else {
             NotificationCursor notificationCursor = decodeCursor(userId, cursor);
-            logs = proactiveCareLogRepository.findPageByUserIdAfterCursor(
+            logs = proactiveCareLogRepository.findVisiblePageByUserIdAfterCursor(
                     userId,
+                    ProactiveCareLog.INTERNAL_ONLY_STATUSES,
                     notificationCursor.sentAt(),
                     notificationCursor.id(),
                     PageRequest.of(0, pageSize + 1)
@@ -416,6 +434,10 @@ public class NotificationService {
             return new NotificationCursor(OffsetDateTime.parse(parts[0]), UUID.fromString(parts[1]));
         } catch (IllegalArgumentException ignored) {
             try {
+                // 커서는 "값"이 아니라 정렬상의 "위치"다. 그래서 여기서는 이력에서 제외되는 상태
+                // (INTERNAL_ONLY_STATUSES)의 로그도 그대로 위치로 받아들인다. 제외는 결과 집합에
+                // 걸리므로 그 뒤 페이지에 미발송 건이 섞이지 않고, 반대로 여기서 거부해 버리면
+                // 수정 이전 응답으로 받은 legacy 커서를 들고 있는 클라이언트가 400 을 맞는다.
                 ProactiveCareLog legacyCursorLog = proactiveCareLogRepository.findByIdAndUser_Id(UUID.fromString(cursor), userId)
                         .orElseThrow(() -> new BusinessException(ErrorCode.INVALID_INPUT));
                 return new NotificationCursor(legacyCursorLog.getSentAt(), legacyCursorLog.getId());
