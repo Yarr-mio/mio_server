@@ -42,6 +42,11 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest
 
+      # arm64 런타임 스테이지를 만들기 위해 필요. builder 는 $BUILDPLATFORM 으로
+      # 고정돼 있어 에뮬레이션 대상은 최종 스테이지의 adduser/addgroup 뿐이다.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -50,6 +55,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          # amd64 를 함께 빌드하는 이유는 롤백이다. 같은 태그로 기존 x86 인스턴스와
+          # 신규 ARM 인스턴스 모두 기동할 수 있어 이관 실패 시 즉시 되돌릴 수 있다.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
