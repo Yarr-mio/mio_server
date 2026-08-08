@@ -1,0 +1,4 @@
+# 이슈 #402 — 테스트 컨텍스트에서 프로덕션 스케줄러(@Scheduled 잡 8개)가 자동 실행되지 않게 한다.
+# 프로파일·테스트 클래스 선언과 무관하게 모든 Spring 테스트 컨텍스트에 적용된다.
+org.springframework.test.context.ContextCustomizerFactory=\
+  com.mio.config.DisableSchedulingContextCustomizerFactory
