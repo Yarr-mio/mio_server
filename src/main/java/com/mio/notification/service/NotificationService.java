@@ -141,7 +141,8 @@ public class NotificationService {
         Pageable pageable = PageRequest.of(0, SCHEDULER_BATCH_SIZE, SCHEDULER_SORT);
         Slice<NotificationSetting> batch;
         do {
-            batch = notificationSettingRepository.findByNotificationAgreeTrue(pageable);
+            // 탈퇴(DELETED)·정지(SUSPENDED) 유저는 조회 단계에서 제외된다 (이슈 #388)
+            batch = notificationSettingRepository.findSendableTargets(pageable);
             for (NotificationSetting setting : batch.getContent()) {
                 evaluateAndSend(setting, now);
             }

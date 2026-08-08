@@ -253,7 +253,7 @@ class NotificationServiceTest {
                 .token("fcm-token")
                 .build();
 
-        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
                 new org.springframework.data.domain.SliceImpl<>(List.of(setting))
         );
         when(valueOperations.get(anyString())).thenReturn(null);
@@ -320,14 +320,14 @@ class NotificationServiceTest {
     @Test
     @DisplayName("스케줄러 페이지 조회는 안정적인 id 정렬을 사용한다")
     void processScheduledNotifications_usesStableSort() {
-        when(notificationSettingRepository.findByNotificationAgreeTrue(any())).thenReturn(
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
                 new org.springframework.data.domain.SliceImpl<>(List.of())
         );
 
         notificationService.processScheduledNotifications();
 
         ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
-        verify(notificationSettingRepository).findByNotificationAgreeTrue(pageableCaptor.capture());
+        verify(notificationSettingRepository).findSendableTargets(pageableCaptor.capture());
         assertThat(pageableCaptor.getValue().getSort().getOrderFor("id")).isNotNull();
     }
 
