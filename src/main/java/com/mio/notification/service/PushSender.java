@@ -32,6 +32,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -43,6 +44,7 @@ public class PushSender {
     private static final String APNS_HOST_SANDBOX = "https://api.sandbox.push.apple.com";
     private static final long JWT_TTL_SECONDS = 3000;
     private static final String APNS_TOKEN_PATTERN = "[0-9a-fA-F]{64}";
+    private static final String APS_KEY = "aps";
 
     @Value("${apns.key-content:}")
     private String apnsKeyContent;
@@ -137,12 +139,20 @@ public class PushSender {
         }
     }
 
-    public PushSendResult send(String token, String platform, String title, String body) {
+    /**
+     * @param data 알림 탭 시 앱이 사용할 라우팅 정보 (이슈 #409). 비어 있으면 앱은 알림 종류를
+     *             판별할 수 없어 OS 기본 동작(마지막 화면 복귀)으로 떨어진다.
+     */
+    public PushSendResult send(String token, String platform, String title, String body, Map<String, String> data) {
         try {
+            // 복사는 반드시 try 안에서 한다 — data 에 null 값이 섞이면 Map.copyOf 가 NPE 를 던지는데,
+            // 이게 밖으로 새면 아래 catch 의 FAILED 분류를 건너뛰고 호출자의 단말 순회와
+            // 스케줄러 배치 전체를 중단시킨다(두 루프 모두 유저별 try 가 없다).
+            Map<String, String> payloadData = data == null ? Map.of() : Map.copyOf(data);
             if ("ios".equalsIgnoreCase(platform)) {
-                return sendApns(token, title, body);
+                return sendApns(token, title, body, payloadData);
             } else if ("android".equalsIgnoreCase(platform)) {
-                return sendFcm(token, title, body);
+                return sendFcm(token, title, body, payloadData);
             } else {
                 log.warn("Unknown platform '{}', skipping push", platform);
                 return PushSendResult.of(PushSendStatus.SKIPPED, "UNSUPPORTED_PLATFORM:" + platform);
@@ -158,7 +168,7 @@ public class PushSender {
         }
     }
 
-    private PushSendResult sendApns(String deviceToken, String title, String body) throws Exception {
+    private PushSendResult sendApns(String deviceToken, String title, String body, Map<String, String> data) throws Exception {
         if (!apnsEnabled) {
             log.debug("APNs disabled, skipping send");
             return PushSendResult.of(PushSendStatus.SKIPPED, "APNS_DISABLED");
@@ -170,7 +180,7 @@ public class PushSender {
 
         String host = apnsIsProduction ? APNS_HOST_PROD : APNS_HOST_SANDBOX;
         String url = host + "/3/device/" + deviceToken;
-        String payload = buildApnsPayload(title, body);
+        String payload = buildApnsPayload(title, body, data);
         String jwt = getOrRefreshApnsJwt();
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -230,19 +240,13 @@ public class PushSender {
         }
     }
 
-    private PushSendResult sendFcm(String fcmToken, String title, String body) throws Exception {
+    private PushSendResult sendFcm(String fcmToken, String title, String body, Map<String, String> data) throws Exception {
         if (!fcmEnabled) {
             log.debug("FCM disabled, skipping send");
             return PushSendResult.of(PushSendStatus.SKIPPED, "FCM_DISABLED");
         }
 
-        Message message = Message.builder()
-                .setNotification(Notification.builder()
-                        .setTitle(title)
-                        .setBody(body)
-                        .build())
-                .setToken(fcmToken)
-                .build();
+        Message message = buildFcmMessage(fcmToken, title, body, data);
 
         try {
             FirebaseMessaging.getInstance().send(message);
@@ -285,11 +289,36 @@ public class PushSender {
         return jwt;
     }
 
-    private String buildApnsPayload(String title, String body) {
+    /**
+     * FCM 메시지를 만든다.
+     *
+     * <p>{@code notification} 과 별개로 {@code data} 에 라우팅 정보를 싣는다. 안드로이드는 백그라운드에서
+     * {@code onMessageReceived} 가 아니라 런처 Intent extras 로 이 값을 받는다.
+     */
+    Message buildFcmMessage(String fcmToken, String title, String body, Map<String, String> data) {
+        return Message.builder()
+                .setNotification(Notification.builder()
+                        .setTitle(title)
+                        .setBody(body)
+                        .build())
+                .putAllData(data)
+                .setToken(fcmToken)
+                .build();
+    }
+
+    /**
+     * APNs 페이로드를 만든다.
+     *
+     * <p>라우팅용 커스텀 키는 {@code aps} 안이 아니라 <b>형제 레벨(최상위)</b> 에 놓아야 알림 탭 시
+     * {@code userInfo} 로 전달된다. {@code aps} 를 마지막에 넣어 커스텀 키가 이를 덮어쓰지 못하게 한다.
+     */
+    String buildApnsPayload(String title, String body, Map<String, String> data) {
         try {
             Map<String, Object> alert = Map.of("title", title, "body", body);
             Map<String, Object> aps = Map.of("alert", alert, "sound", "default");
-            return objectMapper.writeValueAsString(Map.of("aps", aps));
+            Map<String, Object> payload = new LinkedHashMap<>(data);
+            payload.put(APS_KEY, aps);
+            return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to build APNs payload", e);
         }
