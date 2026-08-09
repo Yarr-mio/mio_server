@@ -298,12 +298,52 @@ class NotificationServiceTest {
         );
     }
 
+    /**
+     * 라우팅 계약을 <b>전용 테스트로</b> 고정한다 (이슈 #409).
+     *
+     * <p>다른 테스트들의 스텁 인자에 기대 맵을 박아두면 라우팅이 깨졌을 때 "발송 결과 분류" 테스트가
+     * 대신 빨개져 원인을 가린다. 그러면 다음 사람이 스텁을 {@code anyMap()} 으로 완화하기 쉽고,
+     * 그 순간 라우팅 검증은 흔적 없이 사라진다.
+     */
+    @Test
+    @DisplayName("[#409] 체크인 리마인더는 /checkin 라우팅과 슬롯을 실어 보낸다")
+    void sendNotificationToUser_checkinReminder_carriesCheckinRoute() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("android").token("fcm-token").build();
+        setField(token, "id", UUID.randomUUID());
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.sent());
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", true);
+
+        // 문구와 라우팅이 같은 triggerCode 에서 나왔음을 함께 고정한다
+        verify(pushSender).send(
+                eq("fcm-token"), eq("android"), eq("아침 체크인"), anyString(), eq(CHECKIN_MORNING_DATA));
+    }
+
+    @Test
+    @DisplayName("[#409] 체크인 외 트리거는 슬롯 없이 해당 화면 라우팅만 실어 보낸다")
+    void sendNotificationToUser_nonCheckinTrigger_carriesRouteWithoutSlot() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("ios").token("apns-token").build();
+        setField(token, "id", UUID.randomUUID());
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.sent());
+
+        notificationService.sendNotificationToUser(user, "todo_incomplete", true);
+
+        verify(pushSender).send(
+                eq("apns-token"), eq("ios"), eq("오늘의 To-do"), anyString(), eq(TODO_DATA));
+    }
+
     @Test
     @DisplayName("[#387] 유효한 디바이스 토큰이 없으면 SENT가 아닌 NO_DEVICE로 기록한다")
     void sendNotificationToUser_noValidTokens_recordsNoDevice() {
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of());
 
-        notificationService.sendNotificationToUser(user, "checkin_reminder_evening", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "checkin_reminder_evening", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);
@@ -327,10 +367,10 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
+        when(pushSender.send(eq("apns-token"), eq("ios"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
-        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);
@@ -352,12 +392,12 @@ class NotificationServiceTest {
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
                 .thenReturn(List.of(iosToken, androidToken));
-        when(pushSender.send("apns-token", "ios", "제목", "본문", TODO_DATA))
+        when(pushSender.send(eq("apns-token"), eq("ios"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
-        when(pushSender.send("fcm-token", "android", "제목", "본문", TODO_DATA))
+        when(pushSender.send(eq("fcm-token"), eq("android"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.sent());
 
-        notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "todo_incomplete", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);
@@ -555,10 +595,10 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
+        when(pushSender.send(eq("apns-token"), eq("ios"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "EXCEPTION:HttpTimeoutException"));
 
-        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);
@@ -582,10 +622,10 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
+        when(pushSender.send(eq("apns-token"), eq("ios"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
-        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);
@@ -608,12 +648,12 @@ class NotificationServiceTest {
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
                 .thenReturn(List.of(iosToken, androidToken));
-        when(pushSender.send("apns-token", "ios", "제목", "본문", TODO_DATA))
+        when(pushSender.send(eq("apns-token"), eq("ios"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
-        when(pushSender.send("fcm-token", "android", "제목", "본문", TODO_DATA))
+        when(pushSender.send(eq("fcm-token"), eq("android"), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "FCM_TRANSPORT_ERROR"));
 
-        notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
+        notificationService.sendNotificationToUser(user, "todo_incomplete", true);
 
         ArgumentCaptor<NotificationDeliveryResult> captor =
                 ArgumentCaptor.forClass(NotificationDeliveryResult.class);

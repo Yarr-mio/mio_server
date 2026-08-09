@@ -144,8 +144,11 @@ public class PushSender {
      *             판별할 수 없어 OS 기본 동작(마지막 화면 복귀)으로 떨어진다.
      */
     public PushSendResult send(String token, String platform, String title, String body, Map<String, String> data) {
-        Map<String, String> payloadData = data == null ? Map.of() : Map.copyOf(data);
         try {
+            // 복사는 반드시 try 안에서 한다 — data 에 null 값이 섞이면 Map.copyOf 가 NPE 를 던지는데,
+            // 이게 밖으로 새면 아래 catch 의 FAILED 분류를 건너뛰고 호출자의 단말 순회와
+            // 스케줄러 배치 전체를 중단시킨다(두 루프 모두 유저별 try 가 없다).
+            Map<String, String> payloadData = data == null ? Map.of() : Map.copyOf(data);
             if ("ios".equalsIgnoreCase(platform)) {
                 return sendApns(token, title, body, payloadData);
             } else if ("android".equalsIgnoreCase(platform)) {
@@ -243,14 +246,7 @@ public class PushSender {
             return PushSendResult.of(PushSendStatus.SKIPPED, "FCM_DISABLED");
         }
 
-        Message message = Message.builder()
-                .setNotification(Notification.builder()
-                        .setTitle(title)
-                        .setBody(body)
-                        .build())
-                .putAllData(data)
-                .setToken(fcmToken)
-                .build();
+        Message message = buildFcmMessage(fcmToken, title, body, data);
 
         try {
             FirebaseMessaging.getInstance().send(message);
@@ -291,6 +287,23 @@ public class PushSender {
 
         cachedJwt.set(new CachedJwt(jwt, now));
         return jwt;
+    }
+
+    /**
+     * FCM 메시지를 만든다.
+     *
+     * <p>{@code notification} 과 별개로 {@code data} 에 라우팅 정보를 싣는다. 안드로이드는 백그라운드에서
+     * {@code onMessageReceived} 가 아니라 런처 Intent extras 로 이 값을 받는다.
+     */
+    Message buildFcmMessage(String fcmToken, String title, String body, Map<String, String> data) {
+        return Message.builder()
+                .setNotification(Notification.builder()
+                        .setTitle(title)
+                        .setBody(body)
+                        .build())
+                .putAllData(data)
+                .setToken(fcmToken)
+                .build();
     }
 
     /**
