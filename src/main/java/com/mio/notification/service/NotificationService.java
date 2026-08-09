@@ -39,6 +39,7 @@ import java.time.temporal.ChronoUnit;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -95,7 +96,8 @@ public class NotificationService {
         }
 
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            // 테스트 푸시는 특정 trigger 가 없으므로 라우팅 data 없이 보낸다 — 앱은 기본 동작으로 연다.
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, Map.of());
             if (result.invalidatesToken()) {
                 token.invalidate();
                 deviceTokenRepository.save(token);
@@ -180,7 +182,14 @@ public class NotificationService {
         } while (batch.hasNext());
     }
 
-    public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
+    /**
+     * 알림을 발송한다.
+     *
+     * <p>문구(title/body)와 라우팅(route/slot)을 <b>모두 {@code triggerCode} 하나에서</b> 유도한다.
+     * 호출자가 문구와 코드를 따로 넘기면 "아침 체크인" 알림을 탭했는데 리포트로 가는 식의 어긋남이
+     * 생기므로, 애초에 그런 조합을 만들 수 없게 막았다 (이슈 #409).
+     */
+    public void sendNotificationToUser(User user, String triggerCode, boolean countTowardDailyLimit) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
             // 보낸 것이 없으므로 SENT 로 기록하지 않는다 (미발송이 지표에 그대로 드러나야 한다).
@@ -195,12 +204,18 @@ public class NotificationService {
             return;
         }
 
+        NotificationMessageMapper.NotificationMessage message = notificationMessageMapper.messageFor(triggerCode);
+        String title = message.title();
+        String body = message.body();
+        // 알림 탭 시 이동할 화면 정보 (이슈 #409). 없으면 앱이 마지막 화면으로 복귀해버린다.
+        Map<String, String> pushData = notificationMessageMapper.pushDataFor(triggerCode);
+
         boolean anySucceeded = false;
         boolean anyAmbiguous = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
         List<String> failureReasons = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, pushData);
             if (result.isSent()) {
                 anySucceeded = true;
             } else {
@@ -253,8 +268,7 @@ public class NotificationService {
             return;
         }
 
-        NotificationMessageMapper.NotificationMessage message = notificationMessageMapper.messageFor(triggerCode);
-        sendNotificationToUser(setting.getUser(), triggerCode, message.title(), message.body(), true);
+        sendNotificationToUser(setting.getUser(), triggerCode, true);
     }
 
     private String determineTrigger(NotificationSetting setting, OffsetDateTime now) {
