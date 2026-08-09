@@ -39,6 +39,7 @@ import java.time.temporal.ChronoUnit;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -95,7 +96,8 @@ public class NotificationService {
         }
 
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            // 테스트 푸시는 특정 trigger 가 없으므로 라우팅 data 없이 보낸다 — 앱은 기본 동작으로 연다.
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, Map.of());
             if (result.invalidatesToken()) {
                 token.invalidate();
                 deviceTokenRepository.save(token);
@@ -195,12 +197,15 @@ public class NotificationService {
             return;
         }
 
+        // 알림 탭 시 이동할 화면 정보 (이슈 #409). 없으면 앱이 마지막 화면으로 복귀해버린다.
+        Map<String, String> pushData = notificationMessageMapper.pushDataFor(triggerCode);
+
         boolean anySucceeded = false;
         boolean anyAmbiguous = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
         List<String> failureReasons = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, pushData);
             if (result.isSent()) {
                 anySucceeded = true;
             } else {

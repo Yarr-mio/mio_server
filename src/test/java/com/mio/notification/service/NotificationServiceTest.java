@@ -36,6 +36,7 @@ import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -46,6 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -56,6 +58,15 @@ class NotificationServiceTest {
 
     /** API 명세(10_Notification_알림.md §알림 수신 상태)에 고정된 노출값. 이 밖의 값은 나갈 수 없다. */
     private static final List<String> DOCUMENTED_STATUSES = List.of("SENT", "DELIVERED", "OPENED", "FAILED");
+
+    /**
+     * 알림 탭 라우팅 data (이슈 #409). 스텁이 이 값과 정확히 일치해야 통과하므로,
+     * 서비스가 trigger 에 맞는 route 를 실어 보내는지까지 함께 고정된다.
+     */
+    private static final Map<String, String> CHECKIN_MORNING_DATA =
+            Map.of("type", "checkin_reminder_morning", "route", "/checkin", "slot", "morning");
+    private static final Map<String, String> TODO_DATA =
+            Map.of("type", "todo_incomplete", "route", "/todo");
 
     @Mock private UserRepository userRepository;
     @Mock private DeviceTokenRepository deviceTokenRepository;
@@ -111,7 +122,7 @@ class NotificationServiceTest {
 
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("abcd1234", "ios", "제목", "본문"))
+        when(pushSender.send("abcd1234", "ios", "제목", "본문", Map.of()))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
         notificationService.sendTestNotification(userId, "제목", "본문");
@@ -273,7 +284,7 @@ class NotificationServiceTest {
         when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
         when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), eq("morning"))).thenReturn(false);
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("fcm-token", "android", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!"))
+        when(pushSender.send("fcm-token", "android", "아침 체크인", "오늘 기분은 어때요? 아침 체크인을 해보세요!", CHECKIN_MORNING_DATA))
                 .thenReturn(PushSendResult.sent());
 
         notificationService.processScheduledNotifications();
@@ -316,7 +327,7 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
         notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
@@ -341,9 +352,9 @@ class NotificationServiceTest {
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
                 .thenReturn(List.of(iosToken, androidToken));
-        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+        when(pushSender.send("apns-token", "ios", "제목", "본문", TODO_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
-        when(pushSender.send("fcm-token", "android", "제목", "본문"))
+        when(pushSender.send("fcm-token", "android", "제목", "본문", TODO_DATA))
                 .thenReturn(PushSendResult.sent());
 
         notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
@@ -544,7 +555,7 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "EXCEPTION:HttpTimeoutException"));
 
         notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
@@ -571,7 +582,7 @@ class NotificationServiceTest {
         setField(token, "id", UUID.randomUUID());
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+        when(pushSender.send("apns-token", "ios", "제목", "본문", CHECKIN_MORNING_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
 
         notificationService.sendNotificationToUser(user, "checkin_reminder_morning", "제목", "본문", true);
@@ -597,9 +608,9 @@ class NotificationServiceTest {
 
         when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId))
                 .thenReturn(List.of(iosToken, androidToken));
-        when(pushSender.send("apns-token", "ios", "제목", "본문"))
+        when(pushSender.send("apns-token", "ios", "제목", "본문", TODO_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, "APNS_410:Unregistered"));
-        when(pushSender.send("fcm-token", "android", "제목", "본문"))
+        when(pushSender.send("fcm-token", "android", "제목", "본문", TODO_DATA))
                 .thenReturn(PushSendResult.of(PushSendStatus.AMBIGUOUS, "FCM_TRANSPORT_ERROR"));
 
         notificationService.sendNotificationToUser(user, "todo_incomplete", "제목", "본문", true);
@@ -944,7 +955,7 @@ class NotificationServiceTest {
                         && "evening".equals(invocation.getArgument(2)));
         lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any())).thenReturn(List.of());
         lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
-        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString()))
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
                 .thenReturn(PushSendResult.sent());
 
         service.processScheduledNotifications();

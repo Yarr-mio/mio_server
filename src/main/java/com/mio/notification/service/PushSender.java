@@ -32,6 +32,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -43,6 +44,7 @@ public class PushSender {
     private static final String APNS_HOST_SANDBOX = "https://api.sandbox.push.apple.com";
     private static final long JWT_TTL_SECONDS = 3000;
     private static final String APNS_TOKEN_PATTERN = "[0-9a-fA-F]{64}";
+    private static final String APS_KEY = "aps";
 
     @Value("${apns.key-content:}")
     private String apnsKeyContent;
@@ -137,12 +139,17 @@ public class PushSender {
         }
     }
 
-    public PushSendResult send(String token, String platform, String title, String body) {
+    /**
+     * @param data 알림 탭 시 앱이 사용할 라우팅 정보 (이슈 #409). 비어 있으면 앱은 알림 종류를
+     *             판별할 수 없어 OS 기본 동작(마지막 화면 복귀)으로 떨어진다.
+     */
+    public PushSendResult send(String token, String platform, String title, String body, Map<String, String> data) {
+        Map<String, String> payloadData = data == null ? Map.of() : Map.copyOf(data);
         try {
             if ("ios".equalsIgnoreCase(platform)) {
-                return sendApns(token, title, body);
+                return sendApns(token, title, body, payloadData);
             } else if ("android".equalsIgnoreCase(platform)) {
-                return sendFcm(token, title, body);
+                return sendFcm(token, title, body, payloadData);
             } else {
                 log.warn("Unknown platform '{}', skipping push", platform);
                 return PushSendResult.of(PushSendStatus.SKIPPED, "UNSUPPORTED_PLATFORM:" + platform);
@@ -158,7 +165,7 @@ public class PushSender {
         }
     }
 
-    private PushSendResult sendApns(String deviceToken, String title, String body) throws Exception {
+    private PushSendResult sendApns(String deviceToken, String title, String body, Map<String, String> data) throws Exception {
         if (!apnsEnabled) {
             log.debug("APNs disabled, skipping send");
             return PushSendResult.of(PushSendStatus.SKIPPED, "APNS_DISABLED");
@@ -170,7 +177,7 @@ public class PushSender {
 
         String host = apnsIsProduction ? APNS_HOST_PROD : APNS_HOST_SANDBOX;
         String url = host + "/3/device/" + deviceToken;
-        String payload = buildApnsPayload(title, body);
+        String payload = buildApnsPayload(title, body, data);
         String jwt = getOrRefreshApnsJwt();
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -230,7 +237,7 @@ public class PushSender {
         }
     }
 
-    private PushSendResult sendFcm(String fcmToken, String title, String body) throws Exception {
+    private PushSendResult sendFcm(String fcmToken, String title, String body, Map<String, String> data) throws Exception {
         if (!fcmEnabled) {
             log.debug("FCM disabled, skipping send");
             return PushSendResult.of(PushSendStatus.SKIPPED, "FCM_DISABLED");
@@ -241,6 +248,7 @@ public class PushSender {
                         .setTitle(title)
                         .setBody(body)
                         .build())
+                .putAllData(data)
                 .setToken(fcmToken)
                 .build();
 
@@ -285,11 +293,19 @@ public class PushSender {
         return jwt;
     }
 
-    private String buildApnsPayload(String title, String body) {
+    /**
+     * APNs 페이로드를 만든다.
+     *
+     * <p>라우팅용 커스텀 키는 {@code aps} 안이 아니라 <b>형제 레벨(최상위)</b> 에 놓아야 알림 탭 시
+     * {@code userInfo} 로 전달된다. {@code aps} 를 마지막에 넣어 커스텀 키가 이를 덮어쓰지 못하게 한다.
+     */
+    String buildApnsPayload(String title, String body, Map<String, String> data) {
         try {
             Map<String, Object> alert = Map.of("title", title, "body", body);
             Map<String, Object> aps = Map.of("alert", alert, "sound", "default");
-            return objectMapper.writeValueAsString(Map.of("aps", aps));
+            Map<String, Object> payload = new LinkedHashMap<>(data);
+            payload.put(APS_KEY, aps);
+            return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to build APNs payload", e);
         }
