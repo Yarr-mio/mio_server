@@ -14,6 +14,8 @@ import com.mio.notification.dto.NotificationReadResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.report.domain.WeeklyReport;
+import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.repository.BehaviorTaskRepository;
@@ -52,6 +54,8 @@ public class NotificationService {
 
     private static final LocalTime TODO_REMINDER_TIME = LocalTime.of(21, 0);
     private static final LocalTime WEEKLY_REPORT_TIME = LocalTime.of(8, 0);
+    /** 월요일 발송분이 대상으로 삼는 주차는 발송일 7일 전 월요일이다. */
+    private static final int WEEKLY_REPORT_PERIOD_DAYS = 7;
     private static final LocalTime SERVER_INITIATED_WINDOW_START = LocalTime.of(8, 0);
     private static final LocalTime SERVER_INITIATED_WINDOW_END = LocalTime.of(22, 0);
     private static final int DAILY_SEND_LIMIT = 3;
@@ -84,6 +88,7 @@ public class NotificationService {
     private final NotificationMessageMapper notificationMessageMapper;
     private final PushSender pushSender;
     private final NotificationPersistenceService notificationPersistenceService;
+    private final WeeklyReportRepository weeklyReportRepository;
 
     public void sendTestNotification(UUID userId, String title, String body) {
         userRepository.findById(userId)
@@ -284,8 +289,11 @@ public class NotificationService {
                 return checkinTrigger;
             }
         }
-        if (setting.isReportEnabled() && serverInitiatedAllowed && isWeeklyReportDue(now)) {
-            return "report_weekly";
+        if (setting.isReportEnabled() && serverInitiatedAllowed) {
+            Optional<LocalDate> reportDue = weeklyReportDueDate(now);
+            if (reportDue.isPresent() && hasGeneratedWeeklyReport(userId, reportDue.get())) {
+                return "report_weekly";
+            }
         }
         if (setting.isCharacterEnabled() && setting.isTodoReminderOn() && serverInitiatedAllowed) {
             Optional<LocalDate> todoDue = dueOccurrenceDate(TODO_REMINDER_TIME, now);
@@ -357,9 +365,28 @@ public class NotificationService {
      * 현재 {@code WEEKLY_REPORT_TIME} 은 08:00 이라 창이 자정을 넘지 않지만,
      * 시각이 바뀌어도 요일 판정이 어긋나지 않도록 발생일에 맞춰 둔다.
      */
-    private boolean isWeeklyReportDue(OffsetDateTime now) {
+    private Optional<LocalDate> weeklyReportDueDate(OffsetDateTime now) {
         return dueOccurrenceDate(WEEKLY_REPORT_TIME, now)
-                .filter(occurrenceDate -> occurrenceDate.getDayOfWeek().getValue() == 1)
+                .filter(occurrenceDate -> occurrenceDate.getDayOfWeek().getValue() == 1);
+    }
+
+    /**
+     * 리포트가 <b>실제로 생성됐을 때만</b> 알림을 보낸다 (이슈 #413).
+     *
+     * <p>이 확인이 없으면 체크인이 부족해 리포트가 만들어지지 않은 유저에게도 "리포트가 준비됐어요"
+     * 가 나간다. 프로덕션에서 실제 발송 3건 중 2건이 그런 오발송이었다.
+     *
+     * <p>대상 주차는 <b>발송일 − 7일</b> 이다. {@link com.mio.report.job.ReportAggregationJob} 이 같은
+     * 월요일 03:00 에 {@code weekEnd = 어제(일)}, {@code weekStart = weekEnd − 6일} 로 집계하므로
+     * 발송 시점에는 이미 판정이 끝나 있다.
+     *
+     * <p>행이 아예 없는 경우(집계 job 실패·미실행)도 발송하지 않는다 — 존재하지 않는 리포트를
+     * 알릴 이유가 없다.
+     */
+    private boolean hasGeneratedWeeklyReport(UUID userId, LocalDate occurrenceDate) {
+        return weeklyReportRepository
+                .findByUser_IdAndWeekStart(userId, occurrenceDate.minusDays(WEEKLY_REPORT_PERIOD_DAYS))
+                .filter(report -> WeeklyReport.STATUS_GENERATED.equals(report.getStatus()))
                 .isPresent();
     }
 

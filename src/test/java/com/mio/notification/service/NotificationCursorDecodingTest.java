@@ -84,6 +84,7 @@ class NotificationCursorDecodingTest {
     @Mock private StringRedisTemplate stringRedisTemplate;
     @Mock private PushSender pushSender;
     @Mock private NotificationPersistenceService notificationPersistenceService;
+    @Mock private com.mio.report.repository.WeeklyReportRepository weeklyReportRepository;
 
     private NotificationService notificationService;
     private Clock fixedClock;
@@ -104,7 +105,8 @@ class NotificationCursorDecodingTest {
                 stringRedisTemplate,
                 new NotificationMessageMapper(),
                 pushSender,
-                notificationPersistenceService
+                notificationPersistenceService,
+                weeklyReportRepository
         );
         userId = UUID.randomUUID();
         user = User.builder()
