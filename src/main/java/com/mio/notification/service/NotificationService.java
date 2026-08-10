@@ -384,10 +384,22 @@ public class NotificationService {
      * 알릴 이유가 없다.
      */
     private boolean hasGeneratedWeeklyReport(UUID userId, LocalDate occurrenceDate) {
-        return weeklyReportRepository
-                .findByUser_IdAndWeekStart(userId, occurrenceDate.minusDays(WEEKLY_REPORT_PERIOD_DAYS))
-                .filter(report -> WeeklyReport.STATUS_GENERATED.equals(report.getStatus()))
-                .isPresent();
+        LocalDate weekStart = occurrenceDate.minusDays(WEEKLY_REPORT_PERIOD_DAYS);
+        Optional<WeeklyReport> report = weeklyReportRepository.findByUser_IdAndWeekStart(userId, weekStart);
+
+        if (report.isEmpty()) {
+            // 정상(체크인 0건)일 수도, 집계 job 장애일 수도 있다. 후자면 그 주 전 유저가 조용히
+            // 무발송이 되므로 구분 가능한 흔적을 남긴다 — "오발송을 고치다 전면 미발송"을 놓치지 않기 위해.
+            log.info("Weekly report row absent — skipping notification. user={} weekStart={}", userId, weekStart);
+            return false;
+        }
+        String status = report.get().getStatus();
+        if (!WeeklyReport.STATUS_GENERATED.equals(status)) {
+            log.debug("Weekly report not generated — skipping notification. user={} weekStart={} status={}",
+                    userId, weekStart, status);
+            return false;
+        }
+        return true;
     }
 
     /**

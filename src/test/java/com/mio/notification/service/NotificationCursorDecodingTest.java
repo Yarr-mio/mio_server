@@ -8,6 +8,7 @@ import com.mio.notification.dto.NotificationHistoryResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
@@ -84,7 +85,7 @@ class NotificationCursorDecodingTest {
     @Mock private StringRedisTemplate stringRedisTemplate;
     @Mock private PushSender pushSender;
     @Mock private NotificationPersistenceService notificationPersistenceService;
-    @Mock private com.mio.report.repository.WeeklyReportRepository weeklyReportRepository;
+    @Mock private WeeklyReportRepository weeklyReportRepository;
 
     private NotificationService notificationService;
     private Clock fixedClock;

@@ -20,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -311,13 +313,6 @@ class NotificationServiceTest {
     }
 
     /**
-     * 라우팅 계약을 <b>전용 테스트로</b> 고정한다 (이슈 #409).
-     *
-     * <p>다른 테스트들의 스텁 인자에 기대 맵을 박아두면 라우팅이 깨졌을 때 "발송 결과 분류" 테스트가
-     * 대신 빨개져 원인을 가린다. 그러면 다음 사람이 스텁을 {@code anyMap()} 으로 완화하기 쉽고,
-     * 그 순간 라우팅 검증은 흔적 없이 사라진다.
-     */
-    /**
      * 주간 리포트 알림은 <b>리포트가 실제로 생성됐을 때만</b> 나가야 한다 (이슈 #413).
      *
      * <p>기존 구현은 "월요일 08시인가"만 보고 발송해, 체크인 부족으로 리포트가 없는 유저에게도
@@ -334,18 +329,51 @@ class NotificationServiceTest {
         notificationServiceAtWeeklyReportTime().processScheduledNotifications();
 
         verify(notificationPersistenceService).persistNotificationResult(
-                eq(userId), eq("report_weekly"), any(), any(), eq(true));
+                eq(userId),
+                eq("report_weekly"),
+                eq(NotificationDeliveryResult.sent()),
+                eq(List.of()),
+                eq(true));
     }
 
-    @Test
-    @DisplayName("[#413] 데이터 부족으로 리포트가 없으면 주간 리포트 알림을 보내지 않는다")
-    void processScheduledNotifications_insufficientData_skipsWeeklyReport() {
+    /**
+     * 발송 조건은 <b>화이트리스트</b>(GENERATED 만 발송)여야 한다.
+     *
+     * <p>INSUFFICIENT_DATA 만 막는 블랙리스트로 구현하면 {@code PENDING} 행이 통과해 "리포트가
+     * 준비됐어요" 가 나간다. PENDING 은 스키마 기본값이자 CHECK 제약에 있는 정식 상태라
+     * (V5__init_todo_report.sql), 집계가 아직 안 끝난 행이 그대로 걸린다.
+     */
+    @ParameterizedTest(name = "status={0} 이면 발송하지 않는다")
+    @ValueSource(strings = {"INSUFFICIENT_DATA", "PENDING"})
+    @DisplayName("[#413] GENERATED 가 아닌 리포트 상태는 모두 발송에서 제외한다")
+    void processScheduledNotifications_nonGeneratedStatus_skipsWeeklyReport(String status) {
         stubWeeklyReportSchedule();
         when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), eq(REPORT_WEEK_START)))
-                .thenReturn(Optional.of(weeklyReportWithStatus("INSUFFICIENT_DATA")));
+                .thenReturn(Optional.of(weeklyReportWithStatus(status)));
 
         notificationServiceAtWeeklyReportTime().processScheduledNotifications();
 
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    /**
+     * 월요일 조건이 실제로 발송을 가른다는 것을 고정한다.
+     *
+     * <p>이 테스트가 없으면 요일 필터를 없애도 스위트가 통과한다 — 지금은 {@code -7일} 조회가
+     * 우연히 월요일 행만 찾아내 필터를 대신하고 있기 때문이다. 조회 방식이 바뀌는 순간
+     * (예: 최신 리포트 조회) 매일 08:00 에 푸시가 나가게 된다.
+     */
+    @Test
+    @DisplayName("[#413] 월요일이 아니면 리포트가 생성돼 있어도 주간 리포트 알림을 보내지 않는다")
+    void processScheduledNotifications_notMonday_skipsWeeklyReport() {
+        stubWeeklyReportSchedule();
+
+        // 화요일 08:00 KST — 리포트 존재 여부와 무관하게 트리거 자체가 열리지 않아야 한다
+        serviceAt(Clock.fixed(WEEKLY_REPORT_INSTANT.plus(1, ChronoUnit.DAYS), ZoneOffset.of("+09:00")))
+                .processScheduledNotifications();
+
+        verifyNoInteractions(weeklyReportRepository);
         verifyNoInteractions(pushSender);
         verifyNoInteractions(notificationPersistenceService);
     }
@@ -363,6 +391,13 @@ class NotificationServiceTest {
         verifyNoInteractions(notificationPersistenceService);
     }
 
+    /**
+     * 라우팅 계약을 <b>전용 테스트로</b> 고정한다 (이슈 #409).
+     *
+     * <p>다른 테스트들의 스텁 인자에 기대 맵을 박아두면 라우팅이 깨졌을 때 "발송 결과 분류" 테스트가
+     * 대신 빨개져 원인을 가린다. 그러면 다음 사람이 스텁을 {@code anyMap()} 으로 완화하기 쉽고,
+     * 그 순간 라우팅 검증은 흔적 없이 사라진다.
+     */
     @Test
     @DisplayName("[#409] 체크인 리마인더는 /checkin 라우팅과 슬롯을 실어 보낸다")
     void sendNotificationToUser_checkinReminder_carriesCheckinRoute() {
@@ -1079,8 +1114,12 @@ class NotificationServiceTest {
 
     /** 월요일 08:00 KST 시점의 서비스. 주간 리포트 발송 조건을 만족하는 유일한 시각이다. */
     private NotificationService notificationServiceAtWeeklyReportTime() {
+        return serviceAt(Clock.fixed(WEEKLY_REPORT_INSTANT, ZoneOffset.of("+09:00")));
+    }
+
+    private NotificationService serviceAt(Clock clock) {
         return new NotificationService(
-                Clock.fixed(WEEKLY_REPORT_INSTANT, ZoneOffset.of("+09:00")),
+                clock,
                 userRepository,
                 deviceTokenRepository,
                 notificationSettingRepository,
