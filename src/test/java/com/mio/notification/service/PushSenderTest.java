@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.messaging.Message;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
@@ -120,6 +122,112 @@ class PushSenderTest {
         assertThat(result.isAmbiguous()).isFalse();
         assertThat(result.failureReason()).isEqualTo("APNS_MALFORMED_TOKEN");
         verifyNoInteractions(httpClient);
+    }
+
+    /**
+     * 400 응답 중 <b>토큰 자체가 무효인 사유만</b> 토큰을 폐기한다 (이슈 #411).
+     *
+     * <p>이전에는 400 이면 사유와 무관하게 {@code INVALID_TOKEN} 이었다. 그런데 {@code apns-topic}
+     * 은 설정값이라 잘못 배포되면 <b>모든</b> 요청이 400 을 받고, 스케줄러 한 사이클에 정상 사용자
+     * 토큰이 전량 무효화된다. 복구는 유저가 앱을 다시 열어야 하는데 이 서비스에서는 푸시가 곧
+     * 재방문 유도 장치라 복구가 느리다.
+     */
+    @Nested
+    @DisplayName("APNs 400 사유별 토큰 폐기 판정")
+    class Apns400ReasonHandling {
+
+        @BeforeEach
+        void enableApns() throws Exception {
+            ReflectionTestUtils.setField(pushSender, "apnsPrivateKey", generateEcPrivateKey());
+        }
+
+        @ParameterizedTest(name = "{0} → 토큰 폐기")
+        @ValueSource(strings = {"BadDeviceToken"})
+        @DisplayName("토큰 자체가 무효인 사유는 토큰을 폐기한다")
+        void send_tokenSpecificReason_invalidatesToken(String reason) throws Exception {
+            stubApnsResponse(400, "{\"reason\":\"" + reason + "\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.INVALID_TOKEN);
+            assertThat(result.invalidatesToken()).isTrue();
+            assertThat(result.failureReason()).isEqualTo("APNS_400:" + reason);
+        }
+
+        /**
+         * 이 사유들은 토픽·우선순위·푸시타입 등 <b>요청 설정</b> 문제다. 토큰과 무관하므로 폐기하면
+         * 설정 오류 한 번에 전 유저 토큰이 죽는다.
+         */
+        @ParameterizedTest(name = "{0} → 토큰 유지")
+        @ValueSource(strings = {
+                "TopicDisallowed", "BadPriority", "InvalidPushType", "IdleTimeout",
+                "MissingDeviceToken", "BadExpirationDate", "BadTopic", "MissingTopic", "PayloadEmpty"
+        })
+        @DisplayName("설정·요청 문제인 사유는 토큰을 폐기하지 않는다")
+        void send_configurationReason_keepsToken(String reason) throws Exception {
+            stubApnsResponse(400, "{\"reason\":\"" + reason + "\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+            assertThat(result.failureReason()).isEqualTo("APNS_400:" + reason);
+        }
+
+        /**
+         * 토큰이 다른 토픽·환경용일 수도, 우리 토픽 설정이 틀렸을 수도 있어 구분이 불가능하다.
+         * 후자면 전 유저가 한꺼번에 죽으므로 폐기하지 않는 쪽을 택한다.
+         */
+        @Test
+        @DisplayName("DeviceTokenNotForTopic 은 설정 오류와 구분되지 않으므로 토큰을 폐기하지 않는다")
+        void send_deviceTokenNotForTopic_keepsToken() throws Exception {
+            stubApnsResponse(400, "{\"reason\":\"DeviceTokenNotForTopic\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+        }
+
+        @Test
+        @DisplayName("사유를 알 수 없는 400 은 보수적으로 토큰을 유지한다")
+        void send_unknownReason_keepsToken() throws Exception {
+            stubApnsResponse(400, "{\"reason\":\"SomeFutureReason\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+        }
+
+        @Test
+        @DisplayName("본문이 비어 사유를 못 읽는 400 도 토큰을 유지한다")
+        void send_emptyBody_keepsToken() throws Exception {
+            stubApnsResponse(400, "");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+            assertThat(result.failureReason()).isEqualTo("APNS_400");
+        }
+
+        @Test
+        @DisplayName("410 Unregistered 는 기존대로 토큰을 폐기한다")
+        void send_unregistered_stillInvalidates() throws Exception {
+            stubApnsResponse(410, "{\"reason\":\"Unregistered\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.TOKEN_EXPIRED);
+            assertThat(result.invalidatesToken()).isTrue();
+        }
+
+        private void stubApnsResponse(int statusCode, String body) throws Exception {
+            HttpResponse<String> response = stubResponse(statusCode, body);
+            when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                    .thenReturn(response);
+        }
     }
 
     /**
