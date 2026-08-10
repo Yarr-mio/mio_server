@@ -14,6 +14,7 @@ import com.mio.notification.dto.NotificationReadResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.report.domain.ReportWeek;
 import com.mio.report.domain.WeeklyReport;
 import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.todo.domain.BehaviorTask;
@@ -54,8 +55,6 @@ public class NotificationService {
 
     private static final LocalTime TODO_REMINDER_TIME = LocalTime.of(21, 0);
     private static final LocalTime WEEKLY_REPORT_TIME = LocalTime.of(8, 0);
-    /** 월요일 발송분이 대상으로 삼는 주차는 발송일 7일 전 월요일이다. */
-    private static final int WEEKLY_REPORT_PERIOD_DAYS = 7;
     private static final LocalTime SERVER_INITIATED_WINDOW_START = LocalTime.of(8, 0);
     private static final LocalTime SERVER_INITIATED_WINDOW_END = LocalTime.of(22, 0);
     private static final int DAILY_SEND_LIMIT = 3;
@@ -384,7 +383,9 @@ public class NotificationService {
      * 알릴 이유가 없다.
      */
     private boolean hasGeneratedWeeklyReport(UUID userId, LocalDate occurrenceDate) {
-        LocalDate weekStart = occurrenceDate.minusDays(WEEKLY_REPORT_PERIOD_DAYS);
+        // 집계 job 과 같은 헬퍼로 계산한다 (이슈 #415) — 두 곳이 각자 계산하면 어긋나도 컴파일러가
+        // 잡아주지 못하고, 어긋나는 순간 그 주 알림이 통째로 사라진다.
+        LocalDate weekStart = ReportWeek.lastWeekStartFrom(occurrenceDate);
         Optional<WeeklyReport> report = weeklyReportRepository.findByUser_IdAndWeekStart(userId, weekStart);
 
         if (report.isEmpty()) {
