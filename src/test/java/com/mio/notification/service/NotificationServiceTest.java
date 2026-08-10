@@ -73,9 +73,10 @@ class NotificationServiceTest {
             Map.of("type", "todo_incomplete", "route", "/todo");
 
     /**
-     * 주간 리포트 알림은 월요일 08:00 KST 발송분이며, 대상 주차는 <b>발생일 − 7일</b> 이다.
-     * {@code ReportAggregationJob} 이 월요일에 weekEnd=어제(일), weekStart=weekEnd−6 으로 집계하므로
-     * 발송일 기준 7일 전 월요일과 맞물린다. (2026-08-10 발송 ↔ week_start 2026-08-03, 프로덕션 확인)
+     * 주간 리포트 알림은 월요일 08:00 KST 발송분이며, 대상 주차는
+     * {@code ReportWeek.lastWeekStartFrom(발생일)} — 즉 직전 주 월요일이다.
+     * 집계 job 도 같은 헬퍼를 쓰므로 두 값이 맞물린다.
+     * (2026-08-10 발송 ↔ week_start 2026-08-03, 프로덕션 확인)
      */
     private static final Instant WEEKLY_REPORT_INSTANT = Instant.parse("2026-08-09T23:00:00Z");
     private static final LocalDate REPORT_WEEK_START = LocalDate.of(2026, 8, 3);

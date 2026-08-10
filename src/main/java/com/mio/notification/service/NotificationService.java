@@ -375,9 +375,9 @@ public class NotificationService {
      * <p>이 확인이 없으면 체크인이 부족해 리포트가 만들어지지 않은 유저에게도 "리포트가 준비됐어요"
      * 가 나간다. 프로덕션에서 실제 발송 3건 중 2건이 그런 오발송이었다.
      *
-     * <p>대상 주차는 <b>발송일 − 7일</b> 이다. {@link com.mio.report.job.ReportAggregationJob} 이 같은
-     * 월요일 03:00 에 {@code weekEnd = 어제(일)}, {@code weekStart = weekEnd − 6일} 로 집계하므로
-     * 발송 시점에는 이미 판정이 끝나 있다.
+     * <p>대상 주차는 {@link ReportWeek#lastWeekStartFrom} 으로 구한다.
+     * {@link com.mio.report.job.ReportAggregationJob} 이 같은 월요일 03:00 에 <b>같은 헬퍼로</b>
+     * 집계하므로 발송 시점에는 이미 판정이 끝나 있다.
      *
      * <p>행이 아예 없는 경우(집계 job 실패·미실행)도 발송하지 않는다 — 존재하지 않는 리포트를
      * 알릴 이유가 없다.

@@ -78,7 +78,7 @@ public class ReportService {
 
     public WeeklyReportResponse getWeeklyReport(UUID userId, LocalDate weekStart) {
         final LocalDate resolvedStart = weekStart != null ? weekStart : resolveLastWeekStart();
-        final LocalDate weekEnd = resolvedStart.plusDays(6);
+        final LocalDate weekEnd = ReportWeek.weekEndOf(resolvedStart);
 
         ReportDbData data = readOnlyTx.execute(status -> {
             verifyUserExists(userId);

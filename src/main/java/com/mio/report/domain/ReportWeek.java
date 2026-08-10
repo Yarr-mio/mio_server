@@ -13,6 +13,13 @@ import java.time.LocalDate;
  * 원인을 찾기 어려운 불일치가 생긴다.
  *
  * <p>결합을 주석이 아니라 코드로 표현하기 위해 한곳에 모았다.
+ *
+ * <p><b>아직 이 헬퍼를 쓰지 않는 곳이 하나 있다.</b>
+ * {@code WeeklyReflectionJob} 은 일요일 00:00 에 {@code 오늘 - 7일}(= 일요일)로 {@code week_start}
+ * 를 만들어 {@code weekly_reports} 를 UPDATE 한다. {@code week_start} 에는 월요일만 저장되므로
+ * 이 UPDATE 는 항상 0 rows 이며, {@code narrative}/{@code coaching_direction} 이 채워지지 않는다
+ * (프로덕션 확인: 9행 중 0행). 이 헬퍼 도입 <b>이전부터</b> 그랬고, 고치려면 날짜 계산만이 아니라
+ * 두 job 의 실행 순서(일 00:00 반영 → 월 03:00 집계)부터 정해야 해서 별도로 다룬다.
  */
 public final class ReportWeek {
 
