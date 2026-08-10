@@ -42,6 +42,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import com.mio.common.error.BusinessException;
@@ -311,6 +312,194 @@ class NotificationServiceTest {
                 eq(List.of()),
                 eq(true)
         );
+    }
+
+    /**
+     * 억제된 트리거는 <b>그 트리거만</b> 건너뛰고 다음 후보를 이어서 평가해야 한다 (이슈 #408).
+     *
+     * <p>기존 구현은 후보를 하나만 뽑아 그것이 억제되면 곧바로 종료했다. 그래서 우선순위가 높은
+     * 트리거가 24시간 억제에 들어가면 그 동안 뒤 트리거가 전부 차단됐다. 특히
+     * {@code negative_emotion_streak} 는 시각 조건이 없어 조건이 참인 동안 매 틱 선택되므로,
+     * <b>체크인 리마인더를 가장 필요로 하는 상태의 유저가 리마인더를 못 받게 된다.</b>
+     */
+    @Test
+    @DisplayName("[#408] 상위 트리거가 억제되면 다음 후보를 이어서 평가한다")
+    void processScheduledNotifications_suppressedTopTrigger_fallsThroughToNext() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", now.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+        stubSchedulerBasics(setting);
+
+        // 부정 감정 3연속 → negative_emotion_streak 가 최우선 후보로 잡힌다
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+        // 그런데 이미 발송돼 24시간 억제 중이다
+        suppressOnly("negative_emotion_streak");
+        stubCheckinCompletion(Set.of());
+
+        notificationService.processScheduledNotifications();
+
+        // 유저 전체가 막히지 않고 아침 체크인 리마인더가 나가야 한다
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), any(), any(), eq(true));
+    }
+
+    /**
+     * 케이스 B — 같은 판정 창 안에 두 체크인 슬롯이 함께 도래하는 경우.
+     * 프로덕션에서 morning 22:50 / afternoon 22:51 설정으로 실측된 증상이다.
+     */
+    @Test
+    @DisplayName("[#408] 같은 창에 두 체크인 슬롯이 도래하면 앞 슬롯 발송 후 뒤 슬롯도 발송한다")
+    void processScheduledNotifications_twoCheckinSlotsDue_sendsSecondAfterFirstSuppressed() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        // 두 슬롯을 1분 차로 두고 판정 창(10분) 안의 틱에서 평가한다.
+        // 프로덕션 실측은 morning 22:50 / afternoon 22:51 이었으나, 22:55 는 서버 주도 발송 창
+        // (08:00~22:00) 밖이라 streak·report·todo 후보가 아예 생기지 않는다. 폴스루 자체를
+        // 보려면 창 안이어야 하므로 시각만 옮겼다 — 슬롯 간격과 창 폭은 실측과 동일하다.
+        LocalTime morningSlot = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES).minusMinutes(5);
+        setField(setting, "checkinMorningTime", morningSlot);
+        setField(setting, "checkinAfternoonTime", morningSlot.plusMinutes(1));
+        stubSchedulerBasics(setting);
+
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        // 아침은 이미 발송됨 → 억제. 오후는 아직
+        suppressOnly("checkin_reminder_morning");
+        stubCheckinCompletion(Set.of());
+
+        notificationService.processScheduledNotifications();
+
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_afternoon"), any(), any(), eq(true));
+    }
+
+    /**
+     * 후보가 여럿 살아 있어도 <b>한 틱에 한 건</b>만, 그리고 <b>가장 높은 우선순위</b>가 나가야 한다.
+     *
+     * <p>이 두 성질이 #408 이 새로 허용하게 된 위험의 정확한 반대편이다. 루프의 {@code return} 이
+     * 빠지면 한 틱에 여러 건이 나가고, 일일 한도는 루프 진입 전에 한 번만 검사되므로 틱 안에서
+     * 우회된다. 후보 순서가 뒤집히면 항상 최하위 우선순위가 선택된다.
+     *
+     * <p>단일 후보만 있는 테스트로는 둘 다 잡히지 않는다 — 루프가 두 번째 기회를 갖지 못하기 때문이다.
+     */
+    @Test
+    @DisplayName("[#408] 억제 없는 후보가 둘이면 상위 우선순위 하나만 발송한다")
+    void processScheduledNotifications_multipleUnsuppressed_sendsOnlyHighestPriority() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", now.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+        stubSchedulerBasics(setting);
+
+        // streak(최우선) 과 morning 이 모두 후보가 되고 어느 것도 억제되지 않는다
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(false);
+        stubCheckinCompletion(Set.of());
+
+        notificationService.processScheduledNotifications();
+
+        // 정확히 1건 — return 이 빠지면 morning 까지 나가 2건이 된다
+        verify(notificationPersistenceService, times(1))
+                .persistNotificationResult(any(), anyString(), any(), any(), anyBoolean());
+        // 그 1건은 상위 우선순위여야 한다 — 순서가 뒤집히면 morning 이 나간다
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("negative_emotion_streak"), any(), any(), eq(true));
+    }
+
+    /**
+     * 억제 검사가 <b>모든</b> 후보에 적용되는지 고정한다.
+     *
+     * <p>#408 이전에는 틱당 억제 검사가 1회였는데 이제 후보 수만큼이다. 첫 후보에만 적용하도록
+     * 바꿔도 결과가 같아 보이는 경우가 있어, 검사 호출 횟수를 직접 센다. 여기가 깨지면
+     * 24시간 억제가 무력화돼 같은 알림이 중복 도착한다 — #389 가 막으려던 실패다.
+     */
+    @Test
+    @DisplayName("[#408] 후보가 전부 억제되면 각 후보를 모두 검사하고 아무것도 발송하지 않는다")
+    void processScheduledNotifications_allCandidatesSuppressed_checksEachAndSendsNothing() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        LocalTime slot = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES).minusMinutes(5);
+        setField(setting, "checkinMorningTime", slot);
+        setField(setting, "checkinAfternoonTime", slot.plusMinutes(1));
+        stubSchedulerBasics(setting);
+
+        // streak + morning + afternoon = 후보 3개, 전부 억제
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(true);
+        stubCheckinCompletion(Set.of());
+
+        notificationService.processScheduledNotifications();
+
+        // 후보가 3개인데 1개만 검사하고 끝나면 억제 우회 버그다
+        verify(proactiveCareLogRepository, times(3))
+                .existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                        eq(userId), anyString(), any(), any());
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    /**
+     * 상위 후보가 아니라 <b>두 번째</b> 후보가 억제된 경우에도 정상 동작해야 한다.
+     * 첫 후보에만 억제를 적용하는 구현은 여기서 두 번째를 그대로 발송해버린다.
+     */
+    /**
+     * 슬롯별 {@code timeOfDay} 라벨이 트리거 코드와 짝이 맞는지 고정한다.
+     *
+     * <p>리팩터링으로 세 슬롯이 {@code addIfDue(..., timeOfDay, triggerCode)} 헬퍼를 공유하게 되면서
+     * 두 문자열이 독립 인자가 됐다. 짝이 어긋나면 이미 오후 체크인을 한 유저에게 오후 리마인더가
+     * 나가거나, 반대로 하지 않은 유저에게 조용히 나가지 않는다.
+     */
+    @Test
+    @DisplayName("[#408] 오후 체크인을 완료했으면 오후 리마인더만 후보에서 빠진다")
+    void processScheduledNotifications_afternoonCompleted_skipsOnlyAfternoon() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        LocalTime slot = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES).minusMinutes(5);
+        setField(setting, "checkinMorningTime", slot);
+        setField(setting, "checkinAfternoonTime", slot.plusMinutes(1));
+        stubSchedulerBasics(setting);
+
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        // morning 만 억제 → 정상이면 afternoon 이 다음 후보지만, 오후 체크인을 이미 했으므로 후보가 아니다
+        suppressOnly("checkin_reminder_morning");
+        stubCheckinCompletion(Set.of("afternoon"));
+
+        notificationService.processScheduledNotifications();
+
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    @Test
+    @DisplayName("[#408] 두 번째 후보가 억제되면 그것을 건너뛰고 세 번째를 발송한다")
+    void processScheduledNotifications_secondCandidateSuppressed_skipsToThird() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        LocalTime slot = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES).minusMinutes(5);
+        setField(setting, "checkinMorningTime", slot);
+        setField(setting, "checkinAfternoonTime", slot.plusMinutes(1));
+        stubSchedulerBasics(setting);
+
+        // 후보: streak, morning, afternoon — 앞의 둘이 억제
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                        eq(userId), anyString(), any(), any()))
+                .thenAnswer(invocation -> {
+                    String code = invocation.getArgument(1);
+                    return "negative_emotion_streak".equals(code) || "checkin_reminder_morning".equals(code);
+                });
+        stubCheckinCompletion(Set.of());
+
+        notificationService.processScheduledNotifications();
+
+        verify(notificationPersistenceService, times(1))
+                .persistNotificationResult(any(), anyString(), any(), any(), anyBoolean());
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_afternoon"), any(), any(), eq(true));
     }
 
     /**
@@ -1158,6 +1347,38 @@ class NotificationServiceTest {
         verify(notificationPersistenceService, never()).persistNotificationResult(
                 any(), anyString(), any(), any(), anyBoolean()
         );
+    }
+
+    /** 트리거 판정 직전까지의 공통 조건을 통과시킨다 — 트리거 선택만이 결과를 가르게 한다. */
+    private void stubSchedulerBasics(NotificationSetting setting) {
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting)));
+        lenient().when(valueOperations.get(anyString())).thenReturn(null);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(List.of());
+        lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(
+                DeviceToken.builder().user(user).deviceId("device-1").platform("android").token("fcm-token").build()));
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.sent());
+    }
+
+    /**
+     * 완료된 체크인 슬롯을 지정한다. 스텁이 <b>실제 slot 인자에 반응</b>하므로,
+     * 구현이 슬롯별 {@code timeOfDay} 라벨을 잘못 넘기면(예: afternoon 을 "morning" 으로 조회)
+     * 결과가 달라져 테스트가 깨진다. {@code anyString() → false} 로 두면 그 구분이 사라진다.
+     */
+    private void stubCheckinCompletion(Set<String> completedSlots) {
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenAnswer(invocation -> completedSlots.contains(invocation.<String>getArgument(2)));
+    }
+
+    /** 지정한 트리거만 억제 상태로 만든다. 나머지는 발송 가능. */
+    private void suppressOnly(String suppressedTriggerCode) {
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                        eq(userId), anyString(), any(), any()))
+                .thenAnswer(invocation -> suppressedTriggerCode.equals(invocation.getArgument(1)));
     }
 
     /** 월요일 08:00 KST 시점의 서비스. 주간 리포트 발송 조건을 만족하는 유일한 시각이다. */
