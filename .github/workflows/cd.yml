@@ -130,9 +130,63 @@ jobs:
 
             docker image prune -f
 
-            sleep 45
-            echo "=== app logs ==="
-            docker compose -f docker-compose.prod.yml logs app --tail=80
+            # ── 기동 헬스 게이트 (이슈 #375) ─────────────────────────────
+            # 이전에는 sleep 45 후 로그만 덤프했다. 2026-08-07 배포에서 앱이 크래시 루프에
+            # 빠져 스택트레이스가 이 출력에 그대로 찍혔는데도, 결과를 종료 코드에 반영하지
+            # 않아 워크플로우가 success 로 끝났다. 장애를 파이프라인이 아니라 사람이 뒤늦게
+            # 발견했다.
+            #
+            # 관리 포트(9090)는 외부에서 도달할 수 없도록 의도적으로 publish 하지 않으므로
+            # (application.yml 참고) 컨테이너 안에서 조회한다. 8080 은 인증이 걸려 있어
+            # 401 이 오기 때문에 헬스 판정에 쓸 수 없다.
+            HEALTH_ATTEMPTS=${HEALTH_ATTEMPTS:-36}   # 5초 간격 × 36 = 최대 180초
+            HEALTH_INTERVAL=${HEALTH_INTERVAL:-5}
+            healthy=0
+            for i in $(seq 1 $HEALTH_ATTEMPTS); do
+              cid=$(docker compose -f docker-compose.prod.yml ps -q app)
+              if [ -z "$cid" ]; then
+                echo "[health] app 컨테이너가 없다 (attempt $i)"
+                sleep "$HEALTH_INTERVAL"
+                continue
+              fi
+
+              state=$(docker inspect -f '{{.State.Status}}' "$cid")
+              # RestartCount 는 .State 가 아니라 최상위 필드다. 경로를 틀리면 빈 문자열이 나오고
+              # 아래 정수 비교가 조용히 실패해 크래시 루프 감지가 통째로 무력화된다.
+              restarts=$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0)
+              restarts=${restarts:-0}
+              # up -d 로 재생성된 컨테이너의 RestartCount 는 0 에서 시작한다.
+              # 0 보다 크면 이번 배포 이후 크래시했다는 뜻이므로 더 기다릴 이유가 없다.
+              if [ "$state" = "restarting" ] || [ "$restarts" -gt 0 ]; then
+                echo "[health] 크래시 루프 감지 — state=$state restarts=$restarts"
+                break
+              fi
+
+              if docker compose -f docker-compose.prod.yml exec -T app \
+                   wget -qO- --timeout=3 http://127.0.0.1:9090/actuator/health 2>/dev/null \
+                   | grep -q '"status":"UP"'; then
+                echo "[health] UP (attempt $i)"
+                healthy=1
+                break
+              fi
+              sleep "$HEALTH_INTERVAL"
+            done
+
+            if [ "$healthy" != "1" ]; then
+              echo "::error::기동 헬스 게이트 실패 — 배포를 실패로 처리한다"
+              echo "=== container state ==="
+              docker compose -f docker-compose.prod.yml ps app || true
+              cid=$(docker compose -f docker-compose.prod.yml ps -q app || true)
+              if [ -n "$cid" ]; then
+                docker inspect -f 'status={{.State.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}}' "$cid" || true
+              fi
+              echo "=== app logs (tail 200) ==="
+              docker compose -f docker-compose.prod.yml logs app --tail=200 || true
+              exit 1
+            fi
+
+            echo "=== app logs (tail 40) ==="
+            docker compose -f docker-compose.prod.yml logs app --tail=40
 
       - name: Close SSH on security group (always runs)
         if: always()
