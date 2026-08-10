@@ -285,8 +285,10 @@ public class NotificationService {
      * {@code negative_emotion_streak} 는 시각 조건이 없어 조건이 참인 동안 매 틱 선택되므로,
      * 한 번 발송 후 24시간 억제에 들어가면 체크인 리마인더가 그 동안 전부 막힌다.
      *
-     * <p>각 후보의 시각 조건({@code dueOccurrenceDate})은 DB 조회 없는 순수 계산이라, 창에 들어온
-     * 트리거에 대해서만 존재 확인 쿼리가 나간다. 후보를 모두 모아도 쿼리 수는 사실상 그대로다.
+     * <p>쿼리 비용: 각 후보의 시각 조건({@code dueOccurrenceDate})은 DB 조회 없는 순수 계산이라
+     * 창에 들어온 트리거에 대해서만 존재 확인 쿼리가 나간다. 다만 <b>조기 return 이 없어지면서</b>
+     * 상위 후보가 이미 매치된 틱에서도 리포트·To-do 조회가 실행된다 — 각각 월요일 08:00~08:09,
+     * 매일 21:00~21:09 창에 한정된다. 억제 검사도 후보 수만큼(최대 6회) 나간다.
      */
     private List<String> determineTriggerCandidates(NotificationSetting setting, OffsetDateTime now) {
         UUID userId = setting.getUser().getId();
@@ -315,18 +317,17 @@ public class NotificationService {
     }
 
     /**
-     * 체크인 리마인더는 유저가 직접 고른 시각이므로 발송 시간대 제한을 두지 않는다.
+     * 판정 창 안에 도래한 체크인 리마인더를 <b>전부</b> 모은다 (이슈 #408).
+     *
+     * <p>체크인 리마인더는 유저가 직접 고른 시각이므로 발송 시간대 제한을 두지 않는다.
+     *
+     * <p>슬롯 시각이 가깝게 설정되면 한 창에 둘 이상이 함께 도래한다(프로덕션 실측: morning 22:50,
+     * afternoon 22:51). 하나만 반환하면 앞 슬롯 발송 후 억제되는 순간 뒤 슬롯이 영영 막힌다.
      *
      * <p>완료 여부는 반드시 <b>판정 시점의 날짜가 아니라 목표 시각의 발생일</b>로 조회한다.
      * 예를 들어 저녁 체크인을 {@code 23:58} 로 설정한 유저가 그날 23:56 에 체크인을 마쳤다면,
      * 다음 날 {@code 00:00} 틱에서도 판정 창(10분)은 아직 열려 있다. 이때 판정 시점 날짜로
      * 조회하면 전날 남긴 완료 기록을 놓쳐 이미 체크인한 유저에게 리마인더를 보내게 된다.
-     */
-    /**
-     * 판정 창 안에 도래한 체크인 리마인더를 <b>전부</b> 모은다 (이슈 #408).
-     *
-     * <p>슬롯 시각이 가깝게 설정되면 한 창에 둘 이상이 함께 도래한다(프로덕션 실측: morning 22:50,
-     * afternoon 22:51). 하나만 반환하면 앞 슬롯 발송 후 억제되는 순간 뒤 슬롯이 영영 막힌다.
      */
     private List<String> dueCheckinReminders(NotificationSetting setting, UUID userId, OffsetDateTime now) {
         List<String> due = new java.util.ArrayList<>();
