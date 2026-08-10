@@ -11,6 +11,8 @@ import com.mio.notification.dto.NotificationReadResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.report.domain.WeeklyReport;
+import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
@@ -18,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -68,6 +72,14 @@ class NotificationServiceTest {
     private static final Map<String, String> TODO_DATA =
             Map.of("type", "todo_incomplete", "route", "/todo");
 
+    /**
+     * 주간 리포트 알림은 월요일 08:00 KST 발송분이며, 대상 주차는 <b>발생일 − 7일</b> 이다.
+     * {@code ReportAggregationJob} 이 월요일에 weekEnd=어제(일), weekStart=weekEnd−6 으로 집계하므로
+     * 발송일 기준 7일 전 월요일과 맞물린다. (2026-08-10 발송 ↔ week_start 2026-08-03, 프로덕션 확인)
+     */
+    private static final Instant WEEKLY_REPORT_INSTANT = Instant.parse("2026-08-09T23:00:00Z");
+    private static final LocalDate REPORT_WEEK_START = LocalDate.of(2026, 8, 3);
+
     @Mock private UserRepository userRepository;
     @Mock private DeviceTokenRepository deviceTokenRepository;
     @Mock private NotificationSettingRepository notificationSettingRepository;
@@ -78,6 +90,7 @@ class NotificationServiceTest {
     @Mock private ValueOperations<String, String> valueOperations;
     @Mock private PushSender pushSender;
     @Mock private NotificationPersistenceService notificationPersistenceService;
+    @Mock private WeeklyReportRepository weeklyReportRepository;
 
     private NotificationService notificationService;
     private UUID userId;
@@ -98,7 +111,8 @@ class NotificationServiceTest {
                 stringRedisTemplate,
                 new NotificationMessageMapper(),
                 pushSender,
-                notificationPersistenceService
+                notificationPersistenceService,
+                weeklyReportRepository
         );
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         userId = UUID.randomUUID();
@@ -296,6 +310,85 @@ class NotificationServiceTest {
                 eq(List.of()),
                 eq(true)
         );
+    }
+
+    /**
+     * 주간 리포트 알림은 <b>리포트가 실제로 생성됐을 때만</b> 나가야 한다 (이슈 #413).
+     *
+     * <p>기존 구현은 "월요일 08시인가"만 보고 발송해, 체크인 부족으로 리포트가 없는 유저에게도
+     * "리포트가 준비됐어요" 를 보냈다. 프로덕션에서 실제 발송 3건 중 2건이 오발송이었다.
+     * {@code ReportAggregationJob} 이 같은 날 03:00 에 판정을 끝내 두므로 조회만 하면 된다.
+     */
+    @Test
+    @DisplayName("[#413] 리포트가 생성된 유저에게만 주간 리포트 알림을 발송한다")
+    void processScheduledNotifications_reportGenerated_sendsWeeklyReport() {
+        stubWeeklyReportSchedule();
+        when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), eq(REPORT_WEEK_START)))
+                .thenReturn(Optional.of(weeklyReportWithStatus("GENERATED")));
+
+        notificationServiceAtWeeklyReportTime().processScheduledNotifications();
+
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId),
+                eq("report_weekly"),
+                eq(NotificationDeliveryResult.sent()),
+                eq(List.of()),
+                eq(true));
+    }
+
+    /**
+     * 발송 조건은 <b>화이트리스트</b>(GENERATED 만 발송)여야 한다.
+     *
+     * <p>INSUFFICIENT_DATA 만 막는 블랙리스트로 구현하면 {@code PENDING} 행이 통과해 "리포트가
+     * 준비됐어요" 가 나간다. PENDING 은 스키마 기본값이자 CHECK 제약에 있는 정식 상태라
+     * (V5__init_todo_report.sql), 집계가 아직 안 끝난 행이 그대로 걸린다.
+     */
+    @ParameterizedTest(name = "status={0} 이면 발송하지 않는다")
+    @ValueSource(strings = {"INSUFFICIENT_DATA", "PENDING"})
+    @DisplayName("[#413] GENERATED 가 아닌 리포트 상태는 모두 발송에서 제외한다")
+    void processScheduledNotifications_nonGeneratedStatus_skipsWeeklyReport(String status) {
+        stubWeeklyReportSchedule();
+        when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), eq(REPORT_WEEK_START)))
+                .thenReturn(Optional.of(weeklyReportWithStatus(status)));
+
+        notificationServiceAtWeeklyReportTime().processScheduledNotifications();
+
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    /**
+     * 월요일 조건이 실제로 발송을 가른다는 것을 고정한다.
+     *
+     * <p>이 테스트가 없으면 요일 필터를 없애도 스위트가 통과한다 — 지금은 {@code -7일} 조회가
+     * 우연히 월요일 행만 찾아내 필터를 대신하고 있기 때문이다. 조회 방식이 바뀌는 순간
+     * (예: 최신 리포트 조회) 매일 08:00 에 푸시가 나가게 된다.
+     */
+    @Test
+    @DisplayName("[#413] 월요일이 아니면 리포트가 생성돼 있어도 주간 리포트 알림을 보내지 않는다")
+    void processScheduledNotifications_notMonday_skipsWeeklyReport() {
+        stubWeeklyReportSchedule();
+
+        // 화요일 08:00 KST — 리포트 존재 여부와 무관하게 트리거 자체가 열리지 않아야 한다
+        serviceAt(Clock.fixed(WEEKLY_REPORT_INSTANT.plus(1, ChronoUnit.DAYS), ZoneOffset.of("+09:00")))
+                .processScheduledNotifications();
+
+        verifyNoInteractions(weeklyReportRepository);
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    @Test
+    @DisplayName("[#413] 리포트 행 자체가 없으면(집계 미실행) 주간 리포트 알림을 보내지 않는다")
+    void processScheduledNotifications_noReportRow_skipsWeeklyReport() {
+        stubWeeklyReportSchedule();
+        when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), eq(REPORT_WEEK_START)))
+                .thenReturn(Optional.empty());
+
+        notificationServiceAtWeeklyReportTime().processScheduledNotifications();
+
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
     }
 
     /**
@@ -968,7 +1061,8 @@ class NotificationServiceTest {
                 stringRedisTemplate,
                 new NotificationMessageMapper(),
                 pushSender,
-                notificationPersistenceService
+                notificationPersistenceService,
+                weeklyReportRepository
         );
 
         NotificationSetting setting = NotificationSetting.builder().user(user).build();
@@ -1016,6 +1110,61 @@ class NotificationServiceTest {
         verify(notificationPersistenceService, never()).persistNotificationResult(
                 any(), anyString(), any(), any(), anyBoolean()
         );
+    }
+
+    /** 월요일 08:00 KST 시점의 서비스. 주간 리포트 발송 조건을 만족하는 유일한 시각이다. */
+    private NotificationService notificationServiceAtWeeklyReportTime() {
+        return serviceAt(Clock.fixed(WEEKLY_REPORT_INSTANT, ZoneOffset.of("+09:00")));
+    }
+
+    private NotificationService serviceAt(Clock clock) {
+        return new NotificationService(
+                clock,
+                userRepository,
+                deviceTokenRepository,
+                notificationSettingRepository,
+                proactiveCareLogRepository,
+                checkinRepository,
+                behaviorTaskRepository,
+                stringRedisTemplate,
+                new NotificationMessageMapper(),
+                pushSender,
+                notificationPersistenceService,
+                weeklyReportRepository
+        );
+    }
+
+    /** 리포트 발송 직전까지의 조건을 모두 통과시켜, 리포트 상태만이 결과를 가르게 한다. */
+    private void stubWeeklyReportSchedule() {
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting)));
+        lenient().when(valueOperations.get(anyString())).thenReturn(null);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(false);
+        // 체크인·To-do 트리거가 먼저 잡히지 않도록 비운다
+        lenient().when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenReturn(true);
+        lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(List.of());
+        lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(
+                DeviceToken.builder().user(user).deviceId("device-1").platform("android").token("fcm-token").build()));
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.sent());
+    }
+
+    private WeeklyReport weeklyReportWithStatus(String status) {
+        WeeklyReport report = WeeklyReport.builder()
+                .user(user)
+                .weekStart(REPORT_WEEK_START)
+                .weekEnd(REPORT_WEEK_START.plusDays(6))
+                .build();
+        setField(report, "status", status);
+        return report;
     }
 
     private void setUserId(User u, UUID id) {
