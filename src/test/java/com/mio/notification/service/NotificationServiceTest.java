@@ -314,6 +314,53 @@ class NotificationServiceTest {
     }
 
     /**
+     * 토큰을 폐기하지 않는 실패({@code FAILED})에서 토큰이 살아남는지 <b>호출부에서</b> 고정한다 (이슈 #411).
+     *
+     * <p>#411 은 설정 오류로 인한 400 이 토큰을 죽이지 않도록 {@code PushSender} 안에서 좁혔다.
+     * 그런데 무효화를 실제로 수행하는 건 이쪽이다. 여기 조건이 넓어지면
+     * ({@code invalidatesToken()} 대신 "성공이 아니면 폐기" 같은 형태) 대량 무효화가 그대로
+     * 되살아나는데, {@code FAILED} 를 스텁하는 테스트가 없으면 빌드는 초록이다.
+     */
+    @Test
+    @DisplayName("[#411] 토큰을 폐기하지 않는 실패에서는 디바이스 토큰을 유지한다")
+    void sendNotificationToUser_nonInvalidatingFailure_keepsToken() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("ios").token("apns-token").build();
+        setField(token, "id", UUID.randomUUID());
+
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.of(PushSendStatus.FAILED, "APNS_400:TopicDisallowed"));
+
+        notificationService.sendNotificationToUser(user, "checkin_reminder_morning", true);
+
+        assertThat(token.isValid()).isTrue();
+        ArgumentCaptor<NotificationDeliveryResult> captor =
+                ArgumentCaptor.forClass(NotificationDeliveryResult.class);
+        // 무효화 대상 목록이 비어 있어야 한다 — 여기에 토큰이 실리면 영구 폐기된다
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), captor.capture(), eq(List.of()), eq(true));
+        assertThat(captor.getValue().failureReason()).isEqualTo("APNS_400:TopicDisallowed");
+    }
+
+    @Test
+    @DisplayName("[#411] 테스트 푸시에서도 폐기 대상이 아닌 실패는 토큰을 유지한다")
+    void sendTestNotification_nonInvalidatingFailure_keepsToken() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user).deviceId("device-1").platform("ios").token("apns-token").build();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.of(PushSendStatus.FAILED, "APNS_403:InvalidProviderToken"));
+
+        notificationService.sendTestNotification(userId, "제목", "본문");
+
+        assertThat(token.isValid()).isTrue();
+        verify(deviceTokenRepository, never()).save(token);
+    }
+
+    /**
      * 주간 리포트 알림은 <b>리포트가 실제로 생성됐을 때만</b> 나가야 한다 (이슈 #413).
      *
      * <p>기존 구현은 "월요일 08시인가"만 보고 발송해, 체크인 부족으로 리포트가 없는 유저에게도

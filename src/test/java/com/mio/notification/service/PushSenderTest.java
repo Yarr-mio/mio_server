@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.firebase.messaging.Message;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
@@ -210,6 +211,9 @@ class PushSenderTest {
             assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
             assertThat(result.invalidatesToken()).isFalse();
             assertThat(result.failureReason()).isEqualTo("APNS_400");
+            // null 가드가 빠지면 NPE 가 send() 의 catch-all 에 잡혀 EXCEPTION:... 으로 둔갑한다.
+            // 위 두 단언은 그 경로에서도 통과하므로 이 단언이 실제 검출력을 갖는다.
+            assertThat(result.failureReason()).doesNotStartWith("EXCEPTION");
         }
 
         @Test
@@ -221,6 +225,49 @@ class PushSenderTest {
 
             assertThat(result.status()).isEqualTo(PushSendStatus.TOKEN_EXPIRED);
             assertThat(result.invalidatesToken()).isTrue();
+        }
+
+        /**
+         * 400·410 이 아닌 상태 코드도 토큰을 폐기해서는 안 된다.
+         *
+         * <p>이 경로가 고정되지 않으면 400 만 좁혀놓고 바로 옆 분기로 같은 대량 무효화가 되돌아온다.
+         * 특히 403 {@code ExpiredProviderToken} / {@code InvalidProviderToken} 은 키·팀 ID 오설정이라
+         * <b>모든</b> 요청이 받는다. JWT 가 캐시되므로 전 발송이 한꺼번에 죽는다.
+         */
+        @ParameterizedTest(name = "{0} {1} → 토큰 유지")
+        @CsvSource({
+                "403, InvalidProviderToken",
+                "403, ExpiredProviderToken",
+                "429, TooManyRequests",
+                "500, InternalServerError",
+                "503, ServiceUnavailable"
+        })
+        @DisplayName("400·410 외의 거절은 토큰을 폐기하지 않는다")
+        void send_nonTokenStatusCode_keepsToken(int statusCode, String reason) throws Exception {
+            stubApnsResponse(statusCode, "{\"reason\":\"" + reason + "\"}");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+            assertThat(result.failureReason()).isEqualTo("APNS_" + statusCode + ":" + reason);
+        }
+
+        /**
+         * 응답 본문이 JSON 이 아닐 수 있다 (프록시·LB 가 HTML 오류 페이지를 반환하는 경우).
+         * {@code extractApnsReason} 은 이제 폐기 판정의 입력이므로 파싱 실패도 안전해야 한다.
+         */
+        @Test
+        @DisplayName("본문이 JSON 이 아니어도 파싱 실패로 죽지 않고 토큰을 유지한다")
+        void send_nonJsonBody_keepsToken() throws Exception {
+            stubApnsResponse(400, "<html><body>502 Bad Gateway</body></html>");
+
+            PushSendResult result = pushSender.send(VALID_APNS_TOKEN, "ios", "제목", "본문", Map.of());
+
+            assertThat(result.status()).isEqualTo(PushSendStatus.FAILED);
+            assertThat(result.invalidatesToken()).isFalse();
+            // 파싱 예외가 send() 의 catch-all 로 새면 EXCEPTION:... 이 된다 — 그 경로가 아님을 고정한다
+            assertThat(result.failureReason()).isEqualTo("APNS_400");
         }
 
         private void stubApnsResponse(int statusCode, String body) throws Exception {

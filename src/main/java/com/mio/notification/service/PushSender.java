@@ -230,30 +230,31 @@ public class PushSender {
             return PushSendResult.sent();
         }
 
-        log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
-        String failureReason = buildApnsFailureReason(response.statusCode(), response.body());
+        // reason 은 본문이 비거나 파싱 실패하면 null 이다. 폐기 판정의 입력이므로 한 번만 파싱해
+        // 아래 분기와 로그가 같은 값을 보게 한다.
+        String reason = extractApnsReason(response.body());
+        String failureReason = buildApnsFailureReason(response.statusCode(), reason);
+
         if (response.statusCode() == 410) {
+            log.warn("APNs token no longer valid — discarding. reason={} token={}", reason, maskToken(deviceToken));
             return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);
         }
-        if (response.statusCode() == 400) {
-            // reason 은 본문이 비거나 파싱 실패하면 null 이다. Set.of() 는 contains(null) 에서
-            // NPE 를 던지므로 반드시 먼저 거른다.
-            String reason = extractApnsReason(response.body());
-            if (reason != null && TOKEN_INVALIDATING_APNS_REASONS.contains(reason)) {
-                return PushSendResult.of(PushSendStatus.INVALID_TOKEN, failureReason);
-            }
-            // 토큰이 아니라 우리 요청·설정이 틀렸을 가능성이 높다. 전 요청이 같은 사유로 400 을 받는
-            // 상황이므로 개별 토큰 문제로 오인하지 않도록 ERROR 로 남긴다.
-            log.error("APNs rejected with non-token reason — keeping device token. reason={} token={}",
-                    reason, maskToken(deviceToken));
-            return PushSendResult.of(PushSendStatus.FAILED, failureReason);
+        // Set.of() 는 contains(null) 에서 NPE 를 던지므로 null 을 먼저 거른다.
+        if (response.statusCode() == 400 && reason != null && TOKEN_INVALIDATING_APNS_REASONS.contains(reason)) {
+            log.warn("APNs rejected device token — discarding. reason={} token={}", reason, maskToken(deviceToken));
+            return PushSendResult.of(PushSendStatus.INVALID_TOKEN, failureReason);
         }
+
+        // 여기 오는 응답은 토큰이 아니라 우리 요청·설정·게이트웨이 상태 문제다. 모든 요청이 같은
+        // 사유로 실패하는 상황이므로 개별 토큰 문제로 오인되지 않게 ERROR 로 남긴다.
+        // 특히 403(ExpiredProviderToken 등)은 JWT 캐시 때문에 전 발송이 한꺼번에 죽는다.
+        log.error("APNs rejected for non-token reason — keeping device token. status={} reason={} token={}",
+                response.statusCode(), reason, maskToken(deviceToken));
         return PushSendResult.of(PushSendStatus.FAILED, failureReason);
     }
 
     /** APNs 응답에서 사후 추적용 사유를 만든다. 토큰 등 민감 정보는 포함하지 않는다. */
-    private String buildApnsFailureReason(int statusCode, String responseBody) {
-        String reason = extractApnsReason(responseBody);
+    private String buildApnsFailureReason(int statusCode, String reason) {
         return reason == null ? "APNS_" + statusCode : "APNS_" + statusCode + ":" + reason;
     }
 
