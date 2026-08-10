@@ -314,6 +314,84 @@ class NotificationServiceTest {
     }
 
     /**
+     * 억제된 트리거는 <b>그 트리거만</b> 건너뛰고 다음 후보를 이어서 평가해야 한다 (이슈 #408).
+     *
+     * <p>기존 구현은 후보를 하나만 뽑아 그것이 억제되면 곧바로 종료했다. 그래서 우선순위가 높은
+     * 트리거가 24시간 억제에 들어가면 그 동안 뒤 트리거가 전부 차단됐다. 특히
+     * {@code negative_emotion_streak} 는 시각 조건이 없어 조건이 참인 동안 매 틱 선택되므로,
+     * <b>체크인 리마인더를 가장 필요로 하는 상태의 유저가 리마인더를 못 받게 된다.</b>
+     */
+    @Test
+    @DisplayName("[#408] 상위 트리거가 억제되면 다음 후보를 이어서 평가한다")
+    void processScheduledNotifications_suppressedTopTrigger_fallsThroughToNext() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", now.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+        stubSchedulerBasics(setting);
+
+        // 부정 감정 3연속 → negative_emotion_streak 가 최우선 후보로 잡힌다
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId))
+                .thenReturn(List.of(negativeCheckin(), negativeCheckin(), negativeCheckin()));
+        // 그런데 이미 발송돼 24시간 억제 중이다
+        suppressOnly("negative_emotion_streak");
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenReturn(false);
+
+        notificationService.processScheduledNotifications();
+
+        // 유저 전체가 막히지 않고 아침 체크인 리마인더가 나가야 한다
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_morning"), any(), any(), eq(true));
+    }
+
+    /**
+     * 케이스 B — 같은 판정 창 안에 두 체크인 슬롯이 함께 도래하는 경우.
+     * 프로덕션에서 morning 22:50 / afternoon 22:51 설정으로 실측된 증상이다.
+     */
+    @Test
+    @DisplayName("[#408] 같은 창에 두 체크인 슬롯이 도래하면 앞 슬롯 발송 후 뒤 슬롯도 발송한다")
+    void processScheduledNotifications_twoCheckinSlotsDue_sendsSecondAfterFirstSuppressed() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        // 프로덕션 실측 케이스: morning 22:50 / afternoon 22:51 에 22:55 틱 → 둘 다 판정 창 안
+        LocalTime morningSlot = now.toLocalTime().truncatedTo(ChronoUnit.MINUTES).minusMinutes(5);
+        setField(setting, "checkinMorningTime", morningSlot);
+        setField(setting, "checkinAfternoonTime", morningSlot.plusMinutes(1));
+        stubSchedulerBasics(setting);
+
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        // 아침은 이미 발송됨 → 억제. 오후는 아직
+        suppressOnly("checkin_reminder_morning");
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenReturn(false);
+
+        notificationService.processScheduledNotifications();
+
+        verify(notificationPersistenceService).persistNotificationResult(
+                eq(userId), eq("checkin_reminder_afternoon"), any(), any(), eq(true));
+    }
+
+    @Test
+    @DisplayName("[#408] 후보가 전부 억제되면 아무것도 발송하지 않는다")
+    void processScheduledNotifications_allCandidatesSuppressed_sendsNothing() {
+        OffsetDateTime now = OffsetDateTime.now(fixedClock).withHour(9).withMinute(0).withSecond(0).withNano(0);
+        NotificationSetting setting = NotificationSetting.builder().user(user).build();
+        setField(setting, "checkinMorningTime", now.toLocalTime().truncatedTo(ChronoUnit.MINUTES));
+        stubSchedulerBasics(setting);
+
+        when(checkinRepository.findTop3ByUser_IdOrderByCreatedAtDesc(userId)).thenReturn(List.of());
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                eq(userId), anyString(), any(), any())).thenReturn(true);
+        lenient().when(checkinRepository.existsByUser_IdAndCheckinDateAndTimeOfDay(eq(userId), any(), anyString()))
+                .thenReturn(false);
+
+        notificationService.processScheduledNotifications();
+
+        verifyNoInteractions(pushSender);
+        verifyNoInteractions(notificationPersistenceService);
+    }
+
+    /**
      * 토큰을 폐기하지 않는 실패({@code FAILED})에서 토큰이 살아남는지 <b>호출부에서</b> 고정한다 (이슈 #411).
      *
      * <p>#411 은 설정 오류로 인한 400 이 토큰을 죽이지 않도록 {@code PushSender} 안에서 좁혔다.
@@ -1158,6 +1236,28 @@ class NotificationServiceTest {
         verify(notificationPersistenceService, never()).persistNotificationResult(
                 any(), anyString(), any(), any(), anyBoolean()
         );
+    }
+
+    /** 트리거 판정 직전까지의 공통 조건을 통과시킨다 — 트리거 선택만이 결과를 가르게 한다. */
+    private void stubSchedulerBasics(NotificationSetting setting) {
+        when(notificationSettingRepository.findSendableTargets(any())).thenReturn(
+                new org.springframework.data.domain.SliceImpl<>(List.of(setting)));
+        lenient().when(valueOperations.get(anyString())).thenReturn(null);
+        lenient().when(proactiveCareLogRepository.countByUser_IdAndNotificationStatusInAndSentAtBetween(
+                eq(userId), any(), any(), any())).thenReturn(0L);
+        lenient().when(behaviorTaskRepository.findByUser_IdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(List.of());
+        lenient().when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(
+                DeviceToken.builder().user(user).deviceId("device-1").platform("android").token("fcm-token").build()));
+        lenient().when(pushSender.send(anyString(), anyString(), anyString(), anyString(), anyMap()))
+                .thenReturn(PushSendResult.sent());
+    }
+
+    /** 지정한 트리거만 억제 상태로 만든다. 나머지는 발송 가능. */
+    private void suppressOnly(String suppressedTriggerCode) {
+        lenient().when(proactiveCareLogRepository.existsByUser_IdAndTriggerCodeAndNotificationStatusInAndSentAtAfter(
+                        eq(userId), anyString(), any(), any()))
+                .thenAnswer(invocation -> suppressedTriggerCode.equals(invocation.getArgument(1)));
     }
 
     /** 월요일 08:00 KST 시점의 서비스. 주간 리포트 발송 조건을 만족하는 유일한 시각이다. */
