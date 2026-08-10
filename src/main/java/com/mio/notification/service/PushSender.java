@@ -34,6 +34,7 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Slf4j
@@ -45,6 +46,25 @@ public class PushSender {
     private static final long JWT_TTL_SECONDS = 3000;
     private static final String APNS_TOKEN_PATTERN = "[0-9a-fA-F]{64}";
     private static final String APS_KEY = "aps";
+
+    /**
+     * 400 응답 중 <b>토큰 자체가 무효</b>임을 뜻하는 사유 (이슈 #411).
+     *
+     * <p>이전에는 400 이면 사유와 무관하게 토큰을 폐기했다. 그런데 400 에는 {@code TopicDisallowed},
+     * {@code BadPriority}, {@code InvalidPushType} 처럼 <b>요청·설정</b> 문제인 사유가 다수 포함된다.
+     * {@code apns-topic} 이 설정값({@code apnsBundleId})이라 잘못 배포되면 모든 요청이 같은 400 을
+     * 받고, 스케줄러 한 사이클에 정상 사용자 토큰이 전량 무효화된다.
+     *
+     * <p>{@code DeviceTokenNotForTopic} 은 <b>제외</b>했다. 토큰이 다른 앱·토픽용일 수도, 우리 토픽
+     * 설정이 틀렸을 수도 있어 구분이 불가능한데, 후자면 전 유저가 한꺼번에 죽는다.
+     *
+     * <p>알려지지 않은 사유도 폐기하지 않는다 — Apple 이 사유를 추가했을 때 조용히 토큰을 죽이는
+     * 것보다 발송 실패로 남기는 편이 복구 가능하다.
+     *
+     * <p><b>남은 한계</b>: {@code BadDeviceToken} 은 sandbox 토큰을 production 으로 보낼 때도
+     * 발생한다. {@code apns.is-production} 설정이 틀리면 이 사유로 전량 무효화될 수 있다.
+     */
+    private static final Set<String> TOKEN_INVALIDATING_APNS_REASONS = Set.of("BadDeviceToken");
 
     @Value("${apns.key-content:}")
     private String apnsKeyContent;
@@ -210,20 +230,31 @@ public class PushSender {
             return PushSendResult.sent();
         }
 
-        log.warn("APNs rejected token {}: status={} body={}", maskToken(deviceToken), response.statusCode(), response.body());
-        String failureReason = buildApnsFailureReason(response.statusCode(), response.body());
+        // reason 은 본문이 비거나 파싱 실패하면 null 이다. 폐기 판정의 입력이므로 한 번만 파싱해
+        // 아래 분기와 로그가 같은 값을 보게 한다.
+        String reason = extractApnsReason(response.body());
+        String failureReason = buildApnsFailureReason(response.statusCode(), reason);
+
         if (response.statusCode() == 410) {
+            log.warn("APNs token no longer valid — discarding. reason={} token={}", reason, maskToken(deviceToken));
             return PushSendResult.of(PushSendStatus.TOKEN_EXPIRED, failureReason);
         }
-        if (response.statusCode() == 400) {
+        // Set.of() 는 contains(null) 에서 NPE 를 던지므로 null 을 먼저 거른다.
+        if (response.statusCode() == 400 && reason != null && TOKEN_INVALIDATING_APNS_REASONS.contains(reason)) {
+            log.warn("APNs rejected device token — discarding. reason={} token={}", reason, maskToken(deviceToken));
             return PushSendResult.of(PushSendStatus.INVALID_TOKEN, failureReason);
         }
+
+        // 여기 오는 응답은 토큰이 아니라 우리 요청·설정·게이트웨이 상태 문제다. 모든 요청이 같은
+        // 사유로 실패하는 상황이므로 개별 토큰 문제로 오인되지 않게 ERROR 로 남긴다.
+        // 특히 403(ExpiredProviderToken 등)은 JWT 캐시 때문에 전 발송이 한꺼번에 죽는다.
+        log.error("APNs rejected for non-token reason — keeping device token. status={} reason={} token={}",
+                response.statusCode(), reason, maskToken(deviceToken));
         return PushSendResult.of(PushSendStatus.FAILED, failureReason);
     }
 
     /** APNs 응답에서 사후 추적용 사유를 만든다. 토큰 등 민감 정보는 포함하지 않는다. */
-    private String buildApnsFailureReason(int statusCode, String responseBody) {
-        String reason = extractApnsReason(responseBody);
+    private String buildApnsFailureReason(int statusCode, String reason) {
         return reason == null ? "APNS_" + statusCode : "APNS_" + statusCode + ":" + reason;
     }
 
