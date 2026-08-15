@@ -21,7 +21,7 @@ class LlmTurnOntologyExtractorTest {
                 """);
         LlmTurnOntologyExtractor extractor = new LlmTurnOntologyExtractor(llmClient, new ObjectMapper());
 
-        TurnOntologySignal signal = extractor.extract("다들 나를 싫어하는 것 같아");
+        TurnOntologySignal signal = extractor.extract("다들 나를 싫어하는 것 같아", null, null);
 
         assertThat(signal.distortionCode()).isEqualTo("mind_reading");
         assertThat(signal.beliefKind()).isNull();

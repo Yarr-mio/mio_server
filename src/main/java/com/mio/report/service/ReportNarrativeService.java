@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -40,11 +41,12 @@ public class ReportNarrativeService {
     }
 
     public NarrativeResult generate(String periodLabel, int checkinCount, Double avgEmotionScore,
-                                    List<DistortionDto> distortionTop3) {
+                                    List<DistortionDto> distortionTop3, UUID userId) {
         String userMessage = buildUserMessage(periodLabel, checkinCount, avgEmotionScore, distortionTop3);
         try {
             String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
-                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                    .withAttribution("REPORT_NARRATIVE", userId, null));
             return parseResponse(response);
         } catch (Exception e) {
             log.warn("ReportNarrative generation failed: period={} error={}", periodLabel, e.getClass().getSimpleName());

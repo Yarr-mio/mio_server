@@ -23,7 +23,7 @@ class CheckinAiResponseGeneratorTest {
         when(llmClient.completeText(any(LlmRequest.class))).thenReturn("오늘도 잘 버텼어요.");
         CheckinAiResponseGenerator generator = new CheckinAiResponseGenerator(llmClient, jdbcTemplate);
 
-        generator.generateAndSave(checkinId, "anxious", 3, "morning");
+        generator.generateAndSave(checkinId, "anxious", 3, "morning", UUID.randomUUID());
 
         verify(llmClient).completeText(any(LlmRequest.class));
         verify(jdbcTemplate).update(eq("UPDATE checkins SET ai_response = ? WHERE id = ?"),

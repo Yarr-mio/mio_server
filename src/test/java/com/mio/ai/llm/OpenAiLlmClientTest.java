@@ -1,6 +1,7 @@
 package com.mio.ai.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.cost.AiCostEventWriter;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -38,7 +39,7 @@ class OpenAiLlmClientTest {
         meterRegistry = new SimpleMeterRegistry();
         pricing = new LlmPricingProperties();
         pricing.setModels(Map.of(MODEL, new LlmPricingProperties.ModelPrice(
-                new BigDecimal("0.15"), new BigDecimal("0.60"))));
+                new BigDecimal("0.15"), new BigDecimal("0.075"), new BigDecimal("0.60"))));
     }
 
     @Test
@@ -287,7 +288,7 @@ class OpenAiLlmClientTest {
     @DisplayName("임베딩도 토큰·비용을 계측한다 — 빼면 비용 합계가 실제 지출보다 낮다")
     void embed_recordsUsageAndCost() throws Exception {
         pricing.setModels(Map.of("text-embedding-3-small",
-                new LlmPricingProperties.ModelPrice(new BigDecimal("0.02"), BigDecimal.ZERO)));
+                new LlmPricingProperties.ModelPrice(new BigDecimal("0.02"), null, BigDecimal.ZERO)));
         HttpClient httpClient = mock(HttpClient.class);
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -296,7 +297,7 @@ class OpenAiLlmClientTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(response);
 
-        client(httpClient).embed("안녕하세요");
+        client(httpClient).embed("안녕하세요", "EMBEDDING", null, null);
 
         assertThat(counter("mio.llm.tokens", "mode", "embed")).isEqualTo(24.0);
         // 24 * 0.02 / 1e6 = 4.8e-7 — 6자리로 끊으면 0 이 되던 값이다.
@@ -425,7 +426,7 @@ class OpenAiLlmClientTest {
 
     private OpenAiLlmClient client(HttpClient httpClient) {
         return new OpenAiLlmClient("test-key", httpClient, new ObjectMapper(),
-                meterRegistry, new LlmCostCalculator(pricing));
+                meterRegistry, new LlmCostCalculator(pricing), mock(AiCostEventWriter.class));
     }
 
     private double total(String name) {

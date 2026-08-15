@@ -86,7 +86,7 @@ public class ConversationCheckpointService {
             List<MessageRecord> records = loadMessageRecordsSince(sessionId, since);
             if (records.isEmpty()) return;
 
-            String summaryText = generateSummary(records.stream().map(MessageRecord::line).toList());
+            String summaryText = generateSummary(records.stream().map(MessageRecord::line).toList(), userId, sessionId);
             if (summaryText == null) return;
             OffsetDateTime coveredUpTo = records.stream()
                     .map(MessageRecord::createdAt)
@@ -164,12 +164,13 @@ public class ConversationCheckpointService {
                 .toList();
     }
 
-    private String generateSummary(List<String> lines) {
+    private String generateSummary(List<String> lines, UUID userId, UUID sessionId) {
         StringBuilder sb = new StringBuilder();
         try {
             LlmStreamResult result = llmClient.stream(
                     LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines))
-                            .withMaxCompletionTokens(CHECKPOINT_MAX_COMPLETION_TOKENS),
+                            .withMaxCompletionTokens(CHECKPOINT_MAX_COMPLETION_TOKENS)
+                            .withAttribution("CHECKPOINT_SUMMARY", userId, sessionId),
                     sb::append
             );
             // 잘린 요약은 저장하지 않는다. 체크포인트는 이후 턴의 프롬프트에 그대로 실리므로,

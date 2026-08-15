@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -46,11 +48,13 @@ public class OutputJudge {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
 
-    public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult) {
+    public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult,
+                                    UUID userId, UUID sessionId) {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
-                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
+                    .withAttribution("OUTPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {

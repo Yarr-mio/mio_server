@@ -2,6 +2,7 @@ package com.mio.ai.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.cost.AiCostEventWriter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,6 +17,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -52,18 +54,21 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
     private final LlmCostCalculator costCalculator;
+    private final AiCostEventWriter costEventWriter;
 
     public OpenAiLlmClient(
             @Value("${openai.api-key}") String apiKey,
             HttpClient httpClient,
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
-            LlmCostCalculator costCalculator) {
+            LlmCostCalculator costCalculator,
+            AiCostEventWriter costEventWriter) {
         this.apiKey = apiKey;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
         this.costCalculator = costCalculator;
+        this.costEventWriter = costEventWriter;
     }
 
     private static final int MAX_RETRIES = 4;
@@ -104,7 +109,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     response.body().close();
                     if (attempt >= MAX_RETRIES) {
                         recordOutcome(request.model(), MODE_STREAM, "rate_limited");
-                        recordUsage(MODE_STREAM, resolveUsage(usage, request.model()));
+                        recordUsage(MODE_STREAM, resolveUsage(usage, request.model()), request);
                         terminalRecorded = true;
                         throw new RuntimeException("OpenAI API error: 429 (rate limited, max retries exceeded)");
                     }
@@ -129,7 +134,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                 if (response.statusCode() != 200) {
                     response.body().close();
                     recordOutcome(request.model(), MODE_STREAM, "error");
-                    recordUsage(MODE_STREAM, resolveUsage(usage, request.model()));
+                    recordUsage(MODE_STREAM, resolveUsage(usage, request.model()), request);
                     terminalRecorded = true;
                     throw new RuntimeException("OpenAI API error: " + response.statusCode());
                 }
@@ -164,7 +169,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 recordOutcome(request.model(), MODE_STREAM, "interrupted");
-                recordUsage(MODE_STREAM, resolveUsage(usage, request.model()));
+                recordUsage(MODE_STREAM, resolveUsage(usage, request.model()), request);
                 throw new RuntimeException("LLM streaming request interrupted", e);
             } catch (RuntimeException e) {
                 // 청크 핸들러가 던진 예외가 여기로 온다 (오케스트레이터는 SSE IOException 을
@@ -172,20 +177,20 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                 // 아무것도 남지 않는다 — 실패가 "아무 일 없었던 것"이 되는 그 구조다.
                 if (!terminalRecorded) {
                     recordOutcome(request.model(), MODE_STREAM, "aborted");
-                    recordUsage(MODE_STREAM, resolveUsage(usage, request.model()));
+                    recordUsage(MODE_STREAM, resolveUsage(usage, request.model()), request);
                 }
                 throw e;
             } catch (Exception e) {
                 log.error("LLM streaming error: {}", e.getMessage());
                 recordOutcome(request.model(), MODE_STREAM, "error");
-                recordUsage(MODE_STREAM, resolveUsage(usage, request.model()));
+                recordUsage(MODE_STREAM, resolveUsage(usage, request.model()), request);
                 throw new RuntimeException("LLM streaming failed", e);
             }
         }
 
         recordOutcome(request.model(), MODE_STREAM, "success");
         LlmUsage resolved = resolveUsage(usage, request.model());
-        recordUsage(MODE_STREAM, resolved);
+        recordUsage(MODE_STREAM, resolved, request);
 
         long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
         return new LlmStreamResult(ttftMs, resolved, truncated.get());
@@ -251,7 +256,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
             if (response.statusCode() != 200) {
                 recordOutcome(request.model(), mode, "error");
-                recordUsage(mode, LlmUsage.unresolved(request.model()));
+                recordUsage(mode, LlmUsage.unresolved(request.model()), request);
                 terminalRecorded = true;
                 throw new RuntimeException("OpenAI API error: " + response.statusCode());
             }
@@ -262,25 +267,25 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             LlmUsage usage = extractUsage(root, request.model());
             recordIfTruncated(root, request.model(), mode);
             recordOutcome(request.model(), mode, "success");
-            recordUsage(mode, usage != null ? usage : LlmUsage.unresolved(request.model()));
+            recordUsage(mode, usage != null ? usage : LlmUsage.unresolved(request.model()), request);
 
             return root.path("choices").path(0).path("message").path("content").asText();
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             recordOutcome(request.model(), mode, "interrupted");
-            recordUsage(mode, LlmUsage.unresolved(request.model()));
+            recordUsage(mode, LlmUsage.unresolved(request.model()), request);
             throw new RuntimeException("LLM complete request interrupted", e);
         } catch (RuntimeException e) {
             if (!terminalRecorded) {
                 recordOutcome(request.model(), mode, "aborted");
-                recordUsage(mode, LlmUsage.unresolved(request.model()));
+                recordUsage(mode, LlmUsage.unresolved(request.model()), request);
             }
             throw e;
         } catch (Exception e) {
             log.error("LLM complete error: {}", e.getMessage());
             recordOutcome(request.model(), mode, "error");
-            recordUsage(mode, LlmUsage.unresolved(request.model()));
+            recordUsage(mode, LlmUsage.unresolved(request.model()), request);
             throw new RuntimeException("LLM complete failed", e);
         }
     }
@@ -302,7 +307,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         return objectMapper.writeValueAsString(body);
     }
 
-    public float[] embed(String text) {
+    @Override
+    public float[] embed(String text, String component, UUID userId, UUID sessionId) {
         if (text == null || text.isBlank()) {
             throw new IllegalArgumentException("embed() requires non-blank text");
         }
@@ -324,7 +330,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
             if (response.statusCode() != 200) {
                 recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL));
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
                 terminalRecorded = true;
                 throw new RuntimeException("OpenAI Embeddings API error: " + response.statusCode());
             }
@@ -333,7 +339,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             JsonNode embeddingNode = root.path("data").path(0).path("embedding");
             if (embeddingNode.isMissingNode() || !embeddingNode.isArray()) {
                 recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL));
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
                 terminalRecorded = true;
                 throw new RuntimeException("Unexpected embeddings response structure: " + response.body());
             }
@@ -345,24 +351,25 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             // 임베딩도 과금 대상이다. 빼면 mio.llm.cost.usd 가 실제 지출보다 낮게 나온다.
             LlmUsage usage = extractUsage(root, EMBEDDING_MODEL);
             recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "success");
-            recordUsage(MODE_EMBED, usage != null ? usage : LlmUsage.unresolved(EMBEDDING_MODEL));
+            recordUsage(MODE_EMBED, usage != null ? usage : LlmUsage.unresolved(EMBEDDING_MODEL),
+                    component, userId, sessionId);
 
             return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "interrupted");
-            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL));
+            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
             throw new RuntimeException("Embeddings request interrupted", e);
         } catch (RuntimeException e) {
             if (!terminalRecorded) {
                 recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "aborted");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL));
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
             }
             throw e;
         } catch (Exception e) {
             log.error("Embeddings API error: {}", e.getMessage());
             recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL));
+            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
             throw new RuntimeException("Embeddings request failed", e);
         }
     }
@@ -390,9 +397,12 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         if (!prompt.isNumber()) {
             return null;
         }
+        // 캐싱된 입력 토큰(이슈 #431) — prompt_tokens_details.cached_tokens. 없으면 0(임베딩
+        // 응답 등 이 필드 자체가 없는 경우 포함) — "캐시 안 됨"과 "몰라서 0"을 구분하지 않는다.
+        long cachedTokens = usage.path("prompt_tokens_details").path("cached_tokens").asLong(0L);
         // 임베딩 응답에는 completion_tokens 가 없다. 출력 토큰이 실제로 0 인 경우다.
         return LlmUsage.of(requestedModel, prompt.asLong(),
-                completion.isNumber() ? completion.asLong() : 0L);
+                completion.isNumber() ? completion.asLong() : 0L, cachedTokens);
     }
 
     /**
@@ -436,7 +446,17 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                 .increment();
     }
 
-    private void recordUsage(String mode, LlmUsage usage) {
+    /** stream()/complete() 용 — request 에 실린 귀속 정보(component/userId/sessionId)를 그대로 넘긴다. */
+    private void recordUsage(String mode, LlmUsage usage, LlmRequest request) {
+        recordUsage(mode, usage, request.component(), request.userId(), request.sessionId());
+    }
+
+    /**
+     * 비용 계산이 실제로 모이는 단 한 곳(이슈 #431). {@code stream()}·{@code complete()}·
+     * {@code embed()} 세 진입점 전부가 여기를 거치므로, 14개 호출부를 각각 안 건드리고 이
+     * 지점 하나에만 {@code ai_cost_events} 저장을 추가하면 전부 잡힌다.
+     */
+    private void recordUsage(String mode, LlmUsage usage, String component, UUID userId, UUID sessionId) {
         String model = usage.model();
         if (!usage.resolved()) {
             // "사용량을 못 받았다" 를 별도 값으로 남긴다. 토큰 0 으로 세면 조용히 과소 계상된다.
@@ -455,10 +475,15 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         BigDecimal cost = costCalculator.costUsd(usage);
         if (cost == null) {
             meterRegistry.counter(UNPRICED_METRIC, "model", model, "mode", mode).increment();
+            // 단가 미등록이라 비용은 모르지만, 토큰량 자체는 ai_cost_events에 남긴다(cost_usd=null).
+            costEventWriter.write(userId, sessionId, component, model, mode,
+                    usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), null);
             return;
         }
         meterRegistry.counter(COST_METRIC, "model", model, "mode", mode)
                 .increment(cost.doubleValue());
+        costEventWriter.write(userId, sessionId, component, model, mode,
+                usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), cost);
     }
 
     private JsonNode readChunk(String json) {

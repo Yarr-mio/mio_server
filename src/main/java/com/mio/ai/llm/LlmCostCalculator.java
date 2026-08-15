@@ -51,15 +51,25 @@ public class LlmCostCalculator {
             return null;
         }
 
+        // cachedTokens 는 promptTokens 의 부분집합(OpenAI usage.prompt_tokens_details.cached_tokens).
+        // 캐시 단가가 없는 모델(임베딩 등)은 캐시 히트분도 정가로 계산한다 — 할인을 모른다고
+        // 0 으로 치면 비용을 실제보다 더 적게 잡는 반대 방향 오류가 된다.
+        long cachedTokens = Math.min(usage.cachedTokens(), usage.promptTokens());
+        long uncachedTokens = usage.promptTokens() - cachedTokens;
+        BigDecimal cachedInputPrice = price.cachedInput() != null ? price.cachedInput() : price.input();
+
         BigDecimal inputCost = price.input()
-                .multiply(BigDecimal.valueOf(usage.promptTokens()))
+                .multiply(BigDecimal.valueOf(uncachedTokens))
+                .divide(TOKENS_PER_PRICE_UNIT, MathContext.DECIMAL64);
+        BigDecimal cachedInputCost = cachedInputPrice
+                .multiply(BigDecimal.valueOf(cachedTokens))
                 .divide(TOKENS_PER_PRICE_UNIT, MathContext.DECIMAL64);
         BigDecimal outputCost = price.output()
                 .multiply(BigDecimal.valueOf(usage.completionTokens()))
                 .divide(TOKENS_PER_PRICE_UNIT, MathContext.DECIMAL64);
 
         // stripTrailingZeros 로 0.0004500000 대신 0.00045 를 남긴다.
-        return inputCost.add(outputCost)
+        return inputCost.add(cachedInputCost).add(outputCost)
                 .setScale(COST_SCALE, RoundingMode.HALF_UP)
                 .stripTrailingZeros();
     }

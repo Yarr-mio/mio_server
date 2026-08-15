@@ -68,7 +68,9 @@ public class EmbeddingWorker {
                 String summaryText = (String) row.get("summary_text");
                 int attempts = ((Number) row.get("embedding_attempts")).intValue();
                 Object claimToken = row.get("embedding_claimed_at");
-                embedOne(id, summaryText, attempts, claimToken);
+                UUID userId = row.get("user_id") != null ? UUID.fromString(row.get("user_id").toString()) : null;
+                UUID sessionId = row.get("session_id") != null ? UUID.fromString(row.get("session_id").toString()) : null;
+                embedOne(id, summaryText, attempts, claimToken, userId, sessionId);
             } catch (Exception e) {
                 log.error("EmbeddingWorker: malformed claimed row, skipping: {}", row.get("id"), e);
             }
@@ -100,7 +102,7 @@ public class EmbeddingWorker {
                     LIMIT ?
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, summary_text, embedding_attempts, embedding_claimed_at
+                RETURNING id, summary_text, embedding_attempts, embedding_claimed_at, user_id, session_id
                 """,
                 MAX_ATTEMPTS, RECLAIM_AFTER_MINUTES, BATCH_SIZE
         );
@@ -125,7 +127,8 @@ public class EmbeddingWorker {
         );
     }
 
-    private void embedOne(UUID summaryId, String summaryText, int attempts, Object claimToken) {
+    private void embedOne(UUID summaryId, String summaryText, int attempts, Object claimToken,
+                           UUID userId, UUID sessionId) {
         if (summaryText == null || summaryText.isBlank()) {
             // 재시도해도 결과가 달라지지 않는다. 상한을 기다리지 않고 바로 확정한다.
             log.warn("EmbeddingWorker: summaryText is null or blank for summaryId={}, marking failed", summaryId);
@@ -133,7 +136,7 @@ public class EmbeddingWorker {
             return;
         }
         try {
-            float[] embedding = openAiLlmClient.embed(summaryText);
+            float[] embedding = openAiLlmClient.embed(summaryText, "SUMMARY_STORAGE_EMBEDDING", userId, sessionId);
             String vectorLiteral = toVectorLiteral(embedding);
 
             int updated = jdbcTemplate.update(

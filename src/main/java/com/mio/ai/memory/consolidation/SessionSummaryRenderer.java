@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -84,7 +85,7 @@ public class SessionSummaryRenderer {
      * @param characterId     세션에서 사용한 캐릭터. 알 수 없으면 기본 캐릭터 어조로 렌더링한다
      * @return 사용자 노출용 요약. 렌더링·계약 검사 실패 시 null
      */
-    public String render(String internalSummary, String characterId) {
+    public String render(String internalSummary, String characterId, UUID userId, UUID sessionId) {
         if (internalSummary == null || internalSummary.isBlank()) {
             return null;
         }
@@ -94,7 +95,8 @@ public class SessionSummaryRenderer {
             StringBuilder response = new StringBuilder();
             LlmStreamResult result = llmClient.stream(
                     LlmRequest.of(MODEL, buildSystemPrompt(persona), "세션 기록:\n" + internalSummary)
-                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                            .withAttribution("SUMMARY_RENDER", userId, sessionId),
                     response::append);
 
             // 잘린 텍스트를 그대로 저장하면 사용자는 문장 중간에서 끊긴 요약을 받고, 잘렸다는
