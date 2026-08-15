@@ -302,6 +302,30 @@ class SessionConsolidatorTest {
     }
 
     @Test
+    @DisplayName("핵심 요약 상태 저장이 실패하면 준비 완료 지연으로 집계하지 않는다")
+    void onSessionEnded_whenCoreStatusWriteFails_recordsFailedReadiness() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        doAnswer(invocation -> {
+            throw new IllegalStateException("status db unavailable");
+        }).when(summaryStatusWriter).markDone(sessionId);
+
+        assertThatThrownBy(() -> consolidator.onSessionEnded(
+                new SessionEndedEvent(sessionId, userId, "mio", 2)))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(timerCount("core_summary_ready", "failed")).isEqualTo(1);
+        assertThat(timerCount("core_summary_ready", "done")).isZero();
+        verifyNoInteractions(sessionSummaryRenderer, todoRecommendationService);
+    }
+
+    @Test
     @DisplayName("세션 종료 요약은 최근 40개로 자르지 않고 전체 대화를 시간순으로 조회한다")
     void loadConversationLines_does_not_limit_to_recent_40_messages() {
         SessionConsolidator consolidator = newConsolidator();
