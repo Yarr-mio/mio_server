@@ -10,6 +10,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -69,6 +70,11 @@ class SessionSummaryResponseTest {
         SessionSummary summary = mock(SessionSummary.class);
         when(summary.getSummaryText()).thenReturn(INTERNAL);
         when(summary.getUserSummaryText()).thenReturn(userSummaryText);
+        when(summary.getUserRenderStatus()).thenReturn(SummaryComponentStatus.DONE);
+        when(summary.getTodoStatus()).thenReturn(SummaryComponentStatus.DONE);
+        when(summary.getEmbeddingStatus()).thenReturn("done");
+        when(summary.getComponentErrors()).thenReturn("{}");
+        when(summary.getUpdatedAt()).thenReturn(OffsetDateTime.parse("2026-08-15T00:00:00Z"));
         return summary;
     }
 }

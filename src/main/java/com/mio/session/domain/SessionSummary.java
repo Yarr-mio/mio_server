@@ -82,11 +82,35 @@ public class SessionSummary {
     @Builder.Default
     private String embeddingStatus = "pending";
 
+    @Column(name = "user_render_status", nullable = false)
+    @Builder.Default
+    private SummaryComponentStatus userRenderStatus = SummaryComponentStatus.PENDING;
+
+    @Column(name = "todo_status", nullable = false)
+    @Builder.Default
+    private SummaryComponentStatus todoStatus = SummaryComponentStatus.PENDING;
+
+    /** 컴포넌트명 → 내부 상세를 제외한 기계 판독 오류 코드. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "component_errors", nullable = false, columnDefinition = "jsonb")
+    @Builder.Default
+    private String componentErrors = "{}";
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
+
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        createdAt = now;
+        updatedAt = now;
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 }

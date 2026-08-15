@@ -100,6 +100,7 @@ public class SessionConsolidator {
     private final SessionSummaryRenderer sessionSummaryRenderer;
     private final UserSummaryWriter userSummaryWriter;
     private final SummaryStatusWriter summaryStatusWriter;
+    private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
@@ -114,7 +115,7 @@ public class SessionConsolidator {
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // 진입점 자체에는 @Transactional을 두지 않는다. 1·2단계를 각각 self 프록시 + REQUIRES_NEW로
     // 호출해, 요약 트랜잭션이 먼저 커밋된 뒤 메모리 보강 트랜잭션이 독립적으로 실행되게 한다.
-    // summary_status=DONE은 사용자 응답에 필요한 Todo 저장까지 끝난 뒤 별도로 표시한다.
+    // 핵심 요약은 1단계 커밋 직후 DONE으로 공개하고 렌더링·Todo는 독립 상태로 종결한다.
     // (진입점을 @Transactional로 두면 요약 tx가 커밋되지 않은 채 보강 tx가 suspend 상태로 겹쳐
     //  커넥션 동시 점유·가시성 문제가 생긴다.)
     @Async
@@ -143,6 +144,10 @@ public class SessionConsolidator {
             summaryStatusWriter.markFailed(event.sessionId());
             return;
         }
+
+        // 핵심 요약은 이미 독립 트랜잭션으로 커밋됐다. 선택 작업이 실패해도 사용자가 비용을
+        // 치른 요약을 잃지 않도록 여기서 즉시 조회 가능하게 만든다 (이슈 #345, #378, #426).
+        summaryStatusWriter.markDone(event.sessionId());
 
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
         // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
@@ -175,10 +180,14 @@ public class SessionConsolidator {
                     enrichInput.summaryText(), event.characterId(), enrichInput.userId(), enrichInput.sessionId());
             if (userSummary != null) {
                 userSummaryWriter.write(enrichInput.sessionId(), userSummary);
+                componentStatusWriter.markUserRenderDone(event.sessionId());
+            } else {
+                componentStatusWriter.markUserRenderFailed(event.sessionId(), "CONTRACT_INVALID");
             }
         } catch (Exception e) {
             log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                     event.sessionId(), e);
+            componentStatusWriter.markUserRenderFailed(event.sessionId(), "USER_RENDER_FAILED");
         }
 
         // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
@@ -192,16 +201,16 @@ public class SessionConsolidator {
                             enrichInput.triggerTags(), enrichInput.summaryText()));
         } catch (Exception e) {
             log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
-            summaryStatusWriter.markFailed(event.sessionId());
+            componentStatusWriter.markTodoFailed(event.sessionId(), "TODO_GENERATION_FAILED");
             return;
         }
         if (generatedTodoCount <= 0) {
-            log.warn("SessionConsolidator: no todo generated; summary not exposed sessionId={}",
+            log.info("SessionConsolidator: no todo generated; core summary remains available sessionId={}",
                     event.sessionId());
-            summaryStatusWriter.markFailed(event.sessionId());
+            componentStatusWriter.markTodoSkipped(event.sessionId());
             return;
         }
-        summaryStatusWriter.markDone(event.sessionId());
+        componentStatusWriter.markTodoDone(event.sessionId());
     }
 
     /**
