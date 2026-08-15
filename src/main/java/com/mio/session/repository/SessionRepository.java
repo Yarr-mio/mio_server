@@ -56,32 +56,44 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     boolean existsByIdAndStatus(UUID id, SessionStatus status);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
+    @Query("""
+            UPDATE Session s
+            SET s.summaryStatus = :status,
+                s.summaryProcessingStartedAt = NULL
+            WHERE s.id = :sessionId
+            """)
     void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.summaryProcessingStartedAt = :startedAt
+            WHERE s.id = :sessionId
+              AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
+            """)
+    int markSummaryProcessingStarted(@Param("sessionId") UUID sessionId,
+                                     @Param("startedAt") OffsetDateTime startedAt);
 
     /**
      * 유예 시간이 지나도 pending 이지만 <b>결과물은 이미 갖춘</b> 종료 세션을 완료로 회복시킨다
      * (이슈 #356).
      *
-     * <p>컨솔리데이션은 요약을 독립 트랜잭션으로 먼저 커밋하고, Todo 생성까지 끝난 뒤에야
-     * done 을 표시한다. 그 사이 배포·크래시로 프로세스가 죽으면 완성된 요약과 Todo 를 두고도
-     * pending 이 남는다. 이를 실패로 확정하면 사용자는 존재하는 요약을 410 으로 영영 못 본다.
-     *
-     * <p>Todo 가 없으면 회복 대상이 아니다 — 빈 Todo 요약을 노출하지 않는다는
-     * {@code SessionConsolidator} 의 판단을 여기서도 그대로 지킨다.
+     * <p>컨솔리데이션은 요약을 독립 트랜잭션으로 먼저 커밋한다. 그 직후 배포·크래시로
+     * 프로세스가 죽으면 완성된 요약을 두고도 pending 이 남는다. Todo는 선택 작업이므로
+     * 존재 여부와 무관하게 핵심 요약을 회복한다.
      *
      * @return 완료로 회복된 세션 수
      */
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Session s
-            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.DONE
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.DONE,
+                s.summaryProcessingStartedAt = NULL
             WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
               AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
               AND s.endedAt IS NOT NULL
-              AND s.endedAt <= :cutoff
+              AND COALESCE(s.summaryProcessingStartedAt, s.endedAt) <= :cutoff
               AND EXISTS (SELECT 1 FROM SessionSummary ss WHERE ss.session = s)
-              AND EXISTS (SELECT 1 FROM BehaviorTask bt WHERE bt.sourceSession = s)
             """)
     int recoverStalePendingSummaries(@Param("cutoff") OffsetDateTime cutoff);
 
@@ -103,11 +115,13 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Session s
-            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED,
+                s.summaryProcessingStartedAt = NULL
             WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
               AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
               AND s.endedAt IS NOT NULL
-              AND s.endedAt <= :cutoff
+              AND COALESCE(s.summaryProcessingStartedAt, s.endedAt) <= :cutoff
+              AND NOT EXISTS (SELECT 1 FROM SessionSummary ss WHERE ss.session = s)
             """)
     int markStalePendingSummariesFailed(@Param("cutoff") OffsetDateTime cutoff);
 

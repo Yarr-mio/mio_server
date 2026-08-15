@@ -181,7 +181,8 @@ class SessionControllerTest {
     @DisplayName("GET /v1/sessions/{id}/summary - 요약 pending 상태면 202 반환")
     void getSessionSummary_pending_returns202() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
-                TEST_SESSION_ID, "pending", OffsetDateTime.now(), 300L, 5,
+                TEST_SESSION_ID, "pending", "pending", "pending", "pending", "pending",
+                OffsetDateTime.now(), "{}", OffsetDateTime.now(), 300L, 5,
                 null, null, null, null, null, null, null, List.of()
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
@@ -190,6 +191,7 @@ class SessionControllerTest {
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.data.summary_status").value("pending"))
+                .andExpect(jsonPath("$.data.core_summary_status").value("pending"))
                 .andExpect(jsonPath("$.data.summary").doesNotExist());
     }
 
@@ -197,7 +199,9 @@ class SessionControllerTest {
     @DisplayName("GET /v1/sessions/{id}/summary - 요약 done→viewed 전환 시 200 반환")
     void getSessionSummary_done_returns200AndTransitionsToViewed() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
-                TEST_SESSION_ID, "viewed", OffsetDateTime.now(), 300L, 5,
+                TEST_SESSION_ID, "viewed", "done", "done", "done", "done",
+                OffsetDateTime.now(), "{\"todo\":\"TODO_GENERATION_FAILED\"}",
+                OffsetDateTime.now(), 300L, 5,
                 "세션 요약 내용", null, 70, "[]", false, null, null, List.of()
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
@@ -206,6 +210,9 @@ class SessionControllerTest {
                         .principal(() -> TEST_USER_ID.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.summary_status").value("viewed"))
+                .andExpect(jsonPath("$.data.core_summary_status").value("done"))
+                .andExpect(jsonPath("$.data.component_errors.todo")
+                        .value("TODO_GENERATION_FAILED"))
                 .andExpect(jsonPath("$.data.summary").value("세션 요약 내용"));
     }
 

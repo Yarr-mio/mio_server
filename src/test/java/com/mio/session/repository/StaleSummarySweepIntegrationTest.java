@@ -99,15 +99,72 @@ class StaleSummarySweepIntegrationTest {
     }
 
     @Test
-    @DisplayName("요약은 있으나 Todo 가 없는 세션은 완료로 올리지 않고 실패로 정리한다")
-    void sweep_doesNotRecoverPendingSessionWithoutTodo() {
-        // Todo 없는 요약은 노출하지 않는다는 기존 판단(SessionConsolidator)을 회복 경로에서도 지킨다.
+    @DisplayName("요약은 있으나 Todo가 없는 세션도 핵심 요약을 완료로 회복한다")
+    void sweep_recoversPendingSessionWithoutTodo() {
         UUID sessionId = endedSessionWith(SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
         insertSummary(sessionId);
 
         staleSummarySweepJob.run();
 
-        assertThat(statusOf(sessionId)).isEqualTo("failed");
+        assertThat(statusOf(sessionId)).isEqualTo("done");
+    }
+
+    @Test
+    @DisplayName("오래 pending인 렌더링과 Todo는 독립 failed 상태와 오류 코드로 종결한다")
+    void sweep_failsStaleOptionalComponentsIndependently() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+        jdbcTemplate.update(
+                "UPDATE session_summaries SET created_at = now() - interval '3 hours' WHERE session_id = ?",
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(componentValue(sessionId, "user_render_status")).isEqualTo("failed");
+        assertThat(componentValue(sessionId, "todo_status")).isEqualTo("failed");
+        assertThat(componentError(sessionId, "user_render")).isEqualTo("WORKER_STUCK");
+        assertThat(componentError(sessionId, "todo")).isEqualTo("WORKER_STUCK");
+        assertThat(statusOf(sessionId)).isEqualTo("done");
+    }
+
+    @Test
+    @DisplayName("오래된 요약을 방금 재처리한 렌더링과 Todo는 활성 pending으로 보존한다")
+    void sweep_doesNotFailRecentlyReprocessedComponents() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+        jdbcTemplate.update(
+                """
+                UPDATE session_summaries
+                SET created_at = now() - interval '3 hours',
+                    updated_at = now() - interval '3 hours',
+                    user_render_status = 'pending',
+                    todo_status = 'pending',
+                    user_render_pending_at = now(),
+                    todo_pending_at = now()
+                WHERE session_id = ?
+                """,
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(componentValue(sessionId, "user_render_status")).isEqualTo("pending");
+        assertThat(componentValue(sessionId, "todo_status")).isEqualTo("pending");
+    }
+
+    @Test
+    @DisplayName("오래된 세션의 핵심 요약을 방금 재처리하기 시작했으면 stale 실패로 가로채지 않는다")
+    void sweep_doesNotFailRecentlyStartedCoreSummary() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        jdbcTemplate.update(
+                "UPDATE sessions SET summary_processing_started_at = now() WHERE id = ?",
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(statusOf(sessionId)).isEqualTo("pending");
     }
 
     private void insertSummary(UUID sessionId) {
@@ -143,5 +200,17 @@ class StaleSummarySweepIntegrationTest {
     private String statusOf(UUID sessionId) {
         return jdbcTemplate.queryForObject(
                 "SELECT summary_status FROM sessions WHERE id = ?", String.class, sessionId);
+    }
+
+    private String componentValue(UUID sessionId, String column) {
+        return jdbcTemplate.queryForObject(
+                "SELECT " + column + " FROM session_summaries WHERE session_id = ?",
+                String.class, sessionId);
+    }
+
+    private String componentError(UUID sessionId, String component) {
+        return jdbcTemplate.queryForObject(
+                "SELECT component_errors ->> ? FROM session_summaries WHERE session_id = ?",
+                String.class, component, sessionId);
     }
 }
