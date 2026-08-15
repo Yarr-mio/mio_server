@@ -1,6 +1,7 @@
 package com.mio.report.job;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.report.domain.ReportWeek;
 import com.mio.report.domain.WeeklyReport;
 import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.user.domain.User;
@@ -12,6 +13,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -34,11 +36,16 @@ public class ReportAggregationJob {
     private final WeeklyReportRepository weeklyReportRepository;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    /** 실행 시각을 주입받아 비-월요일 실행도 테스트할 수 있게 한다 (이슈 #415). */
+    private final Clock clock;
 
     @Scheduled(cron = "0 0 3 * * MON", zone = "Asia/Seoul")
     public void run() {
-        LocalDate weekEnd = LocalDate.now(KST).minusDays(1);   // 지난 일요일
-        LocalDate weekStart = weekEnd.minusDays(6);             // 지난 월요일
+        // 실행 요일에 의존하지 않는다 (이슈 #415). 이전 구현은 오늘-1, -6 이라 월요일에 돌 때만
+        // 옳았고, 다른 요일에 재실행하면 월요일이 아닌 week_start 로 저장돼 알림 게이트·리포트
+        // 조회의 계산과 어긋났다.
+        LocalDate weekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(clock));
+        LocalDate weekEnd = ReportWeek.weekEndOf(weekStart);
 
         log.info("[ReportAggregationJob] start weekStart={} weekEnd={}", weekStart, weekEnd);
 

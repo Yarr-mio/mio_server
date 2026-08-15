@@ -65,10 +65,14 @@ public class WeeklyReport {
     @Column(name = "coaching_direction")
     private String coachingDirection;
 
-    /** PENDING / GENERATED / INSUFFICIENT_DATA */
+    public static final String STATUS_PENDING = "PENDING";
+    public static final String STATUS_GENERATED = "GENERATED";
+    public static final String STATUS_INSUFFICIENT_DATA = "INSUFFICIENT_DATA";
+
+    /** {@link #STATUS_PENDING} / {@link #STATUS_GENERATED} / {@link #STATUS_INSUFFICIENT_DATA} */
     @Column(name = "status", nullable = false)
     @Builder.Default
-    private String status = "PENDING";
+    private String status = STATUS_PENDING;
 
     @Column(name = "is_partial", nullable = false)
     private boolean isPartial;
@@ -82,27 +86,27 @@ public class WeeklyReport {
         this.avgEmotionScore = avgEmotionScore;
         this.emotionScores = emotionScores != null ? emotionScores : "{}";
         this.distortionDistribution = distortionDistribution != null ? distortionDistribution : "{}";
-        this.status = "GENERATED";
+        this.status = STATUS_GENERATED;
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     public void markAsInsufficientData(int checkinCount) {
         this.checkinCount = checkinCount;
-        this.status = "INSUFFICIENT_DATA";
+        this.status = STATUS_INSUFFICIENT_DATA;
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     /** @deprecated use markAsGenerated(int, Double, String, String) */
     @Deprecated
     public void markAsGenerated() {
-        this.status = "GENERATED";
+        this.status = STATUS_GENERATED;
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 
     /** @deprecated use markAsInsufficientData(int) */
     @Deprecated
     public void markAsInsufficientData() {
-        this.status = "INSUFFICIENT_DATA";
+        this.status = STATUS_INSUFFICIENT_DATA;
         this.generatedAt = OffsetDateTime.now(ZoneOffset.UTC);
     }
 

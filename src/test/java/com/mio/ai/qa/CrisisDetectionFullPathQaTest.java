@@ -144,7 +144,7 @@ class CrisisDetectionFullPathQaTest {
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
                         new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
                         mock(AiCostEventWriter.class)),
-                new ObjectMapper());
+                new ObjectMapper(), new SimpleMeterRegistry());
     }
 
     @Test

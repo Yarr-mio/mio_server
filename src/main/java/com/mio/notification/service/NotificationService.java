@@ -14,6 +14,9 @@ import com.mio.notification.dto.NotificationReadResponse;
 import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.notification.repository.NotificationSettingRepository;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.report.domain.ReportWeek;
+import com.mio.report.domain.WeeklyReport;
+import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.repository.BehaviorTaskRepository;
@@ -39,6 +42,7 @@ import java.time.temporal.ChronoUnit;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -83,6 +87,7 @@ public class NotificationService {
     private final NotificationMessageMapper notificationMessageMapper;
     private final PushSender pushSender;
     private final NotificationPersistenceService notificationPersistenceService;
+    private final WeeklyReportRepository weeklyReportRepository;
 
     public void sendTestNotification(UUID userId, String title, String body) {
         userRepository.findById(userId)
@@ -95,7 +100,8 @@ public class NotificationService {
         }
 
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            // 테스트 푸시는 특정 trigger 가 없으므로 라우팅 data 없이 보낸다 — 앱은 기본 동작으로 연다.
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, Map.of());
             if (result.invalidatesToken()) {
                 token.invalidate();
                 deviceTokenRepository.save(token);
@@ -180,7 +186,14 @@ public class NotificationService {
         } while (batch.hasNext());
     }
 
-    public void sendNotificationToUser(User user, String triggerCode, String title, String body, boolean countTowardDailyLimit) {
+    /**
+     * 알림을 발송한다.
+     *
+     * <p>문구(title/body)와 라우팅(route/slot)을 <b>모두 {@code triggerCode} 하나에서</b> 유도한다.
+     * 호출자가 문구와 코드를 따로 넘기면 "아침 체크인" 알림을 탭했는데 리포트로 가는 식의 어긋남이
+     * 생기므로, 애초에 그런 조합을 만들 수 없게 막았다 (이슈 #409).
+     */
+    public void sendNotificationToUser(User user, String triggerCode, boolean countTowardDailyLimit) {
         List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
         if (tokens.isEmpty()) {
             // 보낸 것이 없으므로 SENT 로 기록하지 않는다 (미발송이 지표에 그대로 드러나야 한다).
@@ -195,12 +208,18 @@ public class NotificationService {
             return;
         }
 
+        NotificationMessageMapper.NotificationMessage message = notificationMessageMapper.messageFor(triggerCode);
+        String title = message.title();
+        String body = message.body();
+        // 알림 탭 시 이동할 화면 정보 (이슈 #409). 없으면 앱이 마지막 화면으로 복귀해버린다.
+        Map<String, String> pushData = notificationMessageMapper.pushDataFor(triggerCode);
+
         boolean anySucceeded = false;
         boolean anyAmbiguous = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
         List<String> failureReasons = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
-            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body);
+            PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, pushData);
             if (result.isSent()) {
                 anySucceeded = true;
             } else {
@@ -248,62 +267,81 @@ public class NotificationService {
             return;
         }
 
-        String triggerCode = determineTrigger(setting, now);
-        if (triggerCode == null || shouldSuppressTrigger(userId, triggerCode, now)) {
-            return;
+        // 억제된 트리거는 그것만 건너뛰고 다음 후보를 이어서 본다 (이슈 #408).
+        // 억제는 "이 트리거를 지금 보내지 않는다" 는 뜻이지 "이 유저에게 아무것도 보내지 않는다" 가 아니다.
+        for (String triggerCode : determineTriggerCandidates(setting, now)) {
+            if (shouldSuppressTrigger(userId, triggerCode, now)) {
+                continue;
+            }
+            sendNotificationToUser(setting.getUser(), triggerCode, true);
+            return;   // 한 틱에 한 건만 발송한다
         }
-
-        NotificationMessageMapper.NotificationMessage message = notificationMessageMapper.messageFor(triggerCode);
-        sendNotificationToUser(setting.getUser(), triggerCode, message.title(), message.body(), true);
     }
 
-    private String determineTrigger(NotificationSetting setting, OffsetDateTime now) {
+    /**
+     * 지금 발송 조건을 만족하는 트리거를 <b>우선순위 순서대로 전부</b> 모은다 (이슈 #408).
+     *
+     * <p>하나만 반환하면 그것이 억제됐을 때 뒤 트리거가 평가조차 되지 않는다. 특히
+     * {@code negative_emotion_streak} 는 시각 조건이 없어 조건이 참인 동안 매 틱 선택되므로,
+     * 한 번 발송 후 24시간 억제에 들어가면 체크인 리마인더가 그 동안 전부 막힌다.
+     *
+     * <p>쿼리 비용: 각 후보의 시각 조건({@code dueOccurrenceDate})은 DB 조회 없는 순수 계산이라
+     * 창에 들어온 트리거에 대해서만 존재 확인 쿼리가 나간다. 다만 <b>조기 return 이 없어지면서</b>
+     * 상위 후보가 이미 매치된 틱에서도 리포트·To-do 조회가 실행된다 — 각각 월요일 08:00~08:09,
+     * 매일 21:00~21:09 창에 한정된다. 억제 검사도 후보 수만큼(최대 6회) 나간다.
+     */
+    private List<String> determineTriggerCandidates(NotificationSetting setting, OffsetDateTime now) {
         UUID userId = setting.getUser().getId();
         boolean serverInitiatedAllowed = isWithinServerInitiatedWindow(now);
+        List<String> candidates = new java.util.ArrayList<>();
 
         if (setting.isCheckinEnabled() && serverInitiatedAllowed && hasNegativeEmotionStreak(userId)) {
-            return "negative_emotion_streak";
+            candidates.add("negative_emotion_streak");
         }
         if (setting.isCheckinEnabled()) {
-            String checkinTrigger = determineCheckinReminder(setting, userId, now);
-            if (checkinTrigger != null) {
-                return checkinTrigger;
-            }
+            candidates.addAll(dueCheckinReminders(setting, userId, now));
         }
-        if (setting.isReportEnabled() && serverInitiatedAllowed && isWeeklyReportDue(now)) {
-            return "report_weekly";
+        if (setting.isReportEnabled() && serverInitiatedAllowed) {
+            Optional<LocalDate> reportDue = weeklyReportDueDate(now);
+            if (reportDue.isPresent() && hasGeneratedWeeklyReport(userId, reportDue.get())) {
+                candidates.add("report_weekly");
+            }
         }
         if (setting.isCharacterEnabled() && setting.isTodoReminderOn() && serverInitiatedAllowed) {
             Optional<LocalDate> todoDue = dueOccurrenceDate(TODO_REMINDER_TIME, now);
             if (todoDue.isPresent() && hasIncompleteTodo(userId, todoDue.get())) {
-                return "todo_incomplete";
+                candidates.add("todo_incomplete");
             }
         }
-        return null;
+        return List.copyOf(candidates);
     }
 
     /**
-     * 체크인 리마인더는 유저가 직접 고른 시각이므로 발송 시간대 제한을 두지 않는다.
+     * 판정 창 안에 도래한 체크인 리마인더를 <b>전부</b> 모은다 (이슈 #408).
+     *
+     * <p>체크인 리마인더는 유저가 직접 고른 시각이므로 발송 시간대 제한을 두지 않는다.
+     *
+     * <p>슬롯 시각이 가깝게 설정되면 한 창에 둘 이상이 함께 도래한다(프로덕션 실측: morning 22:50,
+     * afternoon 22:51). 하나만 반환하면 앞 슬롯 발송 후 억제되는 순간 뒤 슬롯이 영영 막힌다.
      *
      * <p>완료 여부는 반드시 <b>판정 시점의 날짜가 아니라 목표 시각의 발생일</b>로 조회한다.
      * 예를 들어 저녁 체크인을 {@code 23:58} 로 설정한 유저가 그날 23:56 에 체크인을 마쳤다면,
      * 다음 날 {@code 00:00} 틱에서도 판정 창(10분)은 아직 열려 있다. 이때 판정 시점 날짜로
      * 조회하면 전날 남긴 완료 기록을 놓쳐 이미 체크인한 유저에게 리마인더를 보내게 된다.
      */
-    private String determineCheckinReminder(NotificationSetting setting, UUID userId, OffsetDateTime now) {
-        Optional<LocalDate> morning = dueOccurrenceDate(setting.getCheckinMorningTime(), now);
-        if (morning.isPresent() && !hasCompletedCheckin(userId, morning.get(), "morning")) {
-            return "checkin_reminder_morning";
-        }
-        Optional<LocalDate> afternoon = dueOccurrenceDate(setting.getCheckinAfternoonTime(), now);
-        if (afternoon.isPresent() && !hasCompletedCheckin(userId, afternoon.get(), "afternoon")) {
-            return "checkin_reminder_afternoon";
-        }
-        Optional<LocalDate> evening = dueOccurrenceDate(setting.getCheckinEveningTime(), now);
-        if (evening.isPresent() && !hasCompletedCheckin(userId, evening.get(), "evening")) {
-            return "checkin_reminder_evening";
-        }
-        return null;
+    private List<String> dueCheckinReminders(NotificationSetting setting, UUID userId, OffsetDateTime now) {
+        List<String> due = new java.util.ArrayList<>();
+        addIfDue(due, setting.getCheckinMorningTime(), userId, now, "morning", "checkin_reminder_morning");
+        addIfDue(due, setting.getCheckinAfternoonTime(), userId, now, "afternoon", "checkin_reminder_afternoon");
+        addIfDue(due, setting.getCheckinEveningTime(), userId, now, "evening", "checkin_reminder_evening");
+        return due;
+    }
+
+    private void addIfDue(List<String> due, LocalTime slotTime, UUID userId, OffsetDateTime now,
+                          String timeOfDay, String triggerCode) {
+        dueOccurrenceDate(slotTime, now)
+                .filter(occurrenceDate -> !hasCompletedCheckin(userId, occurrenceDate, timeOfDay))
+                .ifPresent(occurrenceDate -> due.add(triggerCode));
     }
 
     /**
@@ -343,10 +381,43 @@ public class NotificationService {
      * 현재 {@code WEEKLY_REPORT_TIME} 은 08:00 이라 창이 자정을 넘지 않지만,
      * 시각이 바뀌어도 요일 판정이 어긋나지 않도록 발생일에 맞춰 둔다.
      */
-    private boolean isWeeklyReportDue(OffsetDateTime now) {
+    private Optional<LocalDate> weeklyReportDueDate(OffsetDateTime now) {
         return dueOccurrenceDate(WEEKLY_REPORT_TIME, now)
-                .filter(occurrenceDate -> occurrenceDate.getDayOfWeek().getValue() == 1)
-                .isPresent();
+                .filter(occurrenceDate -> occurrenceDate.getDayOfWeek().getValue() == 1);
+    }
+
+    /**
+     * 리포트가 <b>실제로 생성됐을 때만</b> 알림을 보낸다 (이슈 #413).
+     *
+     * <p>이 확인이 없으면 체크인이 부족해 리포트가 만들어지지 않은 유저에게도 "리포트가 준비됐어요"
+     * 가 나간다. 프로덕션에서 실제 발송 3건 중 2건이 그런 오발송이었다.
+     *
+     * <p>대상 주차는 {@link ReportWeek#lastWeekStartFrom} 으로 구한다.
+     * {@link com.mio.report.job.ReportAggregationJob} 이 같은 월요일 03:00 에 <b>같은 헬퍼로</b>
+     * 집계하므로 발송 시점에는 이미 판정이 끝나 있다.
+     *
+     * <p>행이 아예 없는 경우(집계 job 실패·미실행)도 발송하지 않는다 — 존재하지 않는 리포트를
+     * 알릴 이유가 없다.
+     */
+    private boolean hasGeneratedWeeklyReport(UUID userId, LocalDate occurrenceDate) {
+        // 집계 job 과 같은 헬퍼로 계산한다 (이슈 #415) — 두 곳이 각자 계산하면 어긋나도 컴파일러가
+        // 잡아주지 못하고, 어긋나는 순간 그 주 알림이 통째로 사라진다.
+        LocalDate weekStart = ReportWeek.lastWeekStartFrom(occurrenceDate);
+        Optional<WeeklyReport> report = weeklyReportRepository.findByUser_IdAndWeekStart(userId, weekStart);
+
+        if (report.isEmpty()) {
+            // 정상(체크인 0건)일 수도, 집계 job 장애일 수도 있다. 후자면 그 주 전 유저가 조용히
+            // 무발송이 되므로 구분 가능한 흔적을 남긴다 — "오발송을 고치다 전면 미발송"을 놓치지 않기 위해.
+            log.info("Weekly report row absent — skipping notification. user={} weekStart={}", userId, weekStart);
+            return false;
+        }
+        String status = report.get().getStatus();
+        if (!WeeklyReport.STATUS_GENERATED.equals(status)) {
+            log.debug("Weekly report not generated — skipping notification. user={} weekStart={} status={}",
+                    userId, weekStart, status);
+            return false;
+        }
+        return true;
     }
 
     /**
