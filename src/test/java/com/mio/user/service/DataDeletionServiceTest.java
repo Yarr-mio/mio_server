@@ -74,6 +74,22 @@ class DataDeletionServiceTest {
         verify(hardDeleteExecutor).deleteUser(userId);
     }
 
+    @Test
+    @DisplayName("탈퇴 접수 트랜잭션에서 Redis 사용자 캐시를 즉시 삭제한다")
+    void requestDeletion_purgesCacheImmediately() {
+        UUID userId = UUID.randomUUID();
+        OffsetDateTime withdrawnAt = OffsetDateTime.now(ZoneOffset.UTC);
+        DataDeletionRequest request = DataDeletionRequest.open(userId, withdrawnAt.plusDays(30));
+        when(deletionRequestRepository.findActiveByUserId(userId)).thenReturn(Optional.empty());
+        when(deletionRequestRepository.save(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(request);
+
+        DataDeletionRequest result = service.requestDeletion(userId, withdrawnAt);
+
+        verify(cachePurger).purge(userId);
+        assertThat(result.getCachePurgedAt()).isNotNull();
+    }
+
     private DataDeletionRequest request(UUID requestId, UUID userId) {
         DataDeletionRequest request = DataDeletionRequest.open(
                 userId,
