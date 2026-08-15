@@ -64,7 +64,8 @@ public class AiCostEvent {
 
     @Builder
     private AiCostEvent(UUID userId, UUID sessionId, String component, String model, String mode,
-                         long promptTokens, long completionTokens, long cachedTokens, BigDecimal costUsd) {
+                         long promptTokens, long completionTokens, long cachedTokens, BigDecimal costUsd,
+                         OffsetDateTime createdAt) {
         this.userId = userId;
         this.sessionId = sessionId;
         this.component = component;
@@ -74,10 +75,18 @@ public class AiCostEvent {
         this.completionTokens = completionTokens;
         this.cachedTokens = cachedTokens;
         this.costUsd = costUsd;
+        this.createdAt = createdAt;
     }
 
+    /**
+     * 호출측이 실제 사용 시각을 넘겨주지 않은 경우에만 저장 시각으로 채운다(안전망) —
+     * 정상 경로는 {@code OpenAiLlmClient.recordUsage()}가 사용 시각을 명시적으로 넘긴다.
+     * 커밋 시각에 기대면 비동기 큐 지연만큼 실제 사용 시각과 어긋난다(이슈 #431 리뷰).
+     */
     @PrePersist
     protected void onCreate() {
-        createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+        if (createdAt == null) {
+            createdAt = OffsetDateTime.now(ZoneOffset.UTC);
+        }
     }
 }

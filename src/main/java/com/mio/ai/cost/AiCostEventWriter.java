@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
@@ -31,7 +32,8 @@ public class AiCostEventWriter {
     @Async("aiDecisionLoggerExecutor")
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void write(UUID userId, UUID sessionId, String component, String model, String mode,
-                       long promptTokens, long completionTokens, long cachedTokens, BigDecimal costUsd) {
+                       long promptTokens, long completionTokens, long cachedTokens, BigDecimal costUsd,
+                       OffsetDateTime occurredAt) {
         if (component == null || component.isBlank()) {
             log.debug("[AiCostEventWriter] component 없음, 스킵 model={} mode={}", model, mode);
             return;
@@ -47,6 +49,7 @@ public class AiCostEventWriter {
                     .completionTokens(completionTokens)
                     .cachedTokens(cachedTokens)
                     .costUsd(costUsd)
+                    .createdAt(occurredAt)
                     .build());
         } catch (Exception e) {
             log.warn("[AiCostEventWriter] 비용 기록 실패 component={} model={}: {}",
