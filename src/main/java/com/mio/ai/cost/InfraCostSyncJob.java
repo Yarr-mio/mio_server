@@ -33,6 +33,10 @@ import java.util.List;
  *
  * <p>실패해도 기존 캐시는 그대로 두고 다음 배치에서 재시도한다 — {@code WeeklyReflectionJob} 계열
  * 배치와 같은 원칙으로 개별 실패가 앱 전체를 막지 않는다.
+ *
+ * <p>스냅샷 저장 직후, 같은 배치 실행 시점에 {@link AllocationSensitivityCalculator}로 옵션 B
+ * 배분 민감도도 함께 계산한다(이슈 #438) — 이 계산은 별도 try/catch로 격리해, 실패해도 이미
+ * 성공한 스냅샷 캐싱까지 실패로 보이지 않게 한다.
  */
 @Component
 @RequiredArgsConstructor
@@ -48,6 +52,7 @@ public class InfraCostSyncJob {
 
     private final CloudWatchClient cloudWatchClient;
     private final InfraCostSnapshotRepository repository;
+    private final AllocationSensitivityCalculator allocationSensitivityCalculator;
 
     @Scheduled(cron = "0 30 0 * * *", zone = "Asia/Seoul")
     public void sync() {
@@ -91,6 +96,13 @@ public class InfraCostSyncJob {
 
             log.info("[InfraCostSyncJob] 캐싱 완료 period={}~{} totalCostUsd={} dataPointAt={}",
                     periodStart, periodEnd, totalCostUsd, latest.timestamp());
+
+            try {
+                allocationSensitivityCalculator.computeAndSave(month, totalCostUsd);
+            } catch (Exception e) {
+                // 스냅샷 캐싱은 이미 성공했으니, 민감도 계산 실패로 위 성공까지 실패로 보이면 안 된다(이슈 #438).
+                log.warn("[InfraCostSyncJob] 배분 민감도 계산 실패, 스냅샷 캐싱에는 영향 없음: {}", e.getMessage());
+            }
         } catch (Exception e) {
             log.warn("[InfraCostSyncJob] CloudWatch 동기화 실패, 기존 캐시 유지: {}", e.getMessage());
         }
