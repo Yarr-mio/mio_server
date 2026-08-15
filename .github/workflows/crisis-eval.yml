@@ -15,15 +15,12 @@ name: Crisis Eval (full path)
 #   수동 트리거라도 워크플로가 있으면 위 셋이 해결된다. 게이트가 깨지면 빨간불이 뜬다.
 #
 # 언제 돌리는가.
-#   main 머지 전, 그리고 SafetyL1·InputJudge 프롬프트·PolicyEngine 을 바꾼 PR 에서.
+#   main 머지 전, 그리고 SafetyL1·InputJudge 프롬프트·PolicyEngine·OutputPreFilter·
+#   OutputJudge 를 바꾼 PR 에서. 평가 코드는 1.1 통합 브랜치에서만 실행한다.
 
 on:
   workflow_dispatch:
     inputs:
-      ref:
-        description: '평가할 브랜치 또는 커밋 (비우면 기본 브랜치)'
-        required: false
-        type: string
       archive:
         description: '결과를 docs/eval/runs 경로 규칙으로 남길지 (아티팩트 업로드는 항상 함)'
         required: false
@@ -32,7 +29,11 @@ on:
 
 jobs:
   crisis-eval:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
+    env:
+      EVAL_ARCHIVE_DIR: ${{ inputs.archive && 'docs/eval/runs' || 'build/eval/runs' }}
     # 172건 × 실 LLM 호출. 로컬 실측 약 50초지만 API 지연을 넉넉히 잡는다.
     timeout-minutes: 30
 
@@ -65,7 +66,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.ref }}
+          # 저장소 시크릿을 임의 브랜치 코드에 노출하지 않는다.
+          ref: integration/1.1.0
+          persist-credentials: false
 
       # 아카이브에 "dirty worktree" 가 아닌 리비전이 찍히도록 커밋 해시를 남긴다.
       # 기준선이 어느 코드에서 나왔는지 복원할 수 없으면 회귀 비교가 불가능하다.
@@ -87,7 +90,7 @@ jobs:
       - name: Run crisis full-path evaluation
         run: |
           ./gradlew test -PllmTests \
-            -PevalArchiveDir=docs/eval/runs \
+            -PevalArchiveDir="$EVAL_ARCHIVE_DIR" \
             --tests "com.mio.ai.qa.CrisisDetectionFullPathQaTest" \
             --tests "com.mio.ai.qa.CrisisDetectionCorpusQaTest"
         env:
@@ -115,7 +118,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crisis-eval-runs
-          path: docs/eval/runs/
+          path: ${{ env.EVAL_ARCHIVE_DIR }}/
           retention-days: 90
 
       - name: Upload test report

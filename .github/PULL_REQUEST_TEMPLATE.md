@@ -15,11 +15,12 @@
 - [ ] 환경 변수 또는 외부 설정 변경이 필요합니다.
 - [ ] 배치 / 스케줄러 / 비동기 처리에 영향이 있습니다.
 - [ ] 로깅 / 모니터링 포인트가 변경됩니다.
-- [ ] **안전 판정 경로**(SafetyL1 / InputJudge / PolicyEngine / OutputJudge)가 바뀝니다.
+- [ ] **안전 판정 경로**(SafetyL1 / InputJudge / PolicyEngine / OutputPreFilter / OutputJudge)가 바뀝니다.
 - [ ] Breaking change 가 있습니다.
 
-> 안전 판정 경로를 체크했다면 **Crisis Eval (full path)** 워크플로를 이 브랜치에서 수동
-> 실행하고 결과를 아래 테스트 항목에 적어 주세요. 기본 CI 는 과금 때문에 그 평가를
+> 안전 판정 경로를 체크했다면 **Crisis Eval (full path)** 워크플로를 `integration/1.1.0`
+> 기준으로 수동 실행하고 결과를 아래 테스트 항목에 적어 주세요. 안전 변경을 먼저 통합
+> 브랜치에 반영해야 하며, 기본 CI 는 과금 때문에 그 평가를
 > 제외하므로, 룰 레이어만 통과한 안전 회귀는 CI 에서 잡히지 않습니다.
 
 ## 테스트

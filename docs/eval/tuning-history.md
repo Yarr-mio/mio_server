@@ -58,7 +58,7 @@
 - Gate 3(300건): 성공률 100%, 서버 ERROR 0
 - Gate 4(5,000건, mini 기준) 발견 미탐: `low_worry` 92%가 룰 기반 미탐
 - Gate 5(263건, gpt-4o 대조): 미탐 22건(high_crisis_ambiguous), 오탐 16건(low_worry)
-- **주의**: 위 수정들을 반영한 재실행 결과(최종 종합 정밀도/재현율)는 저장소에 남아있지 않음. `data/eval/phase2/runs/`는 로컬 생성물이며 커밋된 적 없음.
+- **주의**: Gate 4/5 당시에는 위 수정들을 반영한 재실행 결과(최종 종합 정밀도/재현율)가 저장소에 남지 않았다. 이후 전체 경로 기준선은 [`20260807-003927-crisis-full-path.md`](runs/20260807-003927-crisis-full-path.md)에 기록했다. `data/eval/phase2/runs/`는 로컬 생성물이며 커밋된 적 없음.
 
 ---
 
@@ -84,13 +84,13 @@
 ## 문서 상태와 한계
 
 - 이 문서는 **git 커밋 메시지 기반**으로 재구성한 히스토리다. 커밋에 언급된 수치(92%, 22건, 16건, 14.7% 등)는 튜닝 작업 중 스팟체크/배치 실행 결과이며, 지속적으로 갱신되는 실시간 지표가 아니다.
-- Safety 갈래의 최종 종합 지표(전체 미탐률/오탐률, precision/recall)는 계산된 적 없음 — Gate 4/5는 "발견 후 즉시 수정" 방식으로 진행되어 수정 후 재검증 배치가 별도로 실행되지 않았다.
+- Gate 4/5 당시 Safety 갈래는 "발견 후 즉시 수정" 방식으로 진행되어 수정 후 최종 종합 지표를 계산하는 재검증 배치가 별도로 실행되지 않았다. 이후 전체 경로 미탐률·오탐률 기준선은 [`20260807-003927-crisis-full-path.md`](runs/20260807-003927-crisis-full-path.md)에 기록했으며, precision/recall 추가 산출은 별도 과제로 남아 있다.
 - `data/eval/phase2/*` (케이스 파일, 실행 로그, manifest)는 로컬 생성물로 git에 커밋된 적이 없어 현재 저장소에는 존재하지 않는다.
 - ExtractorLLM 갈래는 QA 테스트(`ExtractorEpisodeTypeQaTest`, `ExtractorLlmScaleTest`)가 저장소에 남아있어 재실행으로 현재 상태를 재확인할 수 있다.
 
 ## 관련 파일
 
-```
+```text
 docs/eval/phase2-harness-calibration.md       Safety 갈래 — 평가 데이터셋 생성 방법론
 docs/eval/phase2-harness-tuning-runbook.md    Safety 갈래 — Gate 0~5 상세 런북
 src/test/java/com/mio/ai/qa/                  현재 QA 테스트 (PipelineSignalChainQaTest, OutputGuardQaTest 등)
