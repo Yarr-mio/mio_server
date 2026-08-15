@@ -6,6 +6,8 @@ import com.mio.common.error.ErrorCode;
 import com.mio.common.response.ApiResponse;
 import com.mio.user.dto.DeletionStatusResponse;
 import com.mio.user.service.DataDeletionService;
+import com.mio.user.service.DataDeletionStatusRateLimiter;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,6 +29,7 @@ import java.util.UUID;
 public class DataDeletionController {
 
     private final DataDeletionService dataDeletionService;
+    private final DataDeletionStatusRateLimiter dataDeletionStatusRateLimiter;
 
     @GetMapping("/v1/users/me/deletion-status")
     public ResponseEntity<ApiResponse<DeletionStatusResponse>> getDeletionStatus(Principal principal) {
@@ -43,7 +46,9 @@ public class DataDeletionController {
      */
     @GetMapping("/v1/data-deletions/{operationId}")
     public ResponseEntity<ApiResponse<DeletionStatusResponse>> getDeletionStatusByOperationId(
-            @PathVariable UUID operationId) {
+            @PathVariable UUID operationId,
+            HttpServletRequest request) {
+        dataDeletionStatusRateLimiter.check(request.getRemoteAddr());
         return ResponseEntity.ok(ApiResponse.ok(
                 dataDeletionService.findByOperationId(operationId)
                         .map(DeletionStatusResponse::from)
