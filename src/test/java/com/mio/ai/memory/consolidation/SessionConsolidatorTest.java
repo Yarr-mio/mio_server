@@ -517,6 +517,9 @@ class SessionConsolidatorTest {
                 .contains("user_render_status = 'pending'")
                 .contains("todo_status = 'pending'")
                 .contains("embedding_status = 'pending'")
+                .contains("episode_emb = NULL")
+                .contains("embedding_attempts = 0")
+                .contains("embedding_claimed_at = NULL")
                 .contains("component_errors = '{}'::jsonb")
                 .contains("updated_at = now()"));
     }

@@ -497,7 +497,15 @@ public class SessionConsolidator {
                             SET summary_text = ?, summary_ciphertext = ?, summary_dek_id = ?,
                                 dominant_emotion = ?, trigger_tags = ?, episode_type = ?,
                                 bias_types_detected = ?::jsonb, cbt_intervened = ?, key_thoughts = ?::jsonb,
-                                socratic_count = ?, embedding_status = 'pending'
+                                socratic_count = ?,
+                                user_render_status = 'pending',
+                                todo_status = 'pending',
+                                embedding_status = 'pending',
+                                episode_emb = NULL,
+                                embedding_attempts = 0,
+                                embedding_claimed_at = NULL,
+                                component_errors = '{}'::jsonb,
+                                updated_at = now()
                             WHERE session_id = ?
                             """,
                             summaryText, ciphertext, dekId,
