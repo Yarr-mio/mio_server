@@ -41,6 +41,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private static final String TOKENS_METRIC = "mio.llm.tokens";
     private static final String COST_METRIC = "mio.llm.cost.usd";
     private static final String UNPRICED_METRIC = "mio.llm.cost.unpriced";
+    private static final String COST_EVENT_METRIC = "mio.llm.cost.events";
     private static final String RETRIES_METRIC = "mio.llm.retries";
     private static final String TRUNCATED_METRIC = "mio.llm.truncated";
 
@@ -501,7 +502,9 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         try {
             costEventWriter.write(userId, sessionId, component, model, mode,
                     usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), cost, occurredAt);
+            meterRegistry.counter(COST_EVENT_METRIC, "outcome", "accepted").increment();
         } catch (Exception e) {
+            meterRegistry.counter(COST_EVENT_METRIC, "outcome", "dropped").increment();
             log.warn("[OpenAiLlmClient] 비용 이벤트 제출 실패 component={} model={}: {}",
                     component, model, e.getMessage());
         }
