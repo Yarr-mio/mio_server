@@ -13,14 +13,14 @@ public interface AiCostEventRepository extends JpaRepository<AiCostEvent, UUID> 
     // 합계만 반환하면 "일부만 더한 값"이 "전체 비용"처럼 보인다(이슈 #431 리뷰, AiCostAggregate 참고).
     @Query("SELECT new com.mio.ai.cost.AiCostAggregate("
             + "COALESCE(SUM(e.costUsd), 0), "
-            + "SUM(CASE WHEN e.costUsd IS NULL THEN 1 ELSE 0 END), "
+            + "COALESCE(SUM(CASE WHEN e.costUsd IS NULL THEN 1 ELSE 0 END), 0), "
             + "COUNT(e)) "
             + "FROM AiCostEvent e WHERE e.sessionId = :sessionId")
     AiCostAggregate aggregateBySessionId(@Param("sessionId") UUID sessionId);
 
     @Query("SELECT new com.mio.ai.cost.AiCostAggregate("
             + "COALESCE(SUM(e.costUsd), 0), "
-            + "SUM(CASE WHEN e.costUsd IS NULL THEN 1 ELSE 0 END), "
+            + "COALESCE(SUM(CASE WHEN e.costUsd IS NULL THEN 1 ELSE 0 END), 0), "
             + "COUNT(e)) "
             + "FROM AiCostEvent e WHERE e.userId = :userId AND e.createdAt >= :from AND e.createdAt < :to")
     AiCostAggregate aggregateByUserIdAndCreatedAtBetween(
