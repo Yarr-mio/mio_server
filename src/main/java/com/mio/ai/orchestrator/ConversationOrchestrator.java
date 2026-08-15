@@ -149,6 +149,9 @@ public class ConversationOrchestrator {
         AtomicReference<String> finishedReasonRef = new AtomicReference<>(null);
         // 위기 플로우로 끝난 턴의 severity. 재생 시 핫라인을 포함한 crisis 이벤트를 복원한다.
         AtomicReference<Integer> crisisSeverityRef = new AtomicReference<>(null);
+        // 이 턴이 위기 맥락에 들어갔는지. 최상위 catch 가 폴백 문구를 고를 때 읽는다 —
+        // 위기 triage 도중 실패한 턴에 핫라인 없는 재시도 문구가 나가면 안 된다.
+        AtomicBoolean crisisContextRef = new AtomicBoolean(false);
         MessageTurn turn = null;
         // 결말이 이미 저장됐는지. done 을 보내기 전에 저장하는 것이 이 작업의 핵심 순서다.
         AtomicBoolean turnPersisted = new AtomicBoolean(false);
@@ -190,9 +193,18 @@ public class ConversationOrchestrator {
 
             // 활성 위기 상태는 SafetyProfile·Moderation·Judge·Memory·Policy보다 먼저 가로챈다.
             // 이 분기 뒤에는 일반 LLM 호출이 단 하나도 없어야 한다.
-            CrisisFixedRoute fixedRoute = crisisFixedFlowCoordinator.route(
-                    sessionId, userId, userMessage);
+            CrisisFixedRoute fixedRoute;
+            try {
+                fixedRoute = crisisFixedFlowCoordinator.route(sessionId, userId, userMessage);
+            } catch (Exception routeFailure) {
+                // route() 는 저장 실패를 내부에서 삼키므로, 여기까지 예외가 올라왔다면 활성
+                // 위기 상태를 찾은 뒤의 파싱·전이·계측 단계다. 폴백이 핫라인을 포함하도록
+                // 표시하고 상위 catch 로 올린다.
+                crisisContextRef.set(true);
+                throw routeFailure;
+            }
             if (fixedRoute.routed()) {
+                crisisContextRef.set(true);
                 String fixedResponse = fixedRoute.fixedResponse();
                 finishedReasonRef.set("crisis_flow");
                 crisisSeverityRef.set(3);
@@ -311,6 +323,7 @@ public class ConversationOrchestrator {
 
             } else if (decision.action() == DecisionAction.CRISIS_FLOW) {
                 crisisFlowTriggered = true;
+                crisisContextRef.set(true);
                 appliedCrisisTrigger = resolveCrisisTrigger(decision);
                 // 위기 응답은 CrisisFlowService 가 crisis·done 을 직접 보낸다. 그 전에 결말을
                 // 저장해야 한다 — 전송 뒤에 저장하면 커밋 전 프로세스 종료 시 사용자는 응답을
@@ -373,6 +386,7 @@ public class ConversationOrchestrator {
                                     firstSubstantiveTokenMs, startMs);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
+                                crisisContextRef.set(true);
                                 appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
                             }
                         }
@@ -494,6 +508,7 @@ public class ConversationOrchestrator {
                         boolean isCrisis = judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW;
                         if (isCrisis) {
                             crisisFlowTriggered = true;
+                            crisisContextRef.set(true);
                             appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
                         }
 
@@ -629,7 +644,9 @@ public class ConversationOrchestrator {
             }
             // 2) 연결이 살아 있으면 결말을 알린다. 전송은 보장할 수 없다 — 이미 끊긴 뒤라면
             //    보낼 대상이 없다. 저장이 보장 대상이고 전송은 최선 노력이다.
-            sendFallbackDone(emitter, outboundMsgId);
+            //    위기 맥락에 들어간 턴이면 핫라인이 포함된 고정 handoff 문구를 보낸다.
+            sendFallbackDone(emitter, outboundMsgId,
+                    crisisContextRef.get() || crisisSeverityRef.get() != null);
             emitter.completeWithError(e);
         } finally {
             MDC.remove("sessionId");
@@ -721,9 +738,19 @@ public class ConversationOrchestrator {
      *
      * <p>여기서 나는 예외는 삼킨다. 이 메서드는 이미 실패 처리 중에 호출되고, 연결이 끊겨
      * 전송이 불가능한 것이 가장 흔한 실패 원인이다. 그건 정상이지 새로운 오류가 아니다.
+     *
+     * <p>위기 맥락({@code crisisContext})에서 실패한 턴에는 일반 재시도 문구 대신 핫라인이
+     * 포함된 기존 고정 handoff 문구를 crisis 이벤트로 보낸다. triage 도중의 사용자에게
+     * 내용 없는 재시도 안내만 남기는 것이 이 폴백의 유일한 금지 결말이다.
      */
-    private void sendFallbackDone(SseEmitter emitter, String outboundMsgId) {
+    private void sendFallbackDone(SseEmitter emitter, String outboundMsgId, boolean crisisContext) {
         try {
+            if (crisisContext) {
+                String crisisFallback = crisisFixedFlowCoordinator.handoffResponse();
+                sendEvent(emitter, crisisFlowService.buildCrisisEvent(3, crisisFallback));
+                sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, true, false, "error"));
+                return;
+            }
             sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(FAILURE_FALLBACK, outboundMsgId));
             sendEvent(emitter, new SseEventDto.DoneEvent(outboundMsgId, null, false, false, "error"));
         } catch (Exception ignored) {
