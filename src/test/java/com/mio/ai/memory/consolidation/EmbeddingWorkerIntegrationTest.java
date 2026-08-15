@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.mio.ai.llm.OpenAiLlmClient;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -44,6 +45,9 @@ class EmbeddingWorkerIntegrationTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     @MockBean
     private OpenAiLlmClient openAiLlmClient;
@@ -101,6 +105,7 @@ class EmbeddingWorkerIntegrationTest {
         }
         when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenReturn(vector);
 
+        long before = timerCount("embedding", "done");
         embeddingWorker.processPending();
 
         assertThat(currentStatus()).isEqualTo("done");
@@ -108,6 +113,7 @@ class EmbeddingWorkerIntegrationTest {
                 "SELECT episode_emb IS NOT NULL FROM session_summaries WHERE id = ?", Boolean.class, summaryId);
         assertThat(embFilled).isTrue();
         assertThat(embeddingError()).isNull();
+        assertThat(timerCount("embedding", "done")).isEqualTo(before + 1);
     }
 
     @Test
@@ -116,6 +122,7 @@ class EmbeddingWorkerIntegrationTest {
         insertPendingSummary("임베딩 호출이 한 번 실패하는 케이스.");
         when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenThrow(new RuntimeException("embedding API down"));
 
+        long before = timerCount("embedding", "retry");
         embeddingWorker.processPending();
 
         assertThat(currentStatus())
@@ -123,6 +130,7 @@ class EmbeddingWorkerIntegrationTest {
                 .isEqualTo("pending");
         assertThat(attempts()).isEqualTo(1);
         assertThat(embeddingError()).isEqualTo("EMBEDDING_RETRY_PENDING");
+        assertThat(timerCount("embedding", "retry")).isEqualTo(before + 1);
     }
 
     @Test
@@ -282,5 +290,12 @@ class EmbeddingWorkerIntegrationTest {
         return jdbcTemplate.queryForObject(
                 "SELECT component_errors ->> 'embedding' FROM session_summaries WHERE id = ?",
                 String.class, summaryId);
+    }
+
+    private long timerCount(String stage, String outcome) {
+        var timer = meterRegistry.find("mio.summary.stage.duration")
+                .tags("stage", stage, "outcome", outcome)
+                .timer();
+        return timer == null ? 0 : timer.count();
     }
 }

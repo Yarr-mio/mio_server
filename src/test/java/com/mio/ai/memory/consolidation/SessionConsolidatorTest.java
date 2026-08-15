@@ -14,6 +14,7 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -55,6 +56,7 @@ class SessionConsolidatorTest {
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
     private ObjectProvider<SessionConsolidator> self;
+    private SimpleMeterRegistry meterRegistry;
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
@@ -70,6 +72,7 @@ class SessionConsolidatorTest {
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
+        meterRegistry = new SimpleMeterRegistry();
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
         when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
@@ -99,6 +102,7 @@ class SessionConsolidatorTest {
                 summaryStatusWriter,
                 componentStatusWriter,
                 crisisEpisodePromoter,
+                new SummaryStageMetrics(meterRegistry),
                 selfProvider
         );
     }
@@ -137,6 +141,10 @@ class SessionConsolidatorTest {
         verify(sessionRepository, never()).updateSummaryStatus(sessionId, SummaryStatus.DONE);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
         verify(componentStatusWriter).markTodoDone(sessionId);
+        assertThat(timerCount("core_summary_ready", "done")).isEqualTo(1);
+        assertThat(timerCount("memory_enrichment", "done")).isEqualTo(1);
+        assertThat(timerCount("user_render", "done")).isEqualTo(1);
+        assertThat(timerCount("todo_generation", "done")).isEqualTo(1);
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
@@ -206,6 +214,7 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
         verify(componentStatusWriter).markUserRenderFailed(sessionId, "USER_RENDER_FAILED");
+        assertThat(timerCount("user_render", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -248,6 +257,7 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
         verify(componentStatusWriter).markTodoFailed(sessionId, "TODO_GENERATION_FAILED");
+        assertThat(timerCount("todo_generation", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -267,6 +277,7 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter).markFailed(sessionId);
         verify(summaryStatusWriter, never()).markDone(sessionId);
         verifyNoInteractions(todoRecommendationService, crisisEpisodePromoter, sessionSummaryRenderer);
+        assertThat(timerCount("core_summary_ready", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -416,5 +427,12 @@ class SessionConsolidatorTest {
 
         verify(thoughtRepository).save(any());
         verifyNoInteractions(beliefRepository, evidenceAccumulator);
+    }
+
+    private long timerCount(String stage, String outcome) {
+        var timer = meterRegistry.find("mio.summary.stage.duration")
+                .tags("stage", stage, "outcome", outcome)
+                .timer();
+        return timer == null ? 0 : timer.count();
     }
 }
