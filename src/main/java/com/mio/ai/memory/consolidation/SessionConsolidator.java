@@ -126,6 +126,7 @@ public class SessionConsolidator {
         EnrichmentInput enrichInput;
         SummaryStageMetrics.StageSample coreReady = stageMetrics.start(SummaryStageMetrics.CORE_SUMMARY_READY);
         try {
+            summaryStatusWriter.markProcessingStarted(event.sessionId());
             // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화한다.
             // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
             enrichInput = self.getObject().consolidate(

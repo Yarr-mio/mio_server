@@ -56,8 +56,23 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     boolean existsByIdAndStatus(UUID id, SessionStatus status);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("UPDATE Session s SET s.summaryStatus = :status WHERE s.id = :sessionId")
+    @Query("""
+            UPDATE Session s
+            SET s.summaryStatus = :status,
+                s.summaryProcessingStartedAt = NULL
+            WHERE s.id = :sessionId
+            """)
     void updateSummaryStatus(@Param("sessionId") UUID sessionId, @Param("status") SummaryStatus status);
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.summaryProcessingStartedAt = :startedAt
+            WHERE s.id = :sessionId
+              AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
+            """)
+    int markSummaryProcessingStarted(@Param("sessionId") UUID sessionId,
+                                     @Param("startedAt") OffsetDateTime startedAt);
 
     /**
      * 유예 시간이 지나도 pending 이지만 <b>결과물은 이미 갖춘</b> 종료 세션을 완료로 회복시킨다
@@ -72,11 +87,12 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Session s
-            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.DONE
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.DONE,
+                s.summaryProcessingStartedAt = NULL
             WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
               AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
               AND s.endedAt IS NOT NULL
-              AND s.endedAt <= :cutoff
+              AND COALESCE(s.summaryProcessingStartedAt, s.endedAt) <= :cutoff
               AND EXISTS (SELECT 1 FROM SessionSummary ss WHERE ss.session = s)
             """)
     int recoverStalePendingSummaries(@Param("cutoff") OffsetDateTime cutoff);
@@ -99,11 +115,12 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("""
             UPDATE Session s
-            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED
+            SET s.summaryStatus = com.mio.session.domain.SummaryStatus.FAILED,
+                s.summaryProcessingStartedAt = NULL
             WHERE s.status = com.mio.session.domain.SessionStatus.ENDED
               AND s.summaryStatus = com.mio.session.domain.SummaryStatus.PENDING
               AND s.endedAt IS NOT NULL
-              AND s.endedAt <= :cutoff
+              AND COALESCE(s.summaryProcessingStartedAt, s.endedAt) <= :cutoff
               AND NOT EXISTS (SELECT 1 FROM SessionSummary ss WHERE ss.session = s)
             """)
     int markStalePendingSummariesFailed(@Param("cutoff") OffsetDateTime cutoff);
