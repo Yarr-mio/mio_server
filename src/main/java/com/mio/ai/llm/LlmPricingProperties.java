@@ -28,13 +28,15 @@ public class LlmPricingProperties {
     }
 
     /**
-     * @param input  입력 토큰 100만 개당 USD
-     * @param output 출력 토큰 100만 개당 USD
+     * @param input       입력 토큰 100만 개당 USD
+     * @param cachedInput 캐시 히트된 입력 토큰 100만 개당 USD. 캐시 할인이 없는 모델(임베딩 등)은 {@code null}
+     * @param output      출력 토큰 100만 개당 USD
      */
-    public record ModelPrice(BigDecimal input, BigDecimal output) {
+    public record ModelPrice(BigDecimal input, BigDecimal cachedInput, BigDecimal output) {
         public boolean isValid() {
             return input != null && output != null
-                    && input.signum() >= 0 && output.signum() >= 0;
+                    && input.signum() >= 0 && output.signum() >= 0
+                    && (cachedInput == null || cachedInput.signum() >= 0);
         }
     }
 }

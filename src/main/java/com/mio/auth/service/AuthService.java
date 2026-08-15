@@ -5,6 +5,8 @@ import com.mio.auth.provider.SocialAuthProvider;
 import com.mio.common.audit.AuditLogService;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.notification.domain.DeviceToken;
+import com.mio.notification.repository.DeviceTokenRepository;
 import com.mio.user.domain.DataDeletionRequest;
 import com.mio.user.domain.SignupStep;
 import com.mio.user.domain.User;
@@ -44,6 +46,7 @@ public class AuthService {
     private final UserRepository userRepository;
     private final UserConsentRepository userConsentRepository;
     private final UserDeviceRepository userDeviceRepository;
+    private final DeviceTokenRepository deviceTokenRepository;
     private final JwtTokenService jwtTokenService;
     private final RefreshTokenService refreshTokenService;
     private final AuditLogService auditLogService;
@@ -227,6 +230,7 @@ public class AuthService {
 
         refreshTokenService.invalidateAll(userId.toString());
         userDeviceRepository.deleteAllByUser_Id(userId);
+        invalidateDeviceTokens(userId);
 
         // PII 비식별화 정책 — social_id를 해시로 대체해 재가입 방지 키만 유지
         String anonymizedSocialId = sha256(user.getSocialId());
@@ -245,6 +249,22 @@ public class AuthService {
         ));
 
         return new WithdrawResponse(user.getDeletedAt(), deletionRequest.getScheduledAt());
+    }
+
+    /**
+     * 탈퇴 시 푸시 토큰을 전부 무효화한다 (이슈 #388).
+     *
+     * <p>{@code user_devices} 삭제만으로는 {@code device_tokens}가 남아 탈퇴자 기기로 실제
+     * 배달이 가능한 상태가 유지된다. 행 자체는 {@code DataRetentionJob}의 30일 하드 삭제에
+     * 맡기고, 여기서는 즉시 발송 불가 상태로 만든다.
+     */
+    private void invalidateDeviceTokens(UUID userId) {
+        List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(userId);
+        if (tokens.isEmpty()) {
+            return;
+        }
+        tokens.forEach(DeviceToken::invalidate);
+        deviceTokenRepository.saveAll(tokens);
     }
 
     private SocialAuthProvider getProvider(String providerName) {

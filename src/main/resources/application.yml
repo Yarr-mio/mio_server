@@ -125,11 +125,13 @@ openai:
     models:
       "[gpt-4o]":
         input: 2.50
+        cached-input: 1.25
         output: 10.00
       "[gpt-4o-mini]":
         input: 0.15
+        cached-input: 0.075
         output: 0.60
-      # 임베딩은 출력 토큰이 없다.
+      # 임베딩은 출력 토큰과 캐시 할인이 없다.
       "[text-embedding-3-small]":
         input: 0.02
         output: 0.00

@@ -22,7 +22,7 @@ class ReportNarrativeServiceTest {
                 .thenReturn("{\"narrative\":\"이번 주도 잘 해냈어요.\",\"coaching_direction\":\"작은 휴식을 이어가요.\"}");
         ReportNarrativeService service = new ReportNarrativeService(llmClient, new ObjectMapper());
 
-        ReportNarrativeService.NarrativeResult result = service.generate("이번 주", 2, 42.0, List.of());
+        ReportNarrativeService.NarrativeResult result = service.generate("이번 주", 2, 42.0, List.of(), null);
 
         assertThat(result.narrative()).isEqualTo("이번 주도 잘 해냈어요.");
         assertThat(result.coachingDirection()).isEqualTo("작은 휴식을 이어가요.");

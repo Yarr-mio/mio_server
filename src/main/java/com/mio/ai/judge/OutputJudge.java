@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -40,22 +43,29 @@ public class OutputJudge {
             Respond ONLY with valid JSON.
             """;
 
-    private static final String SAFE_FALLBACK =
-            "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+    /** 판정 호출 결과 카운터 (이슈 #364). 실패율을 알람으로 걸 수 있어야 한다. */
+    private static final String OUTPUT_JUDGE_METRIC = "mio.judge.output";
 
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
-    public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult) {
+    public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult,
+                                    UUID userId, UUID sessionId) {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
-                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
+                    .withAttribution("OUTPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);
-            return parseJudgeResult(responseJson);
+            OutputJudgeResult result = parseJudgeResult(responseJson);
+            meterRegistry.counter(OUTPUT_JUDGE_METRIC, "outcome", "succeeded").increment();
+            return result;
         } catch (Exception e) {
+            // 동작은 그대로 REPLACE 다. 달라지는 것은 이것이 판정이 아니라 판정 실패라는 표시다.
             log.warn("OutputJudge failed, defaulting to REPLACE: {}", e.getMessage());
-            return OutputJudgeResult.replace();
+            meterRegistry.counter(OUTPUT_JUDGE_METRIC, "outcome", "failed").increment();
+            return OutputJudgeResult.fallback();
         }
     }
 
@@ -69,18 +79,27 @@ public class OutputJudge {
 
     private OutputJudgeResult parseJudgeResult(String json) throws Exception {
         JsonNode root = objectMapper.readTree(json);
-        String action = root.path("action").asText("REPLACE").toUpperCase(java.util.Locale.ROOT);
+        JsonNode actionNode = root == null ? null : root.get("action");
+        if (actionNode == null || !actionNode.isTextual() || actionNode.asText().isBlank()) {
+            throw new IllegalStateException("OutputJudge 응답에 action 이 없다");
+        }
+        String action = actionNode.asText().toUpperCase(java.util.Locale.ROOT);
 
         return switch (action) {
             case "SEND" -> OutputJudgeResult.send();
             case "REWRITE" -> {
-                String rewritten = root.hasNonNull("rewritten_content")
-                        ? root.path("rewritten_content").asText()
-                        : SAFE_FALLBACK;
-                yield OutputJudgeResult.rewrite(rewritten);
+                JsonNode rewrittenNode = root.get("rewritten_content");
+                if (rewrittenNode == null || !rewrittenNode.isTextual()
+                        || rewrittenNode.asText().isBlank()) {
+                    throw new IllegalStateException(
+                            "OutputJudge REWRITE 응답에 rewritten_content 가 없다");
+                }
+                yield OutputJudgeResult.rewrite(rewrittenNode.asText());
             }
+            case "REPLACE" -> OutputJudgeResult.replace();
             case "CRISIS_FLOW" -> OutputJudgeResult.crisisFlow();
-            default -> OutputJudgeResult.replace();
+            default -> throw new IllegalStateException(
+                    "OutputJudge 가 알 수 없는 action 을 반환했다: " + action);
         };
     }
 }

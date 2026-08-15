@@ -6,9 +6,13 @@ import com.mio.ai.llm.LlmPricingProperties;
 import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.domain.AiPolicyDecision;
+import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.judge.RiskLevel;
+import com.mio.ai.memory.retrieval.MemoryContextResult;
+import com.mio.ai.memory.retrieval.RetrievalSource;
 import com.mio.ai.moderation.ModerationResult;
+import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.GenerationMode;
@@ -25,6 +29,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -380,6 +385,102 @@ class AiDecisionLoggerTest {
                 .contains("\"llm_cost_usd\":null");
     }
 
+    // ── 실패 상태 전파 (이슈 #364, 로드맵 §12 P0-2 · §10.1) ──────────────────
+
+    @Test
+    @DisplayName("검색 부분 실패를 상태와 실패 소스로 남긴다")
+    void logPersistsPartialRetrievalFailure() {
+        logWithFailureState(
+                null,
+                MemoryContextResult.partial("남은 기억", Set.of(RetrievalSource.VECTOR_EPISODE)));
+
+        assertThat(capturedTrace())
+                .contains("\"retrieval_status\":\"PARTIAL\"")
+                .contains("\"retrieval_failed_sources\":\"VECTOR_EPISODE\"");
+    }
+
+    @Test
+    @DisplayName("검색 성공은 결과가 비어도 OK 로 남는다")
+    void logDistinguishesEmptyResultFromFailure() {
+        logWithFailureState(null, MemoryContextResult.ok(""));
+
+        // "기억 없음" 을 실패로 세면 실패율 지표가 의미를 잃는다.
+        assertThat(capturedTrace())
+                .contains("\"retrieval_status\":\"OK\"")
+                .contains("\"retrieval_failed_sources\":null");
+    }
+
+    @Test
+    @DisplayName("컨텍스트 조립 실패를 FAILED 로 남긴다")
+    void logPersistsRetrievalFailure() {
+        logWithFailureState(null, MemoryContextResult.failed());
+
+        assertThat(capturedTrace()).contains("\"retrieval_status\":\"FAILED\"");
+    }
+
+    @Test
+    @DisplayName("Judge 실패로 인한 REPLACE 를 판정 REPLACE 와 구분한다")
+    void logDistinguishesJudgeFailureFromReplaceVerdict() {
+        logWithFailureState(OutputJudgeResult.fallback(), MemoryContextResult.ok("기억"));
+
+        // action 은 REPLACE 로 같지만 status 가 다르다. 이 구분이 없으면 판정 실패가
+        // 안전 판정으로 집계된다 (#289 가 Input Judge 에서 고친 결함과 같은 형태).
+        assertThat(capturedTrace())
+                .contains("\"output_judge_action\":\"REPLACE\"")
+                .contains("\"output_judge_status\":\"FAILED\"");
+    }
+
+    @Test
+    @DisplayName("모델이 실제로 내린 REPLACE 판정은 SUCCEEDED 로 남는다")
+    void logMarksRealReplaceVerdictSucceeded() {
+        logWithFailureState(OutputJudgeResult.replace(), MemoryContextResult.ok("기억"));
+
+        assertThat(capturedTrace())
+                .contains("\"output_judge_action\":\"REPLACE\"")
+                .contains("\"output_judge_status\":\"SUCCEEDED\"");
+    }
+
+    @Test
+    @DisplayName("Judge 를 부르지 않은 턴은 SKIPPED 다")
+    void logMarksAbsentJudgeSkipped() {
+        logWithFailureState(null, MemoryContextResult.ok("기억"));
+
+        assertThat(capturedTrace()).contains("\"output_judge_status\":\"SKIPPED\"");
+    }
+
+    private void logWithFailureState(OutputJudgeResult judgeResult, MemoryContextResult memoryResult) {
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                generateDecision("pd_failure_state"),
+                ModerationResult.clear(),
+                SafetyL1Result.clear(),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                false,
+                OutputPreFilterResult.pass(),
+                judgeResult,
+                "default",
+                false,
+                false,
+                false,
+                null,
+                null,
+                ResponseContractResult.notApplicable(),
+                -1,
+                0,
+                memoryResult
+        );
+    }
+
+    private String capturedTrace() {
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+        return captor.getValue().getTrace();
+    }
+
     private void logAndCapture(LlmCostCalculator calculator, LlmUsage usage) {
         new AiDecisionLogger(repository, new ObjectMapper(), calculator).log(
                 UUID.randomUUID(),
@@ -406,7 +507,7 @@ class AiDecisionLoggerTest {
     private LlmPricingProperties pricedProperties() {
         LlmPricingProperties properties = new LlmPricingProperties();
         properties.setModels(Map.of("gpt-4o-mini", new LlmPricingProperties.ModelPrice(
-                new java.math.BigDecimal("0.15"), new java.math.BigDecimal("0.60"))));
+                new java.math.BigDecimal("0.15"), new java.math.BigDecimal("0.075"), new java.math.BigDecimal("0.60"))));
         return properties;
     }
 

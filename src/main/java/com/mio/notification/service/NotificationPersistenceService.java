@@ -34,7 +34,7 @@ public class NotificationPersistenceService {
     public void persistNotificationResult(
             UUID userId,
             String triggerCode,
-            boolean anySucceeded,
+            NotificationDeliveryResult deliveryResult,
             List<UUID> tokensToInvalidate,
             boolean countTowardDailyLimit
     ) {
@@ -52,11 +52,13 @@ public class NotificationPersistenceService {
                 ProactiveCareLog.builder()
                         .user(user)
                         .triggerCode(triggerCode)
-                        .notificationStatus(anySucceeded ? "SENT" : "FAILED")
+                        .notificationStatus(deliveryResult.status())
+                        .failureReason(deliveryResult.failureReason())
                         .build()
         );
 
-        if (anySucceeded && countTowardDailyLimit) {
+        // 실제로 발송된 건만 일일 한도를 차감한다 — 미발송·실패 건이 한도를 소진하면 안 된다.
+        if (deliveryResult.isDelivered() && countTowardDailyLimit) {
             incrementDailyCount(userId, OffsetDateTime.now(clock));
         }
     }

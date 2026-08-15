@@ -9,12 +9,14 @@ import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.profile.SafetyProfile;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.security.SecurityLevel;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -67,24 +69,44 @@ public class InputJudge {
             Respond ONLY with valid JSON.
             """;
 
+    /**
+     * 판정 호출 결과 카운터 (이슈 #364).
+     *
+     * <p>{@code judge_status} 컬럼과 trace 는 {@code #289} 에서 생겼지만 카운터가 없어
+     * 실패율에 알람을 걸 수 없었다. 전송 계층 카운터({@code OpenAiLlmClient})만으로는
+     * 파싱 단계 실패가 잡히지 않으므로 판정 결과 기준으로 센다.
+     */
+    private static final String INPUT_JUDGE_METRIC = "mio.judge.input";
+
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
 
     public boolean shouldCallJudge(CombinedSignal combined, SafetyProfile profile) {
         return combined.requiresJudge();
     }
 
-    public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile) {
+    public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile,
+                                   UUID userId, UUID sessionId) {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt)
-                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
+                    .withAttribution("INPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);
-            return parseJudgeResult(responseJson);
+            InputJudgeResult result = parseJudgeResult(responseJson);
+            // 파싱 단계 폴백도 실패다 — 호출은 성공했지만 판정은 받지 못했다.
+            return countAndReturn(result);
         } catch (Exception e) {
             log.warn("InputJudge failed, using fallback CLEAR_LOW: {}", e.getMessage());
-            return InputJudgeResult.fallback();
+            return countAndReturn(InputJudgeResult.fallback());
         }
+    }
+
+    private InputJudgeResult countAndReturn(InputJudgeResult result) {
+        meterRegistry.counter(INPUT_JUDGE_METRIC, "outcome", result.failed() ? "failed" : "succeeded")
+                .increment();
+        return result;
     }
 
     private String buildContextPrompt(SafetyProfile profile, String message) {

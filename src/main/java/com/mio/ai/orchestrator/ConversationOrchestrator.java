@@ -10,6 +10,7 @@ import com.mio.ai.memory.ontology.OntologyRelationExpander;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivator;
 import com.mio.ai.memory.ontology.ReactiveOntologyActivationDispatcher;
 import com.mio.ai.memory.ontology.ReactiveOntologyEligibility;
+import com.mio.ai.memory.retrieval.MemoryContextResult;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
@@ -209,7 +210,7 @@ public class ConversationOrchestrator {
             InputJudgeResult judgeResult = null;
             boolean inputJudgeCalled = false;
             if (inputJudge.shouldCallJudge(combined, profile)) {
-                judgeResult = inputJudge.judge(normalized, combined, profile);
+                judgeResult = inputJudge.judge(normalized, combined, profile, userId, sessionId);
                 inputJudgeCalled = true;
             }
 
@@ -218,8 +219,9 @@ public class ConversationOrchestrator {
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
             String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
-            String liveMemory = contextPreWarmer.buildContextSync(
+            MemoryContextResult liveMemoryResult = contextPreWarmer.buildContextSync(
                     sessionId, userId, combined, profile, normalized, userSignal.biasType());
+            String liveMemory = liveMemoryResult.text();
             boolean memoryCacheFallbackUsed = (liveMemory == null || liveMemory.isBlank())
                     && cachedMemory != null && !cachedMemory.isBlank();
             String memoryContext = memoryCacheFallbackUsed ? cachedMemory : liveMemory;
@@ -308,7 +310,8 @@ public class ConversationOrchestrator {
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
                 LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage)
-                        .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS);
+                        .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS)
+                        .withAttribution("MAIN_GENERATION", userId, sessionId);
                 StringBuilder contentBuilder = new StringBuilder();
 
                 DeliveryMode deliveryMode = decision.deliveryMode();
@@ -328,7 +331,7 @@ public class ConversationOrchestrator {
                     OutputPreFilterResult bufferedGuardInput =
                             mergeContractViolations(preFilterResult, contractResult);
                     if (!bufferedGuardInput.passed()) {
-                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput);
+                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
@@ -371,8 +374,23 @@ public class ConversationOrchestrator {
                                 capturedSnapshotRef.set(candidate);
                                 log.warn("OutputGuard held back unit: session={} reasons={}",
                                         sessionId, unitCheck.failReasons());
+                                // 계약 위반도 판정 사유에 합류시킨다 (로드맵 §5.7, 이슈 #369).
+                                // 이전에는 유닛 검사 사유만 넘겨서, 조기 중단된 턴은 계약을
+                                // 위반해도 그 사실이 Judge 에 전달되지 않았다 — 승격이 경로에
+                                // 따라 달라졌다는 뜻이다.
+                                //
+                                // 검사 대상은 전체 응답이 아니라 이 스냅샷이다. 조기 중단 시
+                                // 실제로 나가는 것은 승인된 스냅샷이므로(아래 stopSendingDeltas
+                                // 분기), 판정 대상과 검사 대상이 같아야 한다. trace 의
+                                // contract_result 는 전체 응답 기준을 유지한다 — 그쪽은 턴 간
+                                // 비교 가능한 값이어야 한다.
+                                OutputPreFilterResult unitGuardInput = mergeContractViolations(
+                                        unitCheck,
+                                        responseContractValidator.validate(responsePlan, candidate));
                                 earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
-                                        () -> outputJudge.judge(candidate, unitCheck), outputJudgeExecutor));
+                                        () -> outputJudge.judge(
+                                                candidate, unitGuardInput, userId, sessionId),
+                                        outputJudgeExecutor));
                                 return false;
                             },
                             unit -> sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId)));
@@ -420,7 +438,7 @@ public class ConversationOrchestrator {
                             final String fullContent = assistantContent;
                             final OutputPreFilterResult fullFilter = streamedGuardInput;
                             judgeFuture = CompletableFuture.supplyAsync(
-                                    () -> outputJudge.judge(fullContent, fullFilter), outputJudgeExecutor);
+                                    () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
                         }
                     }
 
@@ -428,8 +446,10 @@ public class ConversationOrchestrator {
                         try {
                             judgeActionResult = judgeFuture.orTimeout(5, TimeUnit.SECONDS).join();
                         } catch (Exception e) {
+                            // 타임아웃은 판정이 아니다 (이슈 #364). 동작은 REPLACE 로 같지만
+                            // trace 에는 판정 실패로 남아야 REPLACE 판정률과 섞이지 않는다.
                             log.warn("OutputJudge async failed, defaulting to REPLACE: {}", e.getMessage());
-                            judgeActionResult = OutputJudgeResult.replace();
+                            judgeActionResult = OutputJudgeResult.fallback();
                         }
                         log.warn("OutputGuard action: session={} action={}", sessionId,
                                 judgeActionResult.action());
@@ -539,7 +559,7 @@ public class ConversationOrchestrator {
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, heldBackChars);
+                    firstSubstantiveTokenMs, heldBackChars, liveMemoryResult);
 
             emitter.complete();
 
@@ -819,7 +839,9 @@ public class ConversationOrchestrator {
                         assistantContent,
                         userSignal,
                         sessionDelta.socraticQuestionsUsed(),
-                        isCrisisFlagged)
+                        isCrisisFlagged,
+                        userId,
+                        sessionId)
                 : CbtMetadataResult.none();
 
         UUID emotionScoreTargetId = null;

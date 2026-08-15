@@ -11,21 +11,29 @@ package com.mio.ai.llm;
  * @param model            요청에 사용한 모델. 응답이 실제 서빙 모델을 알려주면 그 값
  * @param promptTokens     입력 토큰. {@code resolved=false} 면 의미 없음
  * @param completionTokens 출력 토큰. {@code resolved=false} 면 의미 없음
+ * @param cachedTokens     {@code promptTokens} 중 캐시 적중분(이슈 #431). {@link LlmCostCalculator}가
+ *                         이 값만큼을 캐시 할인 단가로 계산한다. 응답에 없으면 0 —
+ *                         "캐시 안 됨"과 "몰라서 0"을 여기선 구분하지 않는다.
  * @param resolved         사용량을 실제로 받아왔는지
  */
 public record LlmUsage(
         String model,
         long promptTokens,
         long completionTokens,
+        long cachedTokens,
         boolean resolved
 ) {
     public static LlmUsage of(String model, long promptTokens, long completionTokens) {
-        return new LlmUsage(model, promptTokens, completionTokens, true);
+        return new LlmUsage(model, promptTokens, completionTokens, 0L, true);
+    }
+
+    public static LlmUsage of(String model, long promptTokens, long completionTokens, long cachedTokens) {
+        return new LlmUsage(model, promptTokens, completionTokens, cachedTokens, true);
     }
 
     /** 사용량을 받지 못했다. 모델은 알 수 있으므로 함께 남긴다. */
     public static LlmUsage unresolved(String model) {
-        return new LlmUsage(model, 0L, 0L, false);
+        return new LlmUsage(model, 0L, 0L, 0L, false);
     }
 
     public long totalTokens() {

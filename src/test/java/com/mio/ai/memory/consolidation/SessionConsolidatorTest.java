@@ -150,11 +150,11 @@ class SessionConsolidatorTest {
         when(self.getObject()).thenReturn(proxy);
         when(proxy.consolidate(sessionId, userId, "chichi", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
-        when(sessionSummaryRenderer.render("내부 요약", "chichi")).thenReturn("오늘 이야기 정리해봤어요.");
+        when(sessionSummaryRenderer.render("내부 요약", "chichi", userId, sessionId)).thenReturn("오늘 이야기 정리해봤어요.");
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "chichi", 2));
 
-        verify(sessionSummaryRenderer).render("내부 요약", "chichi");
+        verify(sessionSummaryRenderer).render("내부 요약", "chichi", userId, sessionId);
         verify(userSummaryWriter).write(sessionId, "오늘 이야기 정리해봤어요.");
         verify(summaryStatusWriter).markDone(sessionId);
     }
@@ -171,7 +171,7 @@ class SessionConsolidatorTest {
         when(self.getObject()).thenReturn(proxy);
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
-        when(sessionSummaryRenderer.render(any(), any())).thenReturn(null);
+        when(sessionSummaryRenderer.render(any(), any(), any(), any())).thenReturn(null);
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
@@ -192,7 +192,7 @@ class SessionConsolidatorTest {
         when(self.getObject()).thenReturn(proxy);
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(3);
-        when(sessionSummaryRenderer.render(any(), any())).thenThrow(new RuntimeException("LLM down"));
+        when(sessionSummaryRenderer.render(any(), any(), any(), any())).thenThrow(new RuntimeException("LLM down"));
 
         assertThatCode(() -> consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2)))
                 .doesNotThrowAnyException();

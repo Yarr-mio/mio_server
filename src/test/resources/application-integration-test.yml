@@ -1,3 +1,9 @@
+# 이슈 #402 — 테스트 컨텍스트에서 프로덕션 스케줄러가 픽스처를 가로채지 못하게 끈다.
+# 프로파일을 가리지 않는 보장은 DisableSchedulingContextCustomizerFactory 가 담당하고,
+# 여기 선언은 프로파일 단위로도 명시해 두기 위한 것이다.
+scheduling:
+  enabled: false
+
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/mio

@@ -5,6 +5,7 @@ import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
 import com.mio.ai.judge.InputJudgeResult;
+import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmPricingProperties;
 import com.mio.ai.llm.OpenAiLlmClient;
@@ -46,6 +47,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * 위기 탐지 <b>전체 경로</b> 평가 — 실제 InputJudge 판정을 포함한다 (이슈 #295).
@@ -140,8 +142,9 @@ class CrisisDetectionFullPathQaTest {
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         inputJudge = new InputJudge(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
-                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
-                new ObjectMapper());
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
+                        mock(AiCostEventWriter.class)),
+                new ObjectMapper(), new SimpleMeterRegistry());
     }
 
     @Test
@@ -207,7 +210,7 @@ class CrisisDetectionFullPathQaTest {
 
         boolean judgeCalled = inputJudge.shouldCallJudge(combined, null);
         InputJudgeResult judgeResult = judgeCalled
-                ? inputJudge.judge(normalized, combined, null)
+                ? inputJudge.judge(normalized, combined, null, null, null)
                 : null;
 
         PolicyDecision decision = policyEngine.decide(combined, judgeResult, null, null);

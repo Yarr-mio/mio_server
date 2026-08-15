@@ -42,6 +42,11 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest
 
+      # arm64 런타임 스테이지를 만들기 위해 필요. builder 는 $BUILDPLATFORM 으로
+      # 고정돼 있어 에뮬레이션 대상은 최종 스테이지의 adduser/addgroup 뿐이다.
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -50,6 +55,9 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          # amd64 를 함께 빌드하는 이유는 롤백이다. 같은 태그로 기존 x86 인스턴스와
+          # 신규 ARM 인스턴스 모두 기동할 수 있어 이관 실패 시 즉시 되돌릴 수 있다.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -100,31 +108,138 @@ jobs:
           APP_BELIEF_IDENTITY_HMAC_KEY: ${{ secrets.APP_BELIEF_IDENTITY_HMAC_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_ACTOR: ${{ github.actor }}
+          # 기동 헬스 게이트가 "새 이미지가 실제로 돌고 있는지" 확인하는 데 쓴다 (이슈 #375).
+          IMAGE_DIGEST: ${{ needs.build-and-push.outputs.image-digest }}
+          IMAGE_REF: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          HEALTH_ATTEMPTS: "36"
+          HEALTH_INTERVAL: "5"
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          envs: ENV_FILE,APP_BELIEF_IDENTITY_HMAC_KEY,GHCR_TOKEN,GHCR_ACTOR
+          envs: ENV_FILE,APP_BELIEF_IDENTITY_HMAC_KEY,GHCR_TOKEN,GHCR_ACTOR,IMAGE_DIGEST,IMAGE_REF,HEALTH_ATTEMPTS,HEALTH_INTERVAL
           script: |
-            cd ~/mio
+            set -u
+            COMPOSE="docker compose -f docker-compose.prod.yml"
+
+            cd ~/mio || { echo "::error::~/mio 로 이동 실패"; exit 1; }
 
             printf '%s\nAPP_BELIEF_IDENTITY_HMAC_KEY=%s\n' \
               "$ENV_FILE" "$APP_BELIEF_IDENTITY_HMAC_KEY" > .env
 
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin
+            # ── 배포 전 기준선 (이슈 #375) ─────────────────────────────
+            # RestartCount 는 컨테이너를 재생성해야 0 으로 돌아간다. up -d 가 항상 재생성하는 것은
+            # 아니어서(같은 digest 재배포, pull 실패 등) 기존 값을 기준선으로 잡지 않으면
+            # "과거에 한 번 재시작했지만 지금 정상" 인 컨테이너를 크래시로 오판한다.
+            prev_cid=$($COMPOSE ps -aq app 2>/dev/null || true)
+            prev_restarts=0
+            if [ -n "$prev_cid" ]; then
+              prev_restarts=$(docker inspect -f '{{.RestartCount}}' "$prev_cid" 2>/dev/null || echo 0)
+            fi
+            echo "[deploy] 기준선 cid=${prev_cid:-none} restarts=$prev_restarts"
 
-            docker compose -f docker-compose.prod.yml pull
+            # 아래 세 단계는 실패하면 즉시 중단해야 한다. ssh-action 의 script_stop 기본값이
+            # false 라 스크립트는 첫 실패에서 멈추지 않는다. 그대로 진행하면 로컬에 남아 있는
+            # :latest 로 기존 컨테이너가 유지되고, 헬스 게이트가 "구 코드"에서 UP 을 받아
+            # 배포를 초록불로 끝낸다.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_ACTOR" --password-stdin \
+              || { echo "::error::GHCR 로그인 실패"; exit 1; }
+
+            $COMPOSE pull || { echo "::error::이미지 pull 실패 — 구 이미지로 배포하지 않는다"; exit 1; }
 
             # up -d: 이미지가 갱신된 app 컨테이너만 재생성하고 postgres/redis 볼륨은 보존한다.
             # (과거 'down -v'는 매 배포마다 named volume을 삭제해 DB가 전부 초기화되는 문제가 있었음.
             #  비밀번호 변경 등으로 볼륨 리셋이 필요하면 워크플로우가 아니라 수동 1회 작업으로 수행한다.)
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            $COMPOSE up -d --remove-orphans || { echo "::error::compose up 실패"; exit 1; }
 
+            # ── 기동 헬스 게이트 (이슈 #375) ─────────────────────────────
+            # 이전에는 sleep 45 후 로그만 덤프하고 결과를 종료 코드에 반영하지 않았다. 2026-08-07
+            # 배포에서 앱이 크래시 루프에 빠졌는데도 워크플로우가 success 로 끝나, 장애를
+            # 파이프라인이 아니라 사람이 뒤늦게 발견했다.
+            #
+            # 헬스는 컨테이너 안에서 관리 포트(9090)로 조회한다. 이 포트는 외부에서 도달할 수
+            # 없도록 의도적으로 publish 하지 않으며, 8080 은 인증이 걸려 401 이 오므로 판정에
+            # 쓸 수 없다.
+            started_at=$(date +%s)
+            healthy=0
+            fail_reason=""
+            for i in $(seq 1 "$HEALTH_ATTEMPTS"); do
+              # -aq 로 조회한다. 기동 실패로 exited 상태인 컨테이너는 -q 에 잡히지 않아
+              # 진단이 정확히 필요한 순간에 비어버린다.
+              cid=$($COMPOSE ps -aq app 2>/dev/null || true)
+              if [ -z "$cid" ]; then
+                echo "[health] app 컨테이너가 없다 (attempt $i)"
+                sleep "$HEALTH_INTERVAL"
+                continue
+              fi
+
+              state=$(docker inspect -f '{{.State.Status}}' "$cid" 2>/dev/null || echo unknown)
+              # RestartCount 는 .State 가 아니라 최상위 필드다. 경로를 틀리면 빈 문자열이 나오고
+              # 아래 정수 비교가 조용히 실패해 크래시 감지가 통째로 무력화된다.
+              restarts=$(docker inspect -f '{{.RestartCount}}' "$cid" 2>/dev/null || echo 0)
+              restarts=${restarts:-0}
+
+              # 컨테이너가 교체됐으면 0 부터, 유지됐으면 기준선부터 증가분만 본다.
+              base=0
+              if [ "$cid" = "$prev_cid" ]; then base=$prev_restarts; fi
+
+              case "$state" in
+                exited|dead)
+                  fail_reason="컨테이너가 종료됨 (state=$state)"; break ;;
+              esac
+              if [ "$state" = "restarting" ] || [ "$restarts" -gt "$base" ]; then
+                fail_reason="크래시 루프 감지 (state=$state restarts=$restarts base=$base)"; break
+              fi
+
+              # 최상위 status 만 본다. show-details 로 하위 컴포넌트 status 가 함께 실리므로
+              # 앵커 없이 매칭하면 최상위가 UNKNOWN(HTTP 200)인데 통과할 수 있다.
+              if $COMPOSE exec -T app \
+                   wget -qO- --timeout=3 http://127.0.0.1:9090/actuator/health 2>/dev/null \
+                   | grep -q '^{"status":"UP"'; then
+                healthy=1
+                break
+              fi
+              sleep "$HEALTH_INTERVAL"
+            done
+            elapsed=$(( $(date +%s) - started_at ))
+
+            # 살아 있는 것만으로는 부족하다 — 새 이미지가 돌고 있는지 확인한다.
+            if [ "$healthy" = "1" ] && [ -n "${IMAGE_DIGEST:-}" ]; then
+              running_image=$(docker inspect -f '{{.Image}}' "$cid" 2>/dev/null || echo "")
+              if [ -n "$running_image" ] && \
+                 ! docker image inspect "$running_image" -f '{{join .RepoDigests "\n"}}' 2>/dev/null \
+                     | grep -q "$IMAGE_DIGEST"; then
+                healthy=0
+                fail_reason="실행 중 이미지가 이번 빌드와 다르다 (기대 digest=$IMAGE_DIGEST)"
+              fi
+            fi
+
+            if [ "$healthy" != "1" ]; then
+              echo "::error::기동 헬스 게이트 실패 (${elapsed}s) — ${fail_reason:-타임아웃}"
+              echo "=== container state ==="
+              $COMPOSE ps -a app || true
+              if [ -n "${cid:-}" ]; then
+                docker inspect -f 'status={{.State.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$cid" || true
+              fi
+              # app 로그는 여기서 볼 수 없다. logging.driver 가 awslogs 이고 awslogs 는 읽기를
+              # 지원하지 않아 docker logs / compose logs 가 아무것도 반환하지 않는다(compose 는
+              # 경고만 남기고 exit 0 이라 조용히 비어 보인다). CloudWatch 에서 확인해야 한다.
+              echo "=== app logs ==="
+              echo "로그는 CloudWatch 로그 그룹 /mio/app 에서 확인한다 (awslogs 는 docker logs 미지원)."
+              echo "  aws logs tail /mio/app --since 10m --region ap-northeast-2"
+              echo "=== 수동 롤백 ==="
+              echo "  직전 성공 커밋의 sha- 태그로 되돌린다:"
+              echo "  docker pull $IMAGE_REF:sha-<PREV_SHA>"
+              echo "  docker tag $IMAGE_REF:sha-<PREV_SHA> $IMAGE_REF:latest"
+              echo "  docker compose -f docker-compose.prod.yml up -d app"
+              exit 1
+            fi
+
+            echo "[health] UP (${elapsed}s, attempt $i)"
+
+            # prune 은 게이트 통과 후에 한다. 게이트 전에 돌리면 방금 밀려난 이전 :latest 가
+            # dangling 으로 지워져, 실패를 선언한 시점에 되돌릴 로컬 이미지가 남지 않는다.
             docker image prune -f
-
-            sleep 45
-            echo "=== app logs ==="
-            docker compose -f docker-compose.prod.yml logs app --tail=80
 
       - name: Close SSH on security group (always runs)
         if: always()

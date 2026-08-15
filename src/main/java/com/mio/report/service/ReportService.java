@@ -1,6 +1,7 @@
 package com.mio.report.service;
 
 import com.mio.common.AppConstants;
+import com.mio.report.domain.ReportWeek;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.checkin.repository.CheckinRepository;
@@ -24,7 +25,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
@@ -78,7 +78,7 @@ public class ReportService {
 
     public WeeklyReportResponse getWeeklyReport(UUID userId, LocalDate weekStart) {
         final LocalDate resolvedStart = weekStart != null ? weekStart : resolveLastWeekStart();
-        final LocalDate weekEnd = resolvedStart.plusDays(6);
+        final LocalDate weekEnd = ReportWeek.weekEndOf(resolvedStart);
 
         ReportDbData data = readOnlyTx.execute(status -> {
             verifyUserExists(userId);
@@ -106,7 +106,7 @@ public class ReportService {
 
         // DB 커넥션 반납 후 LLM 호출
         ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
+                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
 
         return new WeeklyReportResponse(
                 null, data.periodStart(), data.periodEnd(), "GENERATED", false,
@@ -152,7 +152,7 @@ public class ReportService {
 
         // DB 커넥션 반납 후 LLM 호출
         ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
+                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
 
         return new MonthlyReportResponse(
                 null, data.periodStart(), data.periodEnd(), "GENERATED", false,
@@ -243,9 +243,7 @@ public class ReportService {
     // ── 날짜 헬퍼 ─────────────────────────────────────────────────
 
     private LocalDate resolveLastWeekStart() {
-        LocalDate today = LocalDate.now(AppConstants.ZONE);
-        int daysFromMonday = today.getDayOfWeek().getValue() - DayOfWeek.MONDAY.getValue();
-        return today.minusDays(daysFromMonday + 7);
+        return ReportWeek.lastWeekStartFrom(LocalDate.now(AppConstants.ZONE));
     }
 
     private LocalDate resolveLastMonthStart() {
