@@ -1,0 +1,118 @@
+{
+  "annotations": {"list": []},
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Safety — crisis and guarded decisions",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum(rate(mio_crisis_records_total[5m]))", "legendFormat": "crisis records/s"},
+        {"refId": "B", "expr": "sum by (risk) (rate(mio_ai_policy_decisions_total{risk=~\"high|hard_crisis\"}[5m]))", "legendFormat": "{{risk}}/s"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Turn p95",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, delivery_mode) (rate(mio_ai_turn_duration_seconds_bucket[10m])))", "legendFormat": "{{delivery_mode}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TTFT and first substantive p95",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le) (rate(mio_ai_turn_llm_ttft_seconds_bucket[10m])))", "legendFormat": "LLM TTFT"},
+        {"refId": "B", "expr": "histogram_quantile(0.95, sum by (le) (rate(mio_ai_turn_first_substantive_seconds_bucket[10m])))", "legendFormat": "first substantive"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost and token rate",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (component) (rate(mio_llm_cost_usd_total[5m]))", "legendFormat": "USD/s {{component}}"},
+        {"refId": "B", "expr": "sum by (component, type) (rate(mio_llm_tokens_total[5m]))", "legendFormat": "tokens/s {{component}} {{type}}"},
+        {"refId": "C", "expr": "sum(increase(mio_llm_cost_unpriced_total[15m]))", "legendFormat": "unpriced events"},
+        {"refId": "D", "expr": "sum by (component) (increase(mio_llm_cost_usd_total[24h]))", "legendFormat": "24h USD {{component}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Judge failures",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (outcome) (rate(mio_judge_input_total[5m]))", "legendFormat": "input {{outcome}}"},
+        {"refId": "B", "expr": "sum by (outcome) (rate(mio_judge_output_total[5m]))", "legendFormat": "output {{outcome}}"},
+        {"refId": "C", "expr": "sum by (source, outcome) (rate(mio_retrieval_outcome_total[5m]))", "legendFormat": "retrieval {{source}} {{outcome}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Contract and delivery outcomes",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (response_act, result) (rate(mio_ai_contract_results_total[5m]))", "legendFormat": "{{response_act}} {{result}}"},
+        {"refId": "B", "expr": "sum by (outcome) (rate(mio_ai_turn_outcomes_total[5m]))", "legendFormat": "turn {{outcome}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Stuck work and deletion backlog",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "sum by (outcome) (increase(mio_turns_swept_total[15m]))", "legendFormat": "turn sweep {{outcome}}"},
+        {"refId": "B", "expr": "max(mio_deletion_backlog)", "legendFormat": "deletion backlog"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Summary pipeline status",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {"id": "byFrameRefID", "options": "A"},
+            "properties": [{"id": "unit", "value": "s"}]
+          }
+        ]
+      },
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, stage) (rate(mio_summary_stage_duration_seconds_bucket{outcome=\"done\"}[10m])))", "legendFormat": "p95 {{stage}}"},
+        {"refId": "B", "expr": "sum by (component, outcome) (increase(mio_summary_component_total[15m]))", "legendFormat": "{{component}} {{outcome}}"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Held-back output distribution",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "expr": "histogram_quantile(0.95, sum by (le, delivery_mode) (rate(mio_ai_turn_held_back_chars_bucket[10m])))", "legendFormat": "{{delivery_mode}}"}
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": ["mio", "ai", "p0-9"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timezone": "browser",
+  "title": "Mio AI Operational Overview",
+  "uid": "mio-ai-overview",
+  "version": 1
+}

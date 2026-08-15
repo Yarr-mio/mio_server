@@ -86,6 +86,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Service
@@ -123,6 +124,7 @@ public class ConversationOrchestrator {
     private final WorkingMemory workingMemory;
     private final ContextPreWarmer contextPreWarmer;
     private final AiDecisionLogger decisionLogger;
+    private final AiTurnMetrics aiTurnMetrics;
     private final CbtReconstructionService cbtReconstructionService;
     private final SessionMessagePersistenceService messagePersistenceService;
     private final ConversationCheckpointService checkpointService;
@@ -166,6 +168,7 @@ public class ConversationOrchestrator {
             // 같은 Idempotency-Key 로 이미 완료된 턴이 있으면 저장된 응답을 재생한다.
             // LLM 을 다시 호출하지 않으므로 재시도가 비용을 늘리지 않는다 (이슈 P0-A).
             if (replayCompletedTurn(sessionId, idempotencyKey, outboundMsgId, emitter)) {
+                aiTurnMetrics.recordReplay(System.currentTimeMillis() - startMs);
                 emitter.complete();
                 return;
             }
@@ -254,7 +257,7 @@ public class ConversationOrchestrator {
 
             // 7. Execute based on decision
             String assistantContent;
-            long llmTtftMs = 0;
+            long llmTtftMs = -1;
             // LLM 을 호출하지 않은 턴(보안 거절·위기·폴백)에서는 null 로 남는다.
             // 호출하지 않았다는 사실 자체가 기록돼야 하므로 빈 사용량으로 채우지 않는다.
             LlmUsage llmUsage = null;
@@ -265,7 +268,7 @@ public class ConversationOrchestrator {
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
             // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
             // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
-            long firstSubstantiveTokenMs = -1;
+            AtomicLong firstSubstantiveTokenMs = new AtomicLong(-1);
             int heldBackChars = 0;
             OutputJudgeResult judgeActionResult = null;
             // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
@@ -277,6 +280,7 @@ public class ConversationOrchestrator {
             if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
+                markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "security_refusal", false);
@@ -298,6 +302,9 @@ public class ConversationOrchestrator {
                 CrisisFlowService.CrisisHandleResult crisisResult =
                         crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
                                 user, session, emitter, outboundMsgId, userSignal.emotionScore());
+                if (crisisResult != null && crisisResult.delivered()) {
+                    markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
+                }
                 recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
 
             } else if (decision.action() == DecisionAction.GENERATE) {
@@ -336,7 +343,8 @@ public class ConversationOrchestrator {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
-                                    finishedReasonRef, crisisSeverityRef, turn, turnPersisted);
+                                    finishedReasonRef, crisisSeverityRef, turn, turnPersisted,
+                                    firstSubstantiveTokenMs, startMs);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 appliedCrisisTrigger = CrisisTrigger.OUTPUT_GUARD;
@@ -345,6 +353,7 @@ public class ConversationOrchestrator {
                     }
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
+                        markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                         sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
@@ -393,7 +402,10 @@ public class ConversationOrchestrator {
                                         outputJudgeExecutor));
                                 return false;
                             },
-                            unit -> sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId)));
+                            unit -> {
+                                sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId));
+                                markFirstSubstantive(firstSubstantiveTokenMs, startMs, unit);
+                            });
 
                     LlmStreamResult streamResult = llmClient.stream(llmRequest, withHeartbeat(turn, chunk -> {
                         contentBuilder.append(chunk);
@@ -408,7 +420,6 @@ public class ConversationOrchestrator {
                     } catch (Exception e) {
                         throw new RuntimeException(e);
                     }
-                    firstSubstantiveTokenMs = holdback.firstSubstantiveTokenMs();
                     heldBackChars = holdback.heldBackChars(contentBuilder.toString());
                     llmTtftMs = streamResult.ttftMs();
                     llmUsage = streamResult.usage();
@@ -475,6 +486,9 @@ public class ConversationOrchestrator {
                             CrisisFlowService.CrisisHandleResult crisisResult =
                                     crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
                                             user, session, emitter, outboundMsgId, userSignal.emotionScore());
+                            if (crisisResult != null && crisisResult.delivered()) {
+                                markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
+                            }
                             recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
                         } else {
                             String replacedContent = switch (judgeActionResult.action()) {
@@ -488,6 +502,7 @@ public class ConversationOrchestrator {
                             if (replacedContent != null) {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
+                                markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "replaced_by_guard", false);
@@ -498,6 +513,7 @@ public class ConversationOrchestrator {
                                         ? capturedSnapshotRef.get() : assistantContent;
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
+                                markFirstSubstantive(firstSubstantiveTokenMs, startMs, reviewedContent);
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
@@ -519,6 +535,7 @@ public class ConversationOrchestrator {
                         contentBuilder.append(chunk);
                         try {
                             sendEvent(emitter, new SseEventDto.DeltaEvent(chunk, outboundMsgId));
+                            markFirstSubstantive(firstSubstantiveTokenMs, startMs, chunk);
                         } catch (IOException e) {
                             throw new RuntimeException(e);
                         }
@@ -535,6 +552,7 @@ public class ConversationOrchestrator {
                 log.warn("Unhandled decision action: {} for session={}", decision.action(), sessionId);
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
+                markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "error", false);
@@ -554,17 +572,26 @@ public class ConversationOrchestrator {
 
             // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
+            aiTurnMetrics.recordCompleted(
+                    decision,
+                    contractResult,
+                    totalMs,
+                    llmTtftMs,
+                    firstSubstantiveTokenMs.get(),
+                    heldBackChars,
+                    resolveFinishedReason(finishedReasonRef));
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, heldBackChars, liveMemoryResult);
+                    firstSubstantiveTokenMs.get(), heldBackChars, liveMemoryResult);
 
             emitter.complete();
 
         } catch (Exception e) {
             log.error("Conversation orchestration failed for session {}", sessionId, e);
+            aiTurnMetrics.recordFailed(System.currentTimeMillis() - startMs);
             // 1) 결말을 먼저 저장한다. 이게 없으면 턴이 generating 에 영원히 머물러 재시도 시
             //    "진행 중"으로 오인된다 (이슈 P0-A). 연결 상태와 무관하게 항상 수행한다.
             if (turn != null) {
@@ -639,6 +666,18 @@ public class ConversationOrchestrator {
         }
         messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
+    }
+
+    /** 실제 SSE 전송이 성공한 첫 비어 있지 않은 콘텐츠만 사용자 체감 지연으로 기록한다. */
+    private void markFirstSubstantive(AtomicLong firstSubstantiveTokenMs,
+                                      long pipelineStartedAtMs,
+                                      String content) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        firstSubstantiveTokenMs.compareAndSet(
+                -1,
+                Math.max(0, System.currentTimeMillis() - pipelineStartedAtMs));
     }
 
     /** 실패로 끝난 턴에서 사용자에게 내보내는 문구. */
@@ -782,7 +821,9 @@ public class ConversationOrchestrator {
             AtomicReference<String> finishedReasonRef,
             AtomicReference<Integer> crisisSeverityRef,
             MessageTurn turn,
-            AtomicBoolean turnPersisted) throws IOException {
+            AtomicBoolean turnPersisted,
+            AtomicLong firstSubstantiveTokenMs,
+            long pipelineStartedAtMs) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -798,6 +839,12 @@ public class ConversationOrchestrator {
                 CrisisFlowService.CrisisHandleResult cr =
                         crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
                                 user, session, emitter, outboundMsgId, emotionScore);
+                if (cr != null && cr.delivered()) {
+                    markFirstSubstantive(
+                            firstSubstantiveTokenMs,
+                            pipelineStartedAtMs,
+                            preview.fixedResponse());
+                }
                 recordCrisisOutcome(cr, finishedReasonRef, crisisSeverityRef);
                 yield cr != null ? cr.fixedResponse() : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             }

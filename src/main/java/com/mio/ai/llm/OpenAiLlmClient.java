@@ -18,7 +18,9 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,6 +54,24 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private static final String MODE_COMPLETE_JSON = "complete_json";
     private static final String MODE_EMBED = "embed";
 
+    /** metric label에 허용하는 코드 소유 역할. 요청 문자열을 그대로 label로 쓰지 않는다. */
+    private static final Set<String> METERED_COMPONENTS = Set.of(
+            "CBT_CLASSIFIER",
+            "CHECKIN_RESPONSE",
+            "CHECKPOINT_SUMMARY",
+            "EXTRACTOR",
+            "INPUT_JUDGE",
+            "MAIN_GENERATION",
+            "ONTOLOGY_EXTRACTOR",
+            "OUTPUT_JUDGE",
+            "REPORT_NARRATIVE",
+            "RETRIEVAL_QUERY_EMBEDDING",
+            "SESSION_SUMMARY",
+            "SUMMARY_RENDER",
+            "SUMMARY_STORAGE_EMBEDDING",
+            "TODO_PERSONALIZER",
+            "WEEKLY_REFLECTION");
+
     private final String apiKey;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -79,7 +99,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     @Override
     public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
         long startMs = System.currentTimeMillis();
-        AtomicLong ttft = new AtomicLong(0);
+        // 콘텐츠가 끝내 오지 않은 정상 종료와 0ms 안에 도착한 첫 토큰을 구분한다.
+        AtomicLong ttft = new AtomicLong(-1);
         AtomicReference<LlmUsage> usage = new AtomicReference<>();
         AtomicBoolean truncated = new AtomicBoolean(false);
         // 이 호출의 종료(outcome + usage)를 이미 기록했는지. 아래 catch 는 우리가 던진 예외와
@@ -128,7 +149,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     attempt++;
                     // 재시도는 앞선 시도의 결과를 버린다. 리셋하지 않으면 실패한 시도의
                     // 사용량이 남아 최종 결과에 섞이거나 중복 집계된다.
-                    ttft.set(0);
+                    ttft.set(-1);
                     usage.set(null);
                     truncated.set(false);
                     continue;
@@ -160,7 +181,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                                 }
                                 String content = extractDeltaContent(chunk);
                                 if (content != null && !content.isEmpty()) {
-                                    if (ttft.get() == 0) {
+                                    if (ttft.get() < 0) {
                                         ttft.set(System.currentTimeMillis() - startMs);
                                     }
                                     chunkHandler.accept(content);
@@ -195,8 +216,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         LlmUsage resolved = resolveUsage(usage, request.model());
         recordUsage(MODE_STREAM, resolved, request);
 
-        long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
-        return new LlmStreamResult(ttftMs, resolved, truncated.get());
+        return new LlmStreamResult(ttft.get(), resolved, truncated.get());
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {
@@ -461,18 +481,23 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
      */
     private void recordUsage(String mode, LlmUsage usage, String component, UUID userId, UUID sessionId) {
         String model = usage.model();
+        String componentTag = meteredComponent(component);
         if (!usage.resolved()) {
             // "사용량을 못 받았다" 를 별도 값으로 남긴다. 토큰 0 으로 세면 조용히 과소 계상된다.
-            meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode, "outcome", "missing")
+            meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode,
+                            "component", componentTag, "outcome", "missing")
                     .increment();
             return;
         }
 
-        meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode, "outcome", "resolved")
+        meterRegistry.counter(USAGE_METRIC, "model", model, "mode", mode,
+                        "component", componentTag, "outcome", "resolved")
                 .increment();
-        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode, "type", "prompt")
+        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode,
+                        "component", componentTag, "type", "prompt")
                 .increment(usage.promptTokens());
-        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode, "type", "completion")
+        meterRegistry.counter(TOKENS_METRIC, "model", model, "mode", mode,
+                        "component", componentTag, "type", "completion")
                 .increment(usage.completionTokens());
 
         BigDecimal cost = costCalculator.costUsd(usage);
@@ -480,14 +505,26 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         // 지연만큼 실제 사용 시각과 어긋나고, 자정 근처 호출이 월간 집계에서 다음 달로 샐 수 있다.
         OffsetDateTime occurredAt = OffsetDateTime.now(ZoneOffset.UTC);
         if (cost == null) {
-            meterRegistry.counter(UNPRICED_METRIC, "model", model, "mode", mode).increment();
+            meterRegistry.counter(UNPRICED_METRIC, "model", model, "mode", mode,
+                    "component", componentTag).increment();
             // 단가 미등록이라 비용은 모르지만, 토큰량 자체는 ai_cost_events에 남긴다(cost_usd=null).
             recordCostEvent(userId, sessionId, component, model, mode, usage, null, occurredAt);
             return;
         }
-        meterRegistry.counter(COST_METRIC, "model", model, "mode", mode)
+        meterRegistry.counter(COST_METRIC, "model", model, "mode", mode,
+                        "component", componentTag)
                 .increment(cost.doubleValue());
         recordCostEvent(userId, sessionId, component, model, mode, usage, cost, occurredAt);
+    }
+
+    private String meteredComponent(String component) {
+        if (component == null || component.isBlank()) {
+            return "unattributed";
+        }
+        String normalized = component.toUpperCase(Locale.ROOT);
+        return METERED_COMPONENTS.contains(normalized)
+                ? normalized.toLowerCase(Locale.ROOT)
+                : "other";
     }
 
     /**
