@@ -3,6 +3,7 @@ package com.mio.auth.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * 탈퇴 접수 응답.
@@ -15,9 +16,12 @@ import java.time.OffsetDateTime;
 public record WithdrawResponse(
         boolean success,
         @JsonProperty("withdrawn_at") OffsetDateTime withdrawnAt,
-        @JsonProperty("hard_delete_scheduled_at") OffsetDateTime hardDeleteScheduledAt
+        @JsonProperty("hard_delete_scheduled_at") OffsetDateTime hardDeleteScheduledAt,
+        @JsonProperty("operation_id") UUID operationId
 ) {
-    public WithdrawResponse(OffsetDateTime withdrawnAt, OffsetDateTime hardDeleteScheduledAt) {
-        this(true, withdrawnAt, hardDeleteScheduledAt);
+    public WithdrawResponse(OffsetDateTime withdrawnAt,
+                            OffsetDateTime hardDeleteScheduledAt,
+                            UUID operationId) {
+        this(true, withdrawnAt, hardDeleteScheduledAt, operationId);
     }
 }

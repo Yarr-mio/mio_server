@@ -55,6 +55,12 @@ class AuthServiceTest {
         // 탈퇴 유저 해시 체크(findBySocialProviderAndSocialId 1차 호출)에 대한 기본 응답
         lenient().when(userRepository.findBySocialProviderAndSocialId(any(), any()))
                 .thenReturn(Optional.empty());
+        var defaultDeletionRequest = mock(com.mio.user.domain.DataDeletionRequest.class);
+        lenient().when(defaultDeletionRequest.getId()).thenReturn(UUID.randomUUID());
+        lenient().when(defaultDeletionRequest.getScheduledAt())
+                .thenReturn(java.time.OffsetDateTime.now().plusDays(30));
+        lenient().when(dataDeletionService.requestDeletion(any(), any()))
+                .thenReturn(defaultDeletionRequest);
         authService = new AuthService(
                 List.of(kakaoProvider), userRepository, userConsentRepository,
                 userDeviceRepository, deviceTokenRepository, jwtTokenService, refreshTokenService,

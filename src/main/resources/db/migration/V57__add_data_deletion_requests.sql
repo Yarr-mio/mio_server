@@ -16,9 +16,9 @@
 CREATE TABLE data_deletion_requests (
     id                   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
 
-    -- 사용자 행이 하드 삭제되면 이 요청도 함께 사라진다. 삭제가 끝난 사용자의 요청 기록을
-    -- 남기려면 별도 감사 로그를 써야 한다 — audit_logs 가 이미 그 역할을 한다.
-    user_id              UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- 하드 삭제 뒤에도 terminal state를 증명해야 하므로 users FK를 두지 않는다.
+    -- 이 값은 외부 식별자가 아닌 내부 UUID이고 API 응답에는 노출하지 않는다.
+    user_id              UUID        NOT NULL,
 
     -- pending      : 탈퇴 접수. 유예 기간 대기 중
     -- in_progress  : 하드 삭제 실행 중

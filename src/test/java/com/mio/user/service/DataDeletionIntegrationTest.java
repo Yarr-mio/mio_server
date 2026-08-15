@@ -70,6 +70,14 @@ class DataDeletionIntegrationTest {
                 VALUES (?, ?, ?, 'mio', '테스트 요약', 'pending')
                 """,
                 UUID.randomUUID(), userId, sessionId);
+        jdbcTemplate.update(
+                """
+                INSERT INTO memory_embeddings
+                    (id, user_id, source_event_id, content_summary, embedding, memory_type, sensitivity)
+                VALUES (?, ?, ?, '삭제 대상 벡터', array_fill(0.0::real, ARRAY[1536])::vector,
+                        'session_summary', 'sensitive')
+                """,
+                UUID.randomUUID(), userId, UUID.randomUUID());
 
         seedCache();
     }
@@ -91,6 +99,7 @@ class DataDeletionIntegrationTest {
         assertThat(userRows()).as("사용자 행").isZero();
         assertThat(sessionRows()).as("세션 (FK cascade)").isZero();
         assertThat(summaryRows()).as("세션 요약 — 파생물이자 벡터 보관처").isZero();
+        assertThat(embeddingRows()).as("pgvector 장기 기억").isZero();
         assertThat(remainingCacheKeys())
                 .as("Redis 캐시. 이전에는 TTL 만료에만 의존해 최대 90분 남았다")
                 .isZero();
@@ -136,6 +145,21 @@ class DataDeletionIntegrationTest {
                     assertThat(found.getStatus()).isEqualTo(DeletionStatus.COMPLETED);
                     assertThat(found.getDatabasePurgedAt()).isNotNull();
                 });
+    }
+
+    @Test
+    @DisplayName("탈퇴 접수 즉시 실 Redis 캐시를 삭제하고 진행 시각을 남긴다")
+    void requestDeletionPurgesRedisImmediately() {
+        DataDeletionRequest request = inTransaction(() ->
+                deletionService.requestDeletion(userId, OffsetDateTime.now(ZoneOffset.UTC)));
+
+        assertThat(remainingCacheKeys()).isZero();
+        assertThat(request.getCachePurgedAt()).isNotNull();
+        assertThat(deletionRequestRepository.findById(request.getId()))
+                .isPresent()
+                .get()
+                .extracting(DataDeletionRequest::getCachePurgedAt)
+                .isNotNull();
     }
 
     @Test
@@ -208,6 +232,10 @@ class DataDeletionIntegrationTest {
 
     private int summaryRows() {
         return count("SELECT COUNT(*) FROM session_summaries WHERE user_id = ?", userId);
+    }
+
+    private int embeddingRows() {
+        return count("SELECT COUNT(*) FROM memory_embeddings WHERE user_id = ?", userId);
     }
 
     private int count(String sql, UUID param) {

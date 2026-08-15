@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.mio.user.domain.DataDeletionRequest;
 
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 /**
  * 데이터 삭제 진행 상태 (이슈 #373, 로드맵 §12 P0-6).
@@ -16,6 +17,7 @@ import java.time.OffsetDateTime;
  * 스택·쿼리 조각이 섞이면 정보 노출이 된다. 운영은 DB 와 메트릭으로 본다.
  */
 public record DeletionStatusResponse(
+        @JsonProperty("operation_id") UUID operationId,
         String status,
         @JsonProperty("requested_at") OffsetDateTime requestedAt,
         @JsonProperty("scheduled_at") OffsetDateTime scheduledAt,
@@ -25,6 +27,7 @@ public record DeletionStatusResponse(
 ) {
     public static DeletionStatusResponse from(DataDeletionRequest request) {
         return new DeletionStatusResponse(
+                request.getId(),
                 request.getStatus().value(),
                 request.getRequestedAt(),
                 request.getScheduledAt(),
@@ -36,6 +39,6 @@ public record DeletionStatusResponse(
 
     /** 삭제를 요청한 적이 없는 사용자. 404 로 답하면 "탈퇴했나?" 를 되묻게 된다. */
     public static DeletionStatusResponse none() {
-        return new DeletionStatusResponse("none", null, null, null, null, null);
+        return new DeletionStatusResponse(null, "none", null, null, null, null, null);
     }
 }

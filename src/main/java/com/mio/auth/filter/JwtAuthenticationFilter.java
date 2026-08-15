@@ -49,6 +49,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         if ("/error".equals(request.getRequestURI())) {
             return true;
         }
+        if ("GET".equals(request.getMethod())
+                && request.getRequestURI().matches(
+                        "^/v1/data-deletions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+                                + "[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")) {
+            return true;
+        }
         String key = request.getMethod() + " " + request.getRequestURI();
         return WHITELIST.contains(key);
     }

@@ -1,9 +1,7 @@
 package com.mio.user.service;
 
 import com.mio.user.domain.DataDeletionRequest;
-import com.mio.user.domain.User;
 import com.mio.user.repository.DataDeletionRequestRepository;
-import com.mio.user.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -38,8 +36,8 @@ public class DataDeletionService {
     private static final int MAX_ATTEMPTS = 3;
 
     private final DataDeletionRequestRepository deletionRequestRepository;
-    private final UserRepository userRepository;
     private final UserCachePurger cachePurger;
+    private final UserHardDeleteExecutor hardDeleteExecutor;
 
     /**
      * 탈퇴를 접수한다. 이미 진행 중인 요청이 있으면 그것을 돌려준다.
@@ -49,14 +47,34 @@ public class DataDeletionService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public DataDeletionRequest requestDeletion(UUID userId, OffsetDateTime withdrawnAt) {
-        return deletionRequestRepository.findActiveByUserId(userId)
+        DataDeletionRequest request = deletionRequestRepository.findActiveByUserId(userId)
                 .orElseGet(() -> deletionRequestRepository.save(
                         DataDeletionRequest.open(userId, withdrawnAt.plusDays(RETENTION_DAYS))));
+
+        // 개인정보 캐시는 30일 유예 대상이 아니다. 탈퇴가 커밋되기 전에 즉시 제거하고,
+        // Redis 장애면 예외를 전파해 사용자 소프트 삭제와 요청 접수를 함께 롤백한다.
+        if (request.getCachePurgedAt() == null) {
+            cachePurger.purge(userId);
+            request.markCachePurged();
+        }
+        return request;
     }
 
     @Transactional(readOnly = true)
     public java.util.Optional<DataDeletionRequest> findLatest(UUID userId) {
         return deletionRequestRepository.findTopByUserIdOrderByRequestedAtDesc(userId);
+    }
+
+    /**
+     * 탈퇴 응답에 발급한 불투명 operation id로 상태를 조회한다.
+     *
+     * <p>하드 삭제가 끝나면 사용자 계정과 인증 수단도 사라진다. 사용자 인증만 요구하는
+     * 조회 API로는 completed 상태를 원천적으로 볼 수 없으므로, 추측이 어려운 UUID를
+     * capability id로 사용한다. 응답에는 사용자 식별자를 포함하지 않는다.
+     */
+    @Transactional(readOnly = true)
+    public java.util.Optional<DataDeletionRequest> findByOperationId(UUID operationId) {
+        return deletionRequestRepository.findById(operationId);
     }
 
     /**
@@ -85,12 +103,10 @@ public class DataDeletionService {
                 request.markCachePurged();
             }
 
-            User user = userRepository.findById(request.getUserId()).orElse(null);
-            if (user != null) {
-                // FK ON DELETE CASCADE 가 messages·session_summaries·memory_embeddings·
-                // user_beliefs 등 파생물을 함께 지운다 (V13/V22/V40).
-                userRepository.delete(user);
-            }
+            // FK ON DELETE CASCADE 가 messages·session_summaries·memory_embeddings·
+            // user_beliefs 등 파생물을 함께 지운다 (V13/V22/V40). 실제 SQL과 커밋은
+            // 독립 트랜잭션에서 끝난 뒤 돌아오므로 실패를 아래 catch에서 상태로 남길 수 있다.
+            hardDeleteExecutor.deleteUser(request.getUserId());
             request.markDatabasePurged();
             request.complete();
             return true;

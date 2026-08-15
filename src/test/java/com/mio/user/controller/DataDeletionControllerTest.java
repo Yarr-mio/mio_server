@@ -58,7 +58,7 @@ class DataDeletionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.operation_id").value(operationId.toString()))
                 .andExpect(jsonPath("$.data.status").value("completed"))
-                .andExpect(jsonPath("$.data.completed_at").value("2026-09-14T00:05:00Z"))
+                .andExpect(jsonPath("$.data.completed_at").value("2026-09-14T09:05:00+09:00"))
                 .andExpect(jsonPath("$.data.user_id").doesNotExist());
     }
 }

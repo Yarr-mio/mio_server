@@ -248,7 +248,11 @@ public class AuthService {
                 "hard_delete_scheduled_at", deletionRequest.getScheduledAt().toString()
         ));
 
-        return new WithdrawResponse(user.getDeletedAt(), deletionRequest.getScheduledAt());
+        return new WithdrawResponse(
+                user.getDeletedAt(),
+                deletionRequest.getScheduledAt(),
+                deletionRequest.getId()
+        );
     }
 
     /**
