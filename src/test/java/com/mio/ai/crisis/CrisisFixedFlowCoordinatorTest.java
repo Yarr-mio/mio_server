@@ -109,6 +109,10 @@ class CrisisFixedFlowCoordinatorTest {
         assertThat(route.routed()).isTrue();
         assertThat(route.reason()).isEqualTo("missing_state");
         assertThat(route.fixedResponse()).contains("일반 대화를 이어가지 않고");
+        // missing_state handoff 는 정상 라우팅과 구분되는 별도 outcome 으로 집계된다.
+        assertThat(meterRegistry.find("mio.crisis.fixed.flow")
+                .tags("stage", "unknown", "outcome", "missing_state")
+                .counter().count()).isEqualTo(1);
     }
 
     @Test
@@ -141,6 +145,10 @@ class CrisisFixedFlowCoordinatorTest {
         assertThat(coordinator.begin(sessionId, userId)).isFalse();
         assertThat(meterRegistry.find("mio.crisis.fixed.flow")
                 .tags("stage", "current_intent", "outcome", "storage_failure")
+                .counter().count()).isEqualTo(1);
+        // 상태 행 저장 실패 전용 카운터. crisis_events 기록 실패와 겹치면 다음 턴 라우팅
+        // 근거가 모두 사라지는 복합 장애라, 일반 storage_failure 와 따로 알람을 건다.
+        assertThat(meterRegistry.find("mio.crisis.flow.begin.failure")
                 .counter().count()).isEqualTo(1);
     }
 }
