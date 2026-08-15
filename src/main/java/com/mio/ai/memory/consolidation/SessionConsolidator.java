@@ -172,7 +172,7 @@ public class SessionConsolidator {
         // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
         try {
             String userSummary = sessionSummaryRenderer.render(
-                    enrichInput.summaryText(), event.characterId());
+                    enrichInput.summaryText(), event.characterId(), enrichInput.userId(), enrichInput.sessionId());
             if (userSummary != null) {
                 userSummaryWriter.write(enrichInput.sessionId(), userSummary);
             }
@@ -226,14 +226,14 @@ public class SessionConsolidator {
         }
 
         // 2. 세션 요약 생성 (LLM)
-        String summaryText = generateSummary(conversationText);
+        String summaryText = generateSummary(conversationText, userId, sessionId);
 
         // 3. AES-256 암호화
         byte[] ciphertext = messageEncryptor.encrypt(summaryText.getBytes(StandardCharsets.UTF_8));
         String dekId = messageEncryptor.dekId();
 
         // 4. ExtractorLLM — thought/emotion/trigger 추출
-        ExtractorResult extracted = extractorLlmClient.extract(summaryText);
+        ExtractorResult extracted = extractorLlmClient.extract(summaryText, userId, sessionId);
 
         // 5. OntologyValidator 필터 (Phase 3-1 의존, optional)
         List<ExtractorResult.ExtractedThought> validThoughts = filterValidThoughts(extracted.thoughts());
@@ -402,11 +402,12 @@ public class SessionConsolidator {
 
     // ── 요약 생성 ────────────────────────────────────────────────
 
-    private String generateSummary(String conversationText) {
+    private String generateSummary(String conversationText, UUID userId, UUID sessionId) {
         StringBuilder sb = new StringBuilder();
         LlmStreamResult result = llmClient.stream(
                 LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText)
-                        .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS),
+                        .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS)
+                        .withAttribution("SESSION_SUMMARY", userId, sessionId),
                 sb::append
         );
         // 잘린 요약을 그대로 쓰면 암호화·저장을 거쳐 세션의 정본 기억이 되고, ExtractorLLM 이

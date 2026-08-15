@@ -20,6 +20,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -95,7 +96,7 @@ class EmbeddingWorkerIntegrationTest {
         for (int i = 0; i < EMBEDDING_DIM; i++) {
             vector[i] = 0.001f * i;
         }
-        when(openAiLlmClient.embed(anyString())).thenReturn(vector);
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenReturn(vector);
 
         embeddingWorker.processPending();
 
@@ -109,7 +110,7 @@ class EmbeddingWorkerIntegrationTest {
     @DisplayName("일시적 실패는 pending으로 되돌려 다음 주기에 재시도한다")
     void processPending_transientError_returnsToPendingForRetry() {
         insertPendingSummary("임베딩 호출이 한 번 실패하는 케이스.");
-        when(openAiLlmClient.embed(anyString())).thenThrow(new RuntimeException("embedding API down"));
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenThrow(new RuntimeException("embedding API down"));
 
         embeddingWorker.processPending();
 
@@ -123,7 +124,7 @@ class EmbeddingWorkerIntegrationTest {
     @DisplayName("시도 상한에 도달하면 failed로 확정한다")
     void processPending_repeatedFailure_stopsAtAttemptCap() {
         insertPendingSummary("계속 실패하는 케이스.");
-        when(openAiLlmClient.embed(anyString())).thenThrow(new RuntimeException("embedding API down"));
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenThrow(new RuntimeException("embedding API down"));
 
         for (int i = 0; i < 5; i++) {
             embeddingWorker.processPending();
@@ -141,7 +142,7 @@ class EmbeddingWorkerIntegrationTest {
         insertStuckProcessingRow("중단된 프로세스가 남긴 행.", 40, 1);
 
         float[] vector = new float[EMBEDDING_DIM];
-        when(openAiLlmClient.embed(anyString())).thenReturn(vector);
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenReturn(vector);
 
         embeddingWorker.processPending();
 
@@ -182,7 +183,7 @@ class EmbeddingWorkerIntegrationTest {
 
         // 내가 claim 을 잡고 있는 사이 다른 워커가 회수해 새 claim 을 잡은 상태를 만든다.
         float[] vector = new float[EMBEDDING_DIM];
-        when(openAiLlmClient.embed(anyString())).thenAnswer(invocation -> {
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenAnswer(invocation -> {
             jdbcTemplate.update(
                     "UPDATE session_summaries SET embedding_claimed_at = now() + interval '1 minute' WHERE id = ?",
                     summaryId);
@@ -218,7 +219,7 @@ class EmbeddingWorkerIntegrationTest {
         }
 
         float[] vector = new float[EMBEDDING_DIM];
-        when(openAiLlmClient.embed(anyString())).thenReturn(vector);
+        when(openAiLlmClient.embed(anyString(), anyString(), any(), any())).thenReturn(vector);
 
         ExecutorService pool = Executors.newFixedThreadPool(2);
         try {

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * GPT-4o-mini를 이용해 세션 요약에서 thought/distortion/emotion/trigger를 추출.
@@ -92,7 +93,7 @@ public class ExtractorLlmClient {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
 
-    public ExtractorResult extract(String sessionSummary) {
+    public ExtractorResult extract(String sessionSummary, UUID userId, UUID sessionId) {
         if (sessionSummary == null || sessionSummary.isBlank()) {
             return ExtractorResult.empty();
         }
@@ -101,7 +102,8 @@ public class ExtractorLlmClient {
         try {
             LlmStreamResult result = llmClient.stream(
                     LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary)
-                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                            .withAttribution("EXTRACTOR", userId, sessionId),
                     responseBuilder::append
             );
             // 잘린 응답은 파싱하지 않는다. "파싱이 실패할 테니 괜찮다"에 기댈 수 없다 —
