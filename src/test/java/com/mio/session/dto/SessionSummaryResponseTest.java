@@ -2,6 +2,7 @@ package com.mio.session.dto;
 
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
+import com.mio.session.domain.SummaryComponentStatus;
 import com.mio.session.domain.SummaryStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,6 +37,24 @@ class SessionSummaryResponseTest {
         var response = SessionSummaryResponse.from(session(), summary(userSummaryText), List.of());
 
         assertThat(response.summary()).isEqualTo(INTERNAL);
+    }
+
+    @Test
+    @DisplayName("핵심·렌더링·Todo·임베딩 상태와 구조화 오류를 각각 노출한다")
+    void exposesIndependentComponentStatuses() {
+        SessionSummary summary = summary(RENDERED);
+        when(summary.getUserRenderStatus()).thenReturn(SummaryComponentStatus.FAILED);
+        when(summary.getTodoStatus()).thenReturn(SummaryComponentStatus.SKIPPED);
+        when(summary.getEmbeddingStatus()).thenReturn("processing");
+        when(summary.getComponentErrors()).thenReturn("{\"user_render\":\"CONTRACT_INVALID\"}");
+
+        var response = SessionSummaryResponse.from(session(), summary, List.of());
+
+        assertThat(response.coreSummaryStatus()).isEqualTo("done");
+        assertThat(response.userRenderStatus()).isEqualTo("failed");
+        assertThat(response.todoStatus()).isEqualTo("skipped");
+        assertThat(response.embeddingStatus()).isEqualTo("processing");
+        assertThat(response.componentErrors()).contains("CONTRACT_INVALID");
     }
 
     // ── helpers ──────────────────────────────────────────────

@@ -99,15 +99,14 @@ class StaleSummarySweepIntegrationTest {
     }
 
     @Test
-    @DisplayName("요약은 있으나 Todo 가 없는 세션은 완료로 올리지 않고 실패로 정리한다")
-    void sweep_doesNotRecoverPendingSessionWithoutTodo() {
-        // Todo 없는 요약은 노출하지 않는다는 기존 판단(SessionConsolidator)을 회복 경로에서도 지킨다.
+    @DisplayName("요약은 있으나 Todo가 없는 세션도 핵심 요약을 완료로 회복한다")
+    void sweep_recoversPendingSessionWithoutTodo() {
         UUID sessionId = endedSessionWith(SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
         insertSummary(sessionId);
 
         staleSummarySweepJob.run();
 
-        assertThat(statusOf(sessionId)).isEqualTo("failed");
+        assertThat(statusOf(sessionId)).isEqualTo("done");
     }
 
     private void insertSummary(UUID sessionId) {

@@ -50,6 +50,7 @@ class SessionConsolidatorTest {
     private SessionRepository sessionRepository;
     private TodoRecommendationService todoRecommendationService;
     private SummaryStatusWriter summaryStatusWriter;
+    private SummaryComponentStatusWriter componentStatusWriter;
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
@@ -65,6 +66,7 @@ class SessionConsolidatorTest {
         sessionRepository = mock(SessionRepository.class);
         todoRecommendationService = mock(TodoRecommendationService.class);
         summaryStatusWriter = mock(SummaryStatusWriter.class);
+        componentStatusWriter = mock(SummaryComponentStatusWriter.class);
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
@@ -95,6 +97,7 @@ class SessionConsolidatorTest {
                 sessionSummaryRenderer,
                 userSummaryWriter,
                 summaryStatusWriter,
+                componentStatusWriter,
                 crisisEpisodePromoter,
                 selfProvider
         );
@@ -111,8 +114,8 @@ class SessionConsolidatorTest {
     }
 
     @Test
-    @DisplayName("세션 요약 DONE은 Todo 저장 완료 후에만 표시한다")
-    void onSessionEnded_marksDoneOnlyAfterTodoGeneration() {
+    @DisplayName("핵심 요약은 Todo보다 먼저 DONE으로 공개한다")
+    void onSessionEnded_marksCoreSummaryDoneBeforeTodoGeneration() {
         SessionConsolidator consolidator = newConsolidator();
         SessionConsolidator proxy = mock(SessionConsolidator.class);
         UUID userId = UUID.randomUUID();
@@ -128,11 +131,12 @@ class SessionConsolidatorTest {
 
         InOrder inOrder = inOrder(proxy, todoRecommendationService, summaryStatusWriter);
         inOrder.verify(proxy).consolidate(sessionId, userId, "mio", 2);
+        inOrder.verify(summaryStatusWriter).markDone(sessionId);
         inOrder.verify(proxy).enrichMemory(input);
         inOrder.verify(todoRecommendationService).generateForSession(eq(userId), eq(sessionId), any());
-        inOrder.verify(summaryStatusWriter).markDone(sessionId);
         verify(sessionRepository, never()).updateSummaryStatus(sessionId, SummaryStatus.DONE);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoDone(sessionId);
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
@@ -157,6 +161,7 @@ class SessionConsolidatorTest {
         verify(sessionSummaryRenderer).render("내부 요약", "chichi", userId, sessionId);
         verify(userSummaryWriter).write(sessionId, "오늘 이야기 정리해봤어요.");
         verify(summaryStatusWriter).markDone(sessionId);
+        verify(componentStatusWriter).markUserRenderDone(sessionId);
     }
 
     @Test
@@ -178,6 +183,7 @@ class SessionConsolidatorTest {
         verifyNoInteractions(userSummaryWriter);
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "CONTRACT_INVALID");
     }
 
     @Test
@@ -199,11 +205,12 @@ class SessionConsolidatorTest {
 
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "USER_RENDER_FAILED");
     }
 
     @Test
-    @DisplayName("Todo를 만들지 못하면 빈 Todo 요약을 노출하지 않고 실패 상태로 전환한다")
-    void onSessionEnded_whenTodoGenerationCreatesNoTasks_marksFailed() {
+    @DisplayName("Todo가 0건이어도 핵심 요약은 유지하고 Todo만 skipped로 남긴다")
+    void onSessionEnded_whenTodoGenerationCreatesNoTasks_keepsSummaryAndSkipsTodo() {
         SessionConsolidator consolidator = newConsolidator();
         SessionConsolidator proxy = mock(SessionConsolidator.class);
         UUID userId = UUID.randomUUID();
@@ -217,8 +224,30 @@ class SessionConsolidatorTest {
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
-        verify(summaryStatusWriter, never()).markDone(sessionId);
-        verify(summaryStatusWriter).markFailed(sessionId);
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoSkipped(sessionId);
+    }
+
+    @Test
+    @DisplayName("Todo 생성 예외는 Todo만 failed로 남기고 핵심 요약을 봉인하지 않는다")
+    void onSessionEnded_whenTodoGenerationThrows_keepsSummaryAndMarksTodoFailed() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
+                .thenThrow(new IllegalStateException("todo unavailable"));
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoFailed(sessionId, "TODO_GENERATION_FAILED");
     }
 
     @Test
