@@ -14,6 +14,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -473,17 +475,36 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                 .increment(usage.completionTokens());
 
         BigDecimal cost = costCalculator.costUsd(usage);
+        // 실제 사용 시각(응답 수신 시점)에서 뜬다 — @PrePersist로 커밋 시각을 쓰면 비동기 큐
+        // 지연만큼 실제 사용 시각과 어긋나고, 자정 근처 호출이 월간 집계에서 다음 달로 샐 수 있다.
+        OffsetDateTime occurredAt = OffsetDateTime.now(ZoneOffset.UTC);
         if (cost == null) {
             meterRegistry.counter(UNPRICED_METRIC, "model", model, "mode", mode).increment();
             // 단가 미등록이라 비용은 모르지만, 토큰량 자체는 ai_cost_events에 남긴다(cost_usd=null).
-            costEventWriter.write(userId, sessionId, component, model, mode,
-                    usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), null);
+            recordCostEvent(userId, sessionId, component, model, mode, usage, null, occurredAt);
             return;
         }
         meterRegistry.counter(COST_METRIC, "model", model, "mode", mode)
                 .increment(cost.doubleValue());
-        costEventWriter.write(userId, sessionId, component, model, mode,
-                usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), cost);
+        recordCostEvent(userId, sessionId, component, model, mode, usage, cost, occurredAt);
+    }
+
+    /**
+     * {@code @Async} 제출 자체가 큐 포화 시 {@code TaskRejectedException}을 호출 스레드에서
+     * 동기적으로 던질 수 있다(이슈 #431 리뷰) — {@code AiCostEventWriter.write()} 내부 try-catch는
+     * 이미 시작된 비동기 작업의 실패만 잡을 뿐, 제출 자체가 거부되는 경우는 못 잡는다. 이 지점이
+     * 세션당 최대 15회 호출돼 다른 비동기 로거보다 큐 포화 가능성이 높으므로, 여기서 한 번 더
+     * 막아 비용 기록 실패가 스트리밍 응답 경로까지 전파되지 않게 한다.
+     */
+    private void recordCostEvent(UUID userId, UUID sessionId, String component, String model, String mode,
+                                  LlmUsage usage, BigDecimal cost, OffsetDateTime occurredAt) {
+        try {
+            costEventWriter.write(userId, sessionId, component, model, mode,
+                    usage.promptTokens(), usage.completionTokens(), usage.cachedTokens(), cost, occurredAt);
+        } catch (Exception e) {
+            log.warn("[OpenAiLlmClient] 비용 이벤트 제출 실패 component={} model={}: {}",
+                    component, model, e.getMessage());
+        }
     }
 
     private JsonNode readChunk(String json) {
