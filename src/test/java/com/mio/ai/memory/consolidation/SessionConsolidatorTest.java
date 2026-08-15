@@ -46,6 +46,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mockingDetails;
 
 class SessionConsolidatorTest {
 
@@ -493,6 +494,31 @@ class SessionConsolidatorTest {
 
         assertThat(timerCount("summary_generation", "done")).isEqualTo(1);
         assertThat(timerCount("metadata_extraction", "failed")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("기존 요약 재처리는 모든 파생 상태와 이전 오류를 pending 기준으로 초기화한다")
+    void consolidate_existingSummary_resetsDerivedComponentStates() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId)).thenReturn(ExtractorResult.empty());
+        when(sessionSummaryRepository.findBySession_Id(sessionId))
+                .thenReturn(Optional.of(mock(com.mio.session.domain.SessionSummary.class)));
+
+        consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        List<String> updateSql = mockingDetails(jdbcTemplate).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("update"))
+                .map(invocation -> invocation.getArgument(0).toString().replaceAll("\\s+", " "))
+                .toList();
+        assertThat(updateSql).anySatisfy(sql -> assertThat(sql)
+                .contains("user_render_status = 'pending'")
+                .contains("todo_status = 'pending'")
+                .contains("embedding_status = 'pending'")
+                .contains("component_errors = '{}'::jsonb")
+                .contains("updated_at = now()"));
     }
 
     @Test
