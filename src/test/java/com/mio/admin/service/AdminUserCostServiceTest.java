@@ -95,9 +95,13 @@ class AdminUserCostServiceTest {
         when(aiCostEventRepository.aggregateByUserIdAndCreatedAtBetween(eq(userId), any(), any()))
                 .thenReturn(new AiCostAggregate(BigDecimal.ZERO, 0L, 0L));
 
+        // 서비스 호출 전후로 "지금" 월을 각각 캡처한다 — 서비스 내부와 이 어설션이 YearMonth.now()를
+        // 별도로 호출하므로, 월 경계(자정)에 걸리면 두 호출이 다른 달을 반환해 거짓 실패가 날 수 있다.
+        YearMonth before = YearMonth.now(AppConstants.ZONE);
         UserMonthlyCostResponse response = service.getMonthlyCost(userId, null);
+        YearMonth after = YearMonth.now(AppConstants.ZONE);
 
-        assertThat(response.month()).isEqualTo(YearMonth.now(AppConstants.ZONE).toString());
+        assertThat(response.month()).isIn(before.toString(), after.toString());
     }
 
     @Test
