@@ -2,6 +2,8 @@ package com.mio.ai.orchestrator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.crisis.CrisisFixedFlowCoordinator;
+import com.mio.ai.crisis.CrisisFixedRoute;
 import com.mio.ai.crisis.CrisisFlowService;
 import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.memory.consolidation.ConversationCheckpointService;
@@ -120,6 +122,7 @@ public class ConversationOrchestrator {
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
     private final CrisisFlowService crisisFlowService;
+    private final CrisisFixedFlowCoordinator crisisFixedFlowCoordinator;
     private final SecurityRefusalTemplate securityRefusalTemplate;
     private final WorkingMemory workingMemory;
     private final ContextPreWarmer contextPreWarmer;
@@ -184,6 +187,27 @@ public class ConversationOrchestrator {
             // "이전 3턴"에 섞여 감정 급락·반복 부정 판정이 오염된다.
             turn = messagePersistenceService.openTurn(
                     sessionId, userId, userMessage, userSignal, idempotencyKey);
+
+            // 활성 위기 상태는 SafetyProfile·Moderation·Judge·Memory·Policy보다 먼저 가로챈다.
+            // 이 분기 뒤에는 일반 LLM 호출이 단 하나도 없어야 한다.
+            CrisisFixedRoute fixedRoute = crisisFixedFlowCoordinator.route(
+                    sessionId, userId, userMessage);
+            if (fixedRoute.routed()) {
+                String fixedResponse = fixedRoute.fixedResponse();
+                finishedReasonRef.set("crisis_flow");
+                crisisSeverityRef.set(3);
+                persistTurnOutcome(turn, turnPersisted, fixedResponse, true,
+                        "crisis_flow", 3);
+                boolean delivered = crisisFlowService.deliverFixedResponse(
+                        fixedResponse, 3, emitter, outboundMsgId,
+                        userSignal.emotionScore(), sessionId);
+                if (!delivered) {
+                    log.warn("Crisis fixed-flow turn persisted but not delivered sessionId={}", sessionId);
+                }
+                aiTurnMetrics.recordFixedCrisis(System.currentTimeMillis() - startMs, delivered);
+                emitter.complete();
+                return;
+            }
 
             // 2. Load SafetyProfile (Redis cache HIT → JSON 역직렬화, MISS → buildSync)
             ProfileResult profileResult = safetyProfileBuilder.getWithCacheHit(sessionId.toString(), userId.toString());
@@ -291,8 +315,8 @@ public class ConversationOrchestrator {
                 // 위기 응답은 CrisisFlowService 가 crisis·done 을 직접 보낸다. 그 전에 결말을
                 // 저장해야 한다 — 전송 뒤에 저장하면 커밋 전 프로세스 종료 시 사용자는 응답을
                 // 받았는데 서버는 모르는 상태가 된다.
-                CrisisFlowService.CrisisPreview preview =
-                        crisisFlowService.preview(l1Result, appliedCrisisTrigger, userMessage);
+                CrisisFlowService.CrisisPreview preview = beginCrisisFlow(
+                        l1Result, appliedCrisisTrigger, userMessage, sessionId, userId);
                 assistantContent = preview.fixedResponse();
                 finishedReasonRef.set("crisis_flow");
                 crisisSeverityRef.set(preview.severity());
@@ -300,8 +324,10 @@ public class ConversationOrchestrator {
                         "crisis_flow", preview.severity());
 
                 CrisisFlowService.CrisisHandleResult crisisResult =
-                        crisisFlowService.handle(l1Result, appliedCrisisTrigger, userMessage,
-                                user, session, emitter, outboundMsgId, userSignal.emotionScore());
+                        crisisFlowService.handleWithFixedResponse(
+                                l1Result, appliedCrisisTrigger, userMessage,
+                                user, session, emitter, outboundMsgId, userSignal.emotionScore(),
+                                preview.fixedResponse());
                 if (crisisResult != null && crisisResult.delivered()) {
                     markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                 }
@@ -475,8 +501,9 @@ public class ConversationOrchestrator {
                             // Bug 5 fix: invoke crisis flow — crisis + done SSE issued inside handle()
                             // 전송 전에 결말을 저장한다. handle() 이 done 까지 보내므로 그 뒤에
                             // 저장하면 사용자는 응답을 받았는데 서버는 모르는 창이 생긴다.
-                            CrisisFlowService.CrisisPreview preview =
-                                    crisisFlowService.preview(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage);
+                            CrisisFlowService.CrisisPreview preview = beginCrisisFlow(
+                                    l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
+                                    sessionId, userId);
                             assistantContent = preview.fixedResponse();
                             finishedReasonRef.set("crisis_flow");
                             crisisSeverityRef.set(preview.severity());
@@ -484,8 +511,10 @@ public class ConversationOrchestrator {
                                     "crisis_flow", preview.severity());
 
                             CrisisFlowService.CrisisHandleResult crisisResult =
-                                    crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
-                                            user, session, emitter, outboundMsgId, userSignal.emotionScore());
+                                    crisisFlowService.handleWithFixedResponse(
+                                            l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
+                                            user, session, emitter, outboundMsgId, userSignal.emotionScore(),
+                                            preview.fixedResponse());
                             if (crisisResult != null && crisisResult.delivered()) {
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
                             }
@@ -808,6 +837,20 @@ public class ConversationOrchestrator {
         return CrisisTrigger.L1_KEYWORD;
     }
 
+    /** 새 위기 진입을 저장하고 첫 현재성 질문을 기존 고정 안내에 결합한다. */
+    private CrisisFlowService.CrisisPreview beginCrisisFlow(
+            SafetyL1Result l1Result,
+            CrisisTrigger trigger,
+            String originalMessage,
+            UUID sessionId,
+            UUID userId) {
+        CrisisFlowService.CrisisPreview base =
+                crisisFlowService.preview(l1Result, trigger, originalMessage);
+        crisisFixedFlowCoordinator.begin(sessionId, userId);
+        return new CrisisFlowService.CrisisPreview(
+                base.severity(), base.fixedResponse() + " " + crisisFixedFlowCoordinator.initialResponse());
+    }
+
     private String resolveOutputJudgeAction(
             OutputJudgeResult result,
             String originalContent,
@@ -831,14 +874,17 @@ public class ConversationOrchestrator {
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 // 전송 전에 결말을 저장한다 (이슈 P0-A 리뷰 반영).
-                CrisisFlowService.CrisisPreview preview =
-                        crisisFlowService.preview(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage);
+                CrisisFlowService.CrisisPreview preview = beginCrisisFlow(
+                        l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
+                        session.getId(), user.getId());
                 persistTurnOutcome(turn, turnPersisted, preview.fixedResponse(), true,
                         "crisis_flow", preview.severity());
 
                 CrisisFlowService.CrisisHandleResult cr =
-                        crisisFlowService.handle(l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
-                                user, session, emitter, outboundMsgId, emotionScore);
+                        crisisFlowService.handleWithFixedResponse(
+                                l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
+                                user, session, emitter, outboundMsgId, emotionScore,
+                                preview.fixedResponse());
                 if (cr != null && cr.delivered()) {
                     markFirstSubstantive(
                             firstSubstantiveTokenMs,

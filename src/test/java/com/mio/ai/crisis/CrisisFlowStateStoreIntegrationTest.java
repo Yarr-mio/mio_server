@@ -42,6 +42,7 @@ class CrisisFlowStateStoreIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        jdbcTemplate.update("DELETE FROM crisis_events WHERE session_id = ?", sessionId);
         jdbcTemplate.update("DELETE FROM sessions WHERE id = ?", sessionId);
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", userId);
     }

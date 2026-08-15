@@ -56,15 +56,53 @@ public class CrisisFlowService {
             String outboundMsgId,
             Integer emotionScore) {
 
+        return handleWithFixedResponse(
+                l1Result, trigger, originalMessage, user, session, emitter,
+                outboundMsgId, emotionScore, null);
+    }
+
+    /**
+     * 오케스트레이터가 상태 머신의 첫 질문을 합성한 경우 그 응답을 그대로 전달·기록한다.
+     * {@code fixedResponseOverride}가 없으면 기존 고정 응답을 사용한다.
+     */
+    public CrisisHandleResult handleWithFixedResponse(
+            SafetyL1Result l1Result,
+            CrisisTrigger trigger,
+            String originalMessage,
+            User user,
+            Session session,
+            SseEmitter emitter,
+            String outboundMsgId,
+            Integer emotionScore,
+            String fixedResponseOverride) {
+
         int severity = determineSeverity(l1Result, trigger, originalMessage);
         String triggerType = trigger.persistedType();
-        String fixedResponse = getFixedResponse(severity, trigger);
-
-        SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
+        String fixedResponse = fixedResponseOverride != null && !fixedResponseOverride.isBlank()
+                ? fixedResponseOverride
+                : getFixedResponse(severity, trigger);
 
         // 전송 실패해도 기록은 남겨야 하므로 여기서 흐름을 끊지 않는다. 다만 삼키지도 않는다 —
         // 위기 안내가 사용자에게 닿았는지는 이 플로우에서 가장 중요한 사실이다.
-        boolean delivered = true;
+        boolean delivered = deliverFixedResponse(
+                fixedResponse, severity, emitter, outboundMsgId, emotionScore, session.getId());
+
+        // 기록과 프로파일 갱신 알림은 recorder 가 맡는다. 저장에 성공한 경우에만 발행하며,
+        // 끝내 실패하면 안전 래치를 올려 다음 프로파일이 보수적으로 만들어지게 한다 (이슈 P0-B).
+        boolean recorded = crisisEventRecorder.record(user, session, severity, triggerType);
+
+        return new CrisisHandleResult(fixedResponse, severity, delivered, recorded);
+    }
+
+    /** 활성 상태 머신의 후속 응답을 기존 crisis/done SSE 계약으로 전달한다. */
+    public boolean deliverFixedResponse(
+            String fixedResponse,
+            int severity,
+            SseEmitter emitter,
+            String outboundMsgId,
+            Integer emotionScore,
+            java.util.UUID sessionId) {
+        SseEventDto.CrisisEvent crisisEvent = buildCrisisEvent(severity, fixedResponse);
         try {
             emitter.send(SseEmitter.event()
                     .name(crisisEvent.eventName())
@@ -75,21 +113,13 @@ public class CrisisFlowService {
             emitter.send(SseEmitter.event()
                     .name(doneEvent.eventName())
                     .data(doneEvent));
+            return true;
         } catch (Exception e) {
-            // IOException 만 잡으면 안 된다. emitter 가 이미 완료된 상태에서 send 하면
-            // IllegalStateException 이 나고, 그게 밖으로 나가면 아래 crisis_events 기록과
-            // 프로파일 갱신이 통째로 건너뛰어진다. 사용자가 위기 상태였다는 사실은 전달 실패와
-            // 무관하게 참이고 다음 세션의 보호 근거다.
-            delivered = false;
+            // IOException 만 잡으면 안 된다. 완료된 emitter는 IllegalStateException도 낸다.
             log.error("Crisis response was NOT delivered to the user: sessionId={} severity={}",
-                    session.getId(), severity, e);
+                    sessionId, severity, e);
+            return false;
         }
-
-        // 기록과 프로파일 갱신 알림은 recorder 가 맡는다. 저장에 성공한 경우에만 발행하며,
-        // 끝내 실패하면 안전 래치를 올려 다음 프로파일이 보수적으로 만들어지게 한다 (이슈 P0-B).
-        boolean recorded = crisisEventRecorder.record(user, session, severity, triggerType);
-
-        return new CrisisHandleResult(fixedResponse, severity, delivered, recorded);
     }
 
     /**

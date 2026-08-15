@@ -5,6 +5,8 @@ import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
+import com.mio.ai.crisis.CrisisTodoDecision;
+import com.mio.ai.crisis.CrisisTodoSafetyGate;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
@@ -101,6 +103,7 @@ public class SessionConsolidator {
     private final UserSummaryWriter userSummaryWriter;
     private final SummaryStatusWriter summaryStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
+    private final CrisisTodoSafetyGate crisisTodoSafetyGate;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -179,6 +182,17 @@ public class SessionConsolidator {
         } catch (Exception e) {
             log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                     event.sessionId(), e);
+        }
+
+        // 위기 세션의 행동 과제는 생성하지 않는다. 핵심 요약과 메모리 보강은 이미 끝났으므로
+        // 차단하더라도 요약은 DONE으로 노출하고, 차단 상태/사유는 별도 테이블에 남긴다.
+        CrisisTodoDecision todoDecision = crisisTodoSafetyGate.evaluate(
+                enrichInput.userId(), enrichInput.sessionId());
+        if (todoDecision.suppressTodo()) {
+            log.info("SessionConsolidator: Todo suppressed by crisis safety gate sessionId={} reason={}",
+                    event.sessionId(), todoDecision.reason());
+            summaryStatusWriter.markDone(event.sessionId());
+            return;
         }
 
         // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
