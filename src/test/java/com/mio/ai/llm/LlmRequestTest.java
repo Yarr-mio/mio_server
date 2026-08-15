@@ -39,7 +39,8 @@ class LlmRequestTest {
     @Test
     @DisplayName("withAttribution은 원본을 바꾸지 않고 귀속 정보가 붙은 복사본을 만든다")
     void attributionDoesNotMutateOriginal() {
-        LlmRequest original = LlmRequest.of("gpt-4o", "system", "user");
+        LlmRequest original = LlmRequest.of("gpt-4o", "system", "user")
+                .withMaxCompletionTokens(400);
         java.util.UUID userId = java.util.UUID.randomUUID();
         java.util.UUID sessionId = java.util.UUID.randomUUID();
 
@@ -48,6 +49,9 @@ class LlmRequestTest {
         assertThat(attributed.component()).isEqualTo("MAIN_GENERATION");
         assertThat(attributed.userId()).isEqualTo(userId);
         assertThat(attributed.sessionId()).isEqualTo(sessionId);
+        assertThat(attributed.model()).isEqualTo(original.model());
+        assertThat(attributed.messages()).isEqualTo(original.messages());
+        assertThat(attributed.maxCompletionTokens()).isEqualTo(400);
         assertThat(original.component()).isNull();
         assertThat(original.userId()).isNull();
         assertThat(original.sessionId()).isNull();
