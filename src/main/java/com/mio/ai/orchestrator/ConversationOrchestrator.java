@@ -373,8 +373,21 @@ public class ConversationOrchestrator {
                                 capturedSnapshotRef.set(candidate);
                                 log.warn("OutputGuard held back unit: session={} reasons={}",
                                         sessionId, unitCheck.failReasons());
+                                // 계약 위반도 판정 사유에 합류시킨다 (로드맵 §5.7, 이슈 #369).
+                                // 이전에는 유닛 검사 사유만 넘겨서, 조기 중단된 턴은 계약을
+                                // 위반해도 그 사실이 Judge 에 전달되지 않았다 — 승격이 경로에
+                                // 따라 달라졌다는 뜻이다.
+                                //
+                                // 검사 대상은 전체 응답이 아니라 이 스냅샷이다. 조기 중단 시
+                                // 실제로 나가는 것은 승인된 스냅샷이므로(아래 stopSendingDeltas
+                                // 분기), 판정 대상과 검사 대상이 같아야 한다. trace 의
+                                // contract_result 는 전체 응답 기준을 유지한다 — 그쪽은 턴 간
+                                // 비교 가능한 값이어야 한다.
+                                OutputPreFilterResult unitGuardInput = mergeContractViolations(
+                                        unitCheck,
+                                        responseContractValidator.validate(responsePlan, candidate));
                                 earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
-                                        () -> outputJudge.judge(candidate, unitCheck), outputJudgeExecutor));
+                                        () -> outputJudge.judge(candidate, unitGuardInput), outputJudgeExecutor));
                                 return false;
                             },
                             unit -> sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId)));
