@@ -347,8 +347,11 @@ class AuthServiceTest {
         when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
         // 탈퇴는 삭제 요청 접수와 한 트랜잭션이다 (이슈 #373). 접수가 없으면 "탈퇴했는데
         // 삭제 작업이 없는" 사용자가 되고, 그 데이터는 아무도 지우지 않는다.
-        var deletionRequest = com.mio.user.domain.DataDeletionRequest.open(
-                USER_ID, java.time.OffsetDateTime.now().plusDays(30));
+        UUID operationId = UUID.randomUUID();
+        var deletionRequest = mock(com.mio.user.domain.DataDeletionRequest.class);
+        var scheduledAt = java.time.OffsetDateTime.now().plusDays(30);
+        when(deletionRequest.getId()).thenReturn(operationId);
+        when(deletionRequest.getScheduledAt()).thenReturn(scheduledAt);
         when(dataDeletionService.requestDeletion(eq(USER_ID), any())).thenReturn(deletionRequest);
 
         var response = authService.withdraw(USER_ID);
@@ -363,6 +366,7 @@ class AuthServiceTest {
         // 응답의 예정 시각은 접수된 요청이 들고 있는 값이어야 한다 — 응답에서 다시 계산하면
         // 실제 배치가 지우는 시점과 어긋난다.
         assertThat(response.hardDeleteScheduledAt()).isEqualTo(deletionRequest.getScheduledAt());
+        assertThat(response.operationId()).isEqualTo(operationId);
     }
 
     @Test

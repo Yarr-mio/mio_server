@@ -95,9 +95,12 @@ class DataDeletionIntegrationTest {
                 .as("Redis 캐시. 이전에는 TTL 만료에만 의존해 최대 90분 남았다")
                 .isZero();
 
-        // 요청 행은 users FK cascade 로 함께 사라진다. 삭제가 끝났다는 사실 자체는
-        // audit_logs 가 남긴다 — 그래서 여기서는 "요청이 사라졌다" 가 정상이다.
-        assertThat(deletionRequestRepository.findById(request.getId())).isEmpty();
+        DataDeletionRequest completedRequest = deletionRequestRepository.findById(request.getId())
+                .orElseThrow();
+        assertThat(completedRequest.getStatus()).isEqualTo(DeletionStatus.COMPLETED);
+        assertThat(completedRequest.getCachePurgedAt()).isNotNull();
+        assertThat(completedRequest.getDatabasePurgedAt()).isNotNull();
+        assertThat(completedRequest.getCompletedAt()).isNotNull();
     }
 
     @Test
@@ -125,8 +128,14 @@ class DataDeletionIntegrationTest {
         boolean completed = deletionService.executeDeletion(request.getId());
 
         assertThat(completed).isTrue();
-        // 요청 행은 cascade 로 사라지므로 실행 직후 진행 시각은 반환값으로 확인한다.
         assertThat(userRows()).isZero();
+        assertThat(deletionService.findByOperationId(request.getId()))
+                .isPresent()
+                .get()
+                .satisfies(found -> {
+                    assertThat(found.getStatus()).isEqualTo(DeletionStatus.COMPLETED);
+                    assertThat(found.getDatabasePurgedAt()).isNotNull();
+                });
     }
 
     @Test
