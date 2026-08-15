@@ -234,7 +234,7 @@ public class AiDecisionLogger {
         //   first_rendered_token_ms    — 사용자가 무언가를 보기까지
         // 검토된 safe prefix 를 서버가 먼저 보내는 기능이 없는 동안 뒤의 두 값은 같다.
         // 필드를 미리 두어 그 기능이 들어올 때 값이 갈라지는 것을 볼 수 있게 한다.
-        trace.put("llm_ttft_ms", ttftMs);
+        trace.put("llm_ttft_ms", ttftMs >= 0 ? ttftMs : null);
         trace.put("first_substantive_token_ms",
                 firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
         trace.put("first_rendered_token_ms",
