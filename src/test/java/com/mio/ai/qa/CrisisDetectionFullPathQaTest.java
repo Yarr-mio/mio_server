@@ -141,7 +141,7 @@ class CrisisDetectionFullPathQaTest {
         inputJudge = new InputJudge(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
                         new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
-                new ObjectMapper());
+                new ObjectMapper(), new SimpleMeterRegistry());
     }
 
     @Test
