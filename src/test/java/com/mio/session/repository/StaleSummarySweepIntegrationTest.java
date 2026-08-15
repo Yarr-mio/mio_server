@@ -128,6 +128,45 @@ class StaleSummarySweepIntegrationTest {
         assertThat(statusOf(sessionId)).isEqualTo("done");
     }
 
+    @Test
+    @DisplayName("오래된 요약을 방금 재처리한 렌더링과 Todo는 활성 pending으로 보존한다")
+    void sweep_doesNotFailRecentlyReprocessedComponents() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+        jdbcTemplate.update(
+                """
+                UPDATE session_summaries
+                SET created_at = now() - interval '3 hours',
+                    updated_at = now() - interval '3 hours',
+                    user_render_status = 'pending',
+                    todo_status = 'pending',
+                    user_render_pending_at = now(),
+                    todo_pending_at = now()
+                WHERE session_id = ?
+                """,
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(componentValue(sessionId, "user_render_status")).isEqualTo("pending");
+        assertThat(componentValue(sessionId, "todo_status")).isEqualTo("pending");
+    }
+
+    @Test
+    @DisplayName("오래된 세션의 핵심 요약을 방금 재처리하기 시작했으면 stale 실패로 가로채지 않는다")
+    void sweep_doesNotFailRecentlyStartedCoreSummary() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        jdbcTemplate.update(
+                "UPDATE sessions SET summary_processing_started_at = now() WHERE id = ?",
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(statusOf(sessionId)).isEqualTo("pending");
+    }
+
     private void insertSummary(UUID sessionId) {
         jdbcTemplate.update("""
                 INSERT INTO session_summaries (user_id, session_id, character_id, summary_text)

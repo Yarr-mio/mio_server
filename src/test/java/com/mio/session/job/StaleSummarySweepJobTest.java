@@ -48,6 +48,25 @@ class StaleSummarySweepJobTest {
         SummaryStatusWriter summaryStatusWriter = mock(SummaryStatusWriter.class);
         SummaryComponentStatusWriter componentStatusWriter = mock(SummaryComponentStatusWriter.class);
         when(summaryStatusWriter.sweepStale(any())).thenThrow(new RuntimeException("db down"));
+        when(componentStatusWriter.failStale(any()))
+                .thenReturn(new SummaryComponentStatusWriter.SweepResult(0, 0));
+        StaleSummarySweepJob job = new StaleSummarySweepJob(
+                summaryStatusWriter, componentStatusWriter);
+
+        job.run();
+
+        verify(summaryStatusWriter).sweepStale(any());
+        verify(componentStatusWriter).failStale(any());
+    }
+
+    @Test
+    @DisplayName("컴포넌트 정리 예외도 핵심 요약 정리 결과를 되돌리지 않고 삼킨다")
+    void run_swallowsComponentSweepExceptionIndependently() {
+        SummaryStatusWriter summaryStatusWriter = mock(SummaryStatusWriter.class);
+        SummaryComponentStatusWriter componentStatusWriter = mock(SummaryComponentStatusWriter.class);
+        when(summaryStatusWriter.sweepStale(any()))
+                .thenReturn(new SummaryStatusWriter.SweepResult(1, 0));
+        when(componentStatusWriter.failStale(any())).thenThrow(new RuntimeException("component db down"));
         StaleSummarySweepJob job = new StaleSummarySweepJob(
                 summaryStatusWriter, componentStatusWriter);
 

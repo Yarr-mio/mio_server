@@ -156,6 +156,7 @@ class SessionConsolidatorTest {
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
         InOrder inOrder = inOrder(proxy, todoRecommendationService, summaryStatusWriter);
+        inOrder.verify(summaryStatusWriter).markProcessingStarted(sessionId);
         inOrder.verify(proxy).consolidate(sessionId, userId, "mio", 2);
         inOrder.verify(summaryStatusWriter).markDone(sessionId);
         inOrder.verify(proxy).enrichMemory(input);
@@ -214,6 +215,28 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
         verify(componentStatusWriter).markUserRenderFailed(sessionId, "CONTRACT_INVALID");
+    }
+
+    @Test
+    @DisplayName("렌더링 결과가 공백이면 저장하지 않고 계약 실패로 종결한다")
+    void onSessionEnded_whenRenderReturnsWhitespace_marksContractInvalid() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "내부 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(1);
+        when(sessionSummaryRenderer.render(any(), any(), any(), any())).thenReturn("   \n\t");
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verifyNoInteractions(userSummaryWriter);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "CONTRACT_INVALID");
+        verify(componentStatusWriter, never()).markUserRenderDone(sessionId);
+        assertThat(timerCount("user_render", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -516,6 +539,8 @@ class SessionConsolidatorTest {
         assertThat(updateSql).anySatisfy(sql -> assertThat(sql)
                 .contains("user_render_status = 'pending'")
                 .contains("todo_status = 'pending'")
+                .contains("user_render_pending_at = now()")
+                .contains("todo_pending_at = now()")
                 .contains("embedding_status = 'pending'")
                 .contains("episode_emb = NULL")
                 .contains("embedding_attempts = 0")
