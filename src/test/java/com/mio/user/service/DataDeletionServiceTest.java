@@ -18,6 +18,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -72,6 +73,40 @@ class DataDeletionServiceTest {
         assertThat(request.getStatus()).isEqualTo(DeletionStatus.COMPLETED);
         assertThat(request.getDatabasePurgedAt()).isNotNull();
         verify(hardDeleteExecutor).deleteUser(userId);
+    }
+
+    @Test
+    @DisplayName("탈퇴 접수 뒤 다시 생긴 캐시도 하드 삭제 직전에 재삭제한다")
+    void executeDeletion_repurgesCacheAfterWithdrawalPurge() {
+        UUID requestId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        DataDeletionRequest request = request(requestId, userId);
+        request.markCachePurged();
+        when(deletionRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+
+        service.executeDeletion(requestId);
+
+        verify(cachePurger).purge(userId);
+    }
+
+    @Test
+    @DisplayName("세 번째 실패는 재시도 대기가 아니라 terminal failed로 봉인한다")
+    void executeDeletion_retryCeiling_recordsTerminalFailure() {
+        UUID requestId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        DataDeletionRequest request = request(requestId, userId);
+        ReflectionTestUtils.setField(request, "attempts", 2);
+        when(deletionRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
+        doThrow(new IllegalStateException("database unavailable"))
+                .when(hardDeleteExecutor).deleteUser(userId);
+
+        boolean completed = service.executeDeletion(requestId);
+
+        assertThat(completed).isFalse();
+        assertThat(request.getStatus()).isEqualTo(DeletionStatus.FAILED);
+        assertThat(request.getCompletedAt()).isNotNull();
+        assertThat(request.getLastError()).contains("database unavailable");
+        verify(cachePurger, times(1)).purge(userId);
     }
 
     @Test

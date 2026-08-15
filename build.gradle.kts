@@ -55,6 +55,10 @@ dependencies {
     implementation("me.paulschwarz:spring-dotenv:4.0.0")
     // Firebase Admin SDK — Android FCM push
     implementation("com.google.firebase:firebase-admin:9.4.1")
+    // AWS CloudWatch — 인프라 비용 배치 캐싱(이슈 #437). AWS/Billing EstimatedCharges 지표를 읽는다 —
+    // Cost Explorer(ce:GetCostAndUsage, 건당 $0.01)보다 이쪽이 무료라 이걸로 전환함(리뷰 반영).
+    // 크리덴셜은 EC2 인스턴스 역할 기본 체인.
+    implementation("software.amazon.awssdk:cloudwatch:2.28.11")
 
     // Lombok
     compileOnly("org.projectlombok:lombok")

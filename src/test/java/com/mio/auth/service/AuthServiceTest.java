@@ -371,7 +371,7 @@ class AuthServiceTest {
         assertThat(user.getEmail()).isNull();
         // 응답의 예정 시각은 접수된 요청이 들고 있는 값이어야 한다 — 응답에서 다시 계산하면
         // 실제 배치가 지우는 시점과 어긋난다.
-        assertThat(response.hardDeleteScheduledAt()).isEqualTo(deletionRequest.getScheduledAt());
+        assertThat(response.hardDeleteScheduledAt()).isEqualTo(scheduledAt);
         assertThat(response.operationId()).isEqualTo(operationId);
     }
 

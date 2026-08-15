@@ -9,8 +9,8 @@ import java.util.UUID;
  * 유저별 월간 누적 비용 조회 응답 (이슈 #434).
  *
  * <p>{@code allocated_fixed_infra_usd_estimate}/{@code user_month_technical_cogs_usd}는
- * AWS Cost Explorer 연동이 아직 없어 {@code null}이다 — #433과 같은 원칙, 0으로 채우면
- * "인프라 비용이 없다"로 오독된다.
+ * 인프라 비용 배치({@code InfraCostSyncJob})가 해당 월을 아직 캐싱하지 않았으면 {@code null}이다
+ * — #433과 같은 원칙, 0으로 채우면 "인프라 비용이 없다"로 오독된다.
  *
  * <p>{@code user_month_technical_cogs_usd}라는 이름에 "technical"을 붙인 이유: 앱스토어·결제
  * 수수료, 부가세·환율, 무료 사용량·환불, CS 비용이 빠진 <b>기술 원가 일부</b>라는 걸 명시하기

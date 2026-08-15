@@ -8,9 +8,10 @@ import java.util.UUID;
 /**
  * 세션당 비용 조회 응답 (이슈 #433).
  *
- * <p>{@code allocated_fixed_infra_usd_estimate}/{@code total_usd}는 AWS Cost Explorer 연동이
- * 아직 없어 {@code null}이다 — 0으로 채우면 "인프라 비용이 없다"로 오독되므로, 모르는 값은
- * 비워서 API 응답 자체가 미지원임을 드러낸다("모르는 것을 0으로 감추지 않는다" 원칙).
+ * <p>{@code allocated_fixed_infra_usd_estimate}/{@code total_usd}는 인프라 비용 배치
+ * ({@code InfraCostSyncJob})가 해당 월을 아직 캐싱하지 않았으면 {@code null}이다 — 0으로 채우면
+ * "인프라 비용이 없다"로 오독되므로, 모르는 값은 비워서 API 응답 자체가 미지원임을 드러낸다
+ * ("모르는 것을 0으로 감추지 않는다" 원칙).
  */
 public record SessionCostResponse(
         @JsonProperty("session_id") UUID sessionId,

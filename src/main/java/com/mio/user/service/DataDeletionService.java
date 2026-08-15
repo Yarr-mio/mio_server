@@ -98,10 +98,10 @@ public class DataDeletionService {
 
         request.beginAttempt();
         try {
-            if (request.getCachePurgedAt() == null) {
-                cachePurger.purge(request.getUserId());
-                request.markCachePurged();
-            }
+            // 접수 시점 purge 뒤 진행 중인 요청이 마지막 캐시 쓰기를 남길 수 있다.
+            // purge는 멱등이므로 하드 삭제 직전에 다시 실행해 그 간격을 닫는다.
+            cachePurger.purge(request.getUserId());
+            request.markCachePurged();
 
             // FK ON DELETE CASCADE 가 messages·session_summaries·memory_embeddings·
             // user_beliefs 등 파생물을 함께 지운다 (V13/V22/V40). 실제 SQL과 커밋은
