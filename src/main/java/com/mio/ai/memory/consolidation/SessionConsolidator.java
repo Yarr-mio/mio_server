@@ -148,11 +148,18 @@ public class SessionConsolidator {
             summaryStatusWriter.markFailed(event.sessionId());
             return;
         }
-        coreReady.stop("done");
-
         // 핵심 요약은 이미 독립 트랜잭션으로 커밋됐다. 선택 작업이 실패해도 사용자가 비용을
         // 치른 요약을 잃지 않도록 여기서 즉시 조회 가능하게 만든다 (이슈 #345, #378, #426).
-        summaryStatusWriter.markDone(event.sessionId());
+        try {
+            summaryStatusWriter.markDone(event.sessionId());
+            coreReady.stop("done");
+        } catch (Exception e) {
+            // 요약 row가 커밋됐더라도 공개 상태 쓰기가 실패하면 아직 사용자가 조회할 수 없다.
+            // 이를 done latency로 세면 p95가 실제 readiness보다 짧아 보인다. stale sweep가
+            // 이후 row를 발견해 복구하되, 이번 실행은 실패로 기록하고 기존 예외 흐름을 유지한다.
+            coreReady.stop("failed");
+            throw e;
+        }
 
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
         // best-effort로 실행한다. 1단계 요약은 이미 커밋되었으므로 보강 실패가 요약에 영향을 주지 않는다.
