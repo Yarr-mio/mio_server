@@ -90,6 +90,14 @@ public class SessionSummary {
     @Builder.Default
     private SummaryComponentStatus todoStatus = SummaryComponentStatus.PENDING;
 
+    /** 렌더링이 pending 으로 전환된 시각. NULL(마이그레이션 이전 행)은 created_at 으로 폴백한다. */
+    @Column(name = "user_render_pending_at")
+    private OffsetDateTime userRenderPendingAt;
+
+    /** Todo 생성이 pending 으로 전환된 시각. NULL(마이그레이션 이전 행)은 created_at 으로 폴백한다. */
+    @Column(name = "todo_pending_at")
+    private OffsetDateTime todoPendingAt;
+
     /** 컴포넌트명 → 내부 상세를 제외한 기계 판독 오류 코드. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "component_errors", nullable = false, columnDefinition = "jsonb")
@@ -105,6 +113,12 @@ public class SessionSummary {
     @PrePersist
     protected void onCreate() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        if (userRenderPendingAt == null) {
+            userRenderPendingAt = now;
+        }
+        if (todoPendingAt == null) {
+            todoPendingAt = now;
+        }
         createdAt = now;
         updatedAt = now;
     }

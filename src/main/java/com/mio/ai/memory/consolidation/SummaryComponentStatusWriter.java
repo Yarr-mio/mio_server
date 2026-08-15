@@ -99,8 +99,9 @@ public class SummaryComponentStatusWriter {
                             '"WORKER_STUCK"'::jsonb, true),
                     updated_at = now()
                 WHERE %s = 'pending'
-                  AND created_at <= ?
-                """.formatted(component.statusColumn, component.errorKey, component.statusColumn),
+                  AND COALESCE(%s, created_at) <= ?
+                """.formatted(component.statusColumn, component.errorKey,
+                        component.statusColumn, component.pendingAtColumn),
                 cutoff
         );
         if (updated > 0) {
@@ -111,15 +112,17 @@ public class SummaryComponentStatusWriter {
     }
 
     private enum Component {
-        USER_RENDER("user_render_status", "user_render", "user_render"),
-        TODO("todo_status", "todo", "todo");
+        USER_RENDER("user_render_status", "user_render_pending_at", "user_render", "user_render"),
+        TODO("todo_status", "todo_pending_at", "todo", "todo");
 
         private final String statusColumn;
+        private final String pendingAtColumn;
         private final String errorKey;
         private final String metricTag;
 
-        Component(String statusColumn, String errorKey, String metricTag) {
+        Component(String statusColumn, String pendingAtColumn, String errorKey, String metricTag) {
             this.statusColumn = statusColumn;
+            this.pendingAtColumn = pendingAtColumn;
             this.errorKey = errorKey;
             this.metricTag = metricTag;
         }

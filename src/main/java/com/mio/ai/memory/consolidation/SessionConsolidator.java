@@ -194,7 +194,7 @@ public class SessionConsolidator {
         try {
             String userSummary = sessionSummaryRenderer.render(
                     enrichInput.summaryText(), event.characterId(), enrichInput.userId(), enrichInput.sessionId());
-            if (userSummary != null) {
+            if (userSummary != null && !userSummary.isBlank()) {
                 userSummaryWriter.write(enrichInput.sessionId(), userSummary);
                 componentStatusWriter.markUserRenderDone(event.sessionId());
                 render.stop("done");
@@ -500,6 +500,8 @@ public class SessionConsolidator {
                                 socratic_count = ?,
                                 user_render_status = 'pending',
                                 todo_status = 'pending',
+                                user_render_pending_at = now(),
+                                todo_pending_at = now(),
                                 embedding_status = 'pending',
                                 episode_emb = NULL,
                                 embedding_attempts = 0,
