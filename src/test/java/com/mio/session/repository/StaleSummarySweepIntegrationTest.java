@@ -109,6 +109,25 @@ class StaleSummarySweepIntegrationTest {
         assertThat(statusOf(sessionId)).isEqualTo("done");
     }
 
+    @Test
+    @DisplayName("오래 pending인 렌더링과 Todo는 독립 failed 상태와 오류 코드로 종결한다")
+    void sweep_failsStaleOptionalComponentsIndependently() {
+        UUID sessionId = endedSessionWith(
+                SummaryStatus.PENDING, OffsetDateTime.now(ZoneOffset.UTC).minusHours(3));
+        insertSummary(sessionId);
+        jdbcTemplate.update(
+                "UPDATE session_summaries SET created_at = now() - interval '3 hours' WHERE session_id = ?",
+                sessionId);
+
+        staleSummarySweepJob.run();
+
+        assertThat(componentValue(sessionId, "user_render_status")).isEqualTo("failed");
+        assertThat(componentValue(sessionId, "todo_status")).isEqualTo("failed");
+        assertThat(componentError(sessionId, "user_render")).isEqualTo("WORKER_STUCK");
+        assertThat(componentError(sessionId, "todo")).isEqualTo("WORKER_STUCK");
+        assertThat(statusOf(sessionId)).isEqualTo("done");
+    }
+
     private void insertSummary(UUID sessionId) {
         jdbcTemplate.update("""
                 INSERT INTO session_summaries (user_id, session_id, character_id, summary_text)
@@ -142,5 +161,17 @@ class StaleSummarySweepIntegrationTest {
     private String statusOf(UUID sessionId) {
         return jdbcTemplate.queryForObject(
                 "SELECT summary_status FROM sessions WHERE id = ?", String.class, sessionId);
+    }
+
+    private String componentValue(UUID sessionId, String column) {
+        return jdbcTemplate.queryForObject(
+                "SELECT " + column + " FROM session_summaries WHERE session_id = ?",
+                String.class, sessionId);
+    }
+
+    private String componentError(UUID sessionId, String component) {
+        return jdbcTemplate.queryForObject(
+                "SELECT component_errors ->> ? FROM session_summaries WHERE session_id = ?",
+                String.class, component, sessionId);
     }
 }

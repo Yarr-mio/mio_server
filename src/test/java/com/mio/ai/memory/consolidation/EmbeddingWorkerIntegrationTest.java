@@ -91,6 +91,9 @@ class EmbeddingWorkerIntegrationTest {
     @DisplayName("pending 행을 claim해 임베딩 성공 시 제약 위반 없이 done으로 전이하고 episode_emb를 채운다")
     void processPending_success_transitionsToDone() {
         insertPendingSummary("오늘은 발표 때문에 많이 긴장했지만 잘 끝냈다.");
+        jdbcTemplate.update(
+                "UPDATE session_summaries SET component_errors = '{\"embedding\":\"OLD_ERROR\"}'::jsonb WHERE id = ?",
+                summaryId);
 
         float[] vector = new float[EMBEDDING_DIM];
         for (int i = 0; i < EMBEDDING_DIM; i++) {
@@ -104,6 +107,7 @@ class EmbeddingWorkerIntegrationTest {
         Boolean embFilled = jdbcTemplate.queryForObject(
                 "SELECT episode_emb IS NOT NULL FROM session_summaries WHERE id = ?", Boolean.class, summaryId);
         assertThat(embFilled).isTrue();
+        assertThat(embeddingError()).isNull();
     }
 
     @Test
@@ -118,6 +122,7 @@ class EmbeddingWorkerIntegrationTest {
                 .as("타임아웃·rate limit 한 번에 요약이 영구히 검색에서 빠지면 안 된다")
                 .isEqualTo("pending");
         assertThat(attempts()).isEqualTo(1);
+        assertThat(embeddingError()).isEqualTo("EMBEDDING_RETRY_PENDING");
     }
 
     @Test
@@ -134,6 +139,7 @@ class EmbeddingWorkerIntegrationTest {
                 .as("상한이 없으면 실패 행 하나가 배치 자리를 계속 차지하며 비용만 쓴다")
                 .isEqualTo("failed");
         assertThat(attempts()).isEqualTo(3);
+        assertThat(embeddingError()).isEqualTo("EMBEDDING_FAILED");
     }
 
     @Test
@@ -174,6 +180,18 @@ class EmbeddingWorkerIntegrationTest {
         assertThat(currentStatus())
                 .as("processing에 남으면 지표상 처리 중으로 보이지만 아무도 처리하지 않는다")
                 .isEqualTo("failed");
+        assertThat(embeddingError()).isEqualTo("EMBEDDING_WORKER_STUCK");
+    }
+
+    @Test
+    @DisplayName("빈 요약은 재시도하지 않고 입력 오류로 종결한다")
+    void processPending_blankSummary_recordsInputError() {
+        insertPendingSummary(" ");
+
+        embeddingWorker.processPending();
+
+        assertThat(currentStatus()).isEqualTo("failed");
+        assertThat(embeddingError()).isEqualTo("EMBEDDING_INPUT_INVALID");
     }
 
     @Test
@@ -258,5 +276,11 @@ class EmbeddingWorkerIntegrationTest {
         Integer value = jdbcTemplate.queryForObject(
                 "SELECT embedding_attempts FROM session_summaries WHERE id = ?", Integer.class, summaryId);
         return value != null ? value : -1;
+    }
+
+    private String embeddingError() {
+        return jdbcTemplate.queryForObject(
+                "SELECT component_errors ->> 'embedding' FROM session_summaries WHERE id = ?",
+                String.class, summaryId);
     }
 }
