@@ -78,13 +78,21 @@ final class EvalRunArchive {
     /**
      * 실행 시점의 코드 리비전. 커밋 해시만으로는 부족하다 — 커밋되지 않은 변경 위에서 낸
      * 수치를 나중에 그 커밋의 결과로 오해할 수 있으므로 오염 여부를 함께 남긴다.
+     *
+     * <p><b>추적되지 않는 파일은 오염으로 세지 않는다</b> (이슈 #371). 이전에는 그냥
+     * {@code git status --porcelain} 이라 스크래치 디렉터리 하나만 있어도 모든 실행이
+     * "dirty" 로 찍혔다. 그 결과 저장소에 남은 아카이브 4건이 전부 dirty 였고, 표식이
+     * <b>"이 수치를 낸 코드가 HEAD 와 다르다"</b> 를 뜻하는지 <b>"누가 임시 폴더를 뒀다"</b>
+     * 를 뜻하는지 구별할 수 없었다. 구별할 수 없는 경고는 경고가 아니다.
+     *
+     * <p>재현 가능성을 좌우하는 것은 추적 중인 파일이 HEAD 와 같은가다. 그것만 본다.
      */
     private static String gitDescribe() {
         String commit = git("rev-parse", "--short", "HEAD");
         if (commit == null) {
             return "unknown";
         }
-        String status = git("status", "--porcelain");
+        String status = git("status", "--porcelain", "--untracked-files=no");
         boolean dirty = status != null && !status.isBlank();
         return commit + (dirty ? " (dirty worktree)" : "");
     }
