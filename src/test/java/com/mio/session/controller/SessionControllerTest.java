@@ -200,7 +200,8 @@ class SessionControllerTest {
     void getSessionSummary_done_returns200AndTransitionsToViewed() throws Exception {
         SessionSummaryResponse response = new SessionSummaryResponse(
                 TEST_SESSION_ID, "viewed", "done", "done", "done", "done",
-                OffsetDateTime.now(), "{}", OffsetDateTime.now(), 300L, 5,
+                OffsetDateTime.now(), "{\"todo\":\"TODO_GENERATION_FAILED\"}",
+                OffsetDateTime.now(), 300L, 5,
                 "세션 요약 내용", null, 70, "[]", false, null, null, List.of()
         );
         when(sessionService.getSessionSummary(eq(TEST_USER_ID), eq(TEST_SESSION_ID))).thenReturn(response);
@@ -210,6 +211,8 @@ class SessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.summary_status").value("viewed"))
                 .andExpect(jsonPath("$.data.core_summary_status").value("done"))
+                .andExpect(jsonPath("$.data.component_errors.todo")
+                        .value("TODO_GENERATION_FAILED"))
                 .andExpect(jsonPath("$.data.summary").value("세션 요약 내용"));
     }
 

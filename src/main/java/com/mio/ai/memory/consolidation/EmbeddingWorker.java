@@ -89,7 +89,8 @@ public class EmbeddingWorker {
                 UPDATE session_summaries
                 SET embedding_status = 'processing',
                     embedding_claimed_at = now(),
-                    embedding_attempts = embedding_attempts + 1
+                    embedding_attempts = embedding_attempts + 1,
+                    updated_at = now()
                 WHERE id IN (
                     SELECT id FROM session_summaries
                     WHERE embedding_attempts < ?
@@ -118,7 +119,10 @@ public class EmbeddingWorker {
         return jdbcTemplate.update(
                 """
                 UPDATE session_summaries
-                SET embedding_status = 'failed'
+                SET embedding_status = 'failed',
+                    component_errors = jsonb_set(component_errors, '{embedding}',
+                            '"EMBEDDING_WORKER_STUCK"'::jsonb, true),
+                    updated_at = now()
                 WHERE embedding_status = 'processing'
                   AND embedding_attempts >= ?
                   AND embedding_claimed_at < now() - make_interval(mins => ?)
@@ -132,7 +136,7 @@ public class EmbeddingWorker {
         if (summaryText == null || summaryText.isBlank()) {
             // 재시도해도 결과가 달라지지 않는다. 상한을 기다리지 않고 바로 확정한다.
             log.warn("EmbeddingWorker: summaryText is null or blank for summaryId={}, marking failed", summaryId);
-            markStatus(summaryId, "failed", claimToken);
+            markStatus(summaryId, "failed", "EMBEDDING_INPUT_INVALID", claimToken);
             return;
         }
         try {
@@ -143,7 +147,9 @@ public class EmbeddingWorker {
                     """
                     UPDATE session_summaries
                     SET episode_emb = ?::vector,
-                        embedding_status = 'done'
+                        embedding_status = 'done',
+                        component_errors = component_errors - 'embedding',
+                        updated_at = now()
                     WHERE id = ?
                       AND embedding_status = 'processing'
                       AND embedding_claimed_at = ?
@@ -161,11 +167,11 @@ public class EmbeddingWorker {
             if (attempts < MAX_ATTEMPTS) {
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, will retry",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "pending", claimToken);
+                markStatus(summaryId, "pending", "EMBEDDING_RETRY_PENDING", claimToken);
             } else {
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, marking failed",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "failed", claimToken);
+                markStatus(summaryId, "failed", "EMBEDDING_FAILED", claimToken);
             }
         }
     }
@@ -181,17 +187,20 @@ public class EmbeddingWorker {
      * <p>재시도로 되돌릴 때는 claim 시각을 비운다. 그러지 않으면 {@code pending} 행에 오래된
      * claim 시각이 남아 대시보드에서 "처리 중"으로 오해된다.
      */
-    private void markStatus(UUID summaryId, String status, Object claimToken) {
+    private void markStatus(UUID summaryId, String status, String errorCode, Object claimToken) {
         jdbcTemplate.update(
                 """
                 UPDATE session_summaries
                 SET embedding_status = ?,
-                    embedding_claimed_at = CASE WHEN ? = 'pending' THEN NULL ELSE embedding_claimed_at END
+                    embedding_claimed_at = CASE WHEN ? = 'pending' THEN NULL ELSE embedding_claimed_at END,
+                    component_errors = jsonb_set(component_errors, '{embedding}',
+                            to_jsonb(CAST(? AS text)), true),
+                    updated_at = now()
                 WHERE id = ?
                   AND embedding_status = 'processing'
                   AND embedding_claimed_at = ?
                 """,
-                status, status, summaryId, claimToken
+                status, status, errorCode, summaryId, claimToken
         );
     }
 

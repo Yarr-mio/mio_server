@@ -1,5 +1,6 @@
 package com.mio.session.job;
 
+import com.mio.ai.memory.consolidation.SummaryComponentStatusWriter;
 import com.mio.ai.memory.consolidation.SummaryStatusWriter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class StaleSummarySweepJob {
     private static final int STALE_THRESHOLD_MINUTES = 30;
 
     private final SummaryStatusWriter summaryStatusWriter;
+    private final SummaryComponentStatusWriter componentStatusWriter;
 
     // 트랜잭션 경계는 SummaryStatusWriter 에 있다. 여기에 @Transactional 을 걸면 커밋이 메서드
     // 반환 뒤에 일어나 아래 catch 가 커밋 실패를 잡지 못한다.
@@ -46,6 +48,17 @@ public class StaleSummarySweepJob {
         } catch (Exception e) {
             // 스케줄러 스레드가 예외로 죽으면 이후 정리가 영구히 멈춘다.
             log.error("StaleSummarySweepJob: sweep failed (cutoff={})", cutoff, e);
+        }
+
+        // 핵심 요약 정리 실패가 선택 작업의 고착 정리를 막지 않게 별도 실패 경계로 둔다.
+        try {
+            SummaryComponentStatusWriter.SweepResult result = componentStatusWriter.failStale(cutoff);
+            if (result.total() > 0) {
+                log.warn("StaleSummarySweepJob: userRenderFailed={} todoFailed={} (cutoff={})",
+                        result.userRenderFailed(), result.todoFailed(), cutoff);
+            }
+        } catch (Exception e) {
+            log.error("StaleSummarySweepJob: component sweep failed (cutoff={})", cutoff, e);
         }
     }
 }
