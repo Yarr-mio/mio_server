@@ -200,6 +200,19 @@ class ConversationOrchestratorContractIntegrationTest {
                 .counters()).isNotEmpty();
     }
 
+    @Test
+    @DisplayName("콘텐츠 없는 스트림의 unavailable TTFT를 지연 histogram에 넣지 않는다")
+    void unavailableTtftIsNotRecordedAsLatency() {
+        long ttftBefore = timerCount("mio.ai.turn.llm.ttft");
+        when(llmClient.stream(any(), any()))
+                .thenReturn(new LlmStreamResult(-1L, LlmUsage.unresolved("gpt-4o"), false));
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new SseEmitter(30_000L), null);
+
+        assertThat(timerCount("mio.ai.turn.llm.ttft")).isEqualTo(ttftBefore);
+    }
+
     /**
      * 조기 중단 경로에서도 계약 위반이 판정 사유로 전달된다 (이 이슈의 본체).
      *

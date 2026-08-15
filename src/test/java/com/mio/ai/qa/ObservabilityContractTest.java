@@ -74,6 +74,11 @@ class ObservabilityContractTest {
                 .contains("mio_judge_input_total")
                 .contains("mio_judge_output_total")
                 .contains("mio_llm_cost_unpriced_total")
+                .contains("MioCrisisRecordFailed", "mio_crisis_records_total")
+                .contains("MioRetrievalFailureRatioHigh", "mio_retrieval_outcome_total")
+                .contains("MioContractViolationRatioHigh", "mio_ai_contract_results_total")
+                .contains("MioSummaryPipelineFailure", "mio_summary_stage_duration_seconds_count")
+                .contains("mio_summary_component_total")
                 .contains("severity: warning")
                 .doesNotContain("clinical", "임상", "REPLACE_ME");
     }

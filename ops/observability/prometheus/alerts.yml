@@ -57,3 +57,39 @@ groups:
         annotations:
           summary: "고착 턴 회수 작업 실패"
           description: "generating 상태 턴의 회수 쿼리 또는 커밋이 실패했습니다."
+
+      - alert: MioCrisisRecordFailed
+        expr: sum(increase(mio_crisis_records_total{outcome="failed"}[15m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "위기 이벤트 영속화 실패"
+          description: "위기 안내 이후 기록 재시도가 소진됐습니다. safety latch와 DB 상태를 확인하십시오."
+
+      - alert: MioRetrievalFailureRatioHigh
+        expr: sum(increase(mio_retrieval_outcome_total{outcome="failed"}[10m])) / clamp_min(sum(increase(mio_retrieval_outcome_total[10m])), 1) > 0.10 and sum(increase(mio_retrieval_outcome_total[10m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "기억 retrieval 실패율이 10% 초과"
+          description: "최근 10분간 20회 이상 retrieval에서 실패율이 10%를 넘었습니다. source별 실패를 확인하십시오."
+
+      - alert: MioContractViolationRatioHigh
+        expr: sum(increase(mio_ai_contract_results_total{result="violated"}[15m])) / clamp_min(sum(increase(mio_ai_contract_results_total[15m])), 1) > 0.20 and sum(increase(mio_ai_contract_results_total[15m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "응답 계약 위반율이 20% 초과"
+          description: "최근 15분간 계약 검사 20건 이상에서 위반율이 20%를 넘었습니다. response_act별 분포를 확인하십시오."
+
+      - alert: MioSummaryPipelineFailure
+        expr: sum(increase(mio_summary_stage_duration_seconds_count{outcome="failed"}[15m])) > 0 or sum(increase(mio_summary_component_total{outcome=~"write_failed|stuck_failed"}[15m])) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "요약 파이프라인 단계 또는 파생 작업 실패"
+          description: "요약 단계 실패, component 상태 기록 실패, 또는 pending 작업 고착 종결이 발생했습니다."

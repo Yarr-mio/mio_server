@@ -99,7 +99,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     @Override
     public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
         long startMs = System.currentTimeMillis();
-        AtomicLong ttft = new AtomicLong(0);
+        // 콘텐츠가 끝내 오지 않은 정상 종료와 0ms 안에 도착한 첫 토큰을 구분한다.
+        AtomicLong ttft = new AtomicLong(-1);
         AtomicReference<LlmUsage> usage = new AtomicReference<>();
         AtomicBoolean truncated = new AtomicBoolean(false);
         // 이 호출의 종료(outcome + usage)를 이미 기록했는지. 아래 catch 는 우리가 던진 예외와
@@ -148,7 +149,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     attempt++;
                     // 재시도는 앞선 시도의 결과를 버린다. 리셋하지 않으면 실패한 시도의
                     // 사용량이 남아 최종 결과에 섞이거나 중복 집계된다.
-                    ttft.set(0);
+                    ttft.set(-1);
                     usage.set(null);
                     truncated.set(false);
                     continue;
@@ -180,7 +181,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                                 }
                                 String content = extractDeltaContent(chunk);
                                 if (content != null && !content.isEmpty()) {
-                                    if (ttft.get() == 0) {
+                                    if (ttft.get() < 0) {
                                         ttft.set(System.currentTimeMillis() - startMs);
                                     }
                                     chunkHandler.accept(content);
@@ -215,8 +216,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         LlmUsage resolved = resolveUsage(usage, request.model());
         recordUsage(MODE_STREAM, resolved, request);
 
-        long ttftMs = ttft.get() > 0 ? ttft.get() : System.currentTimeMillis() - startMs;
-        return new LlmStreamResult(ttftMs, resolved, truncated.get());
+        return new LlmStreamResult(ttft.get(), resolved, truncated.get());
     }
 
     private long streamRetryDelayMs(HttpResponse<?> response, int attempt) {

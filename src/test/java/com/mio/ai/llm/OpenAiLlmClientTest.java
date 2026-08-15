@@ -81,10 +81,14 @@ class OpenAiLlmClientTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(response);
 
-        client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
+        LlmStreamResult result =
+                client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
 
         assertThat(requestBody(capturedRequest(httpClient)))
                 .contains("\"stream_options\":{\"include_usage\":true}");
+        assertThat(result.ttftMs())
+                .as("콘텐츠 없는 DONE-only 스트림은 종료 시간을 TTFT로 가장하면 안 된다")
+                .isEqualTo(-1);
     }
 
     @Test
@@ -281,6 +285,9 @@ class OpenAiLlmClientTest {
         assertThat(result.usage().promptTokens())
                 .as("버려진 시도의 사용량이 남으면 비용이 부풀려 계상된다")
                 .isEqualTo(11);
+        assertThat(result.ttftMs())
+                .as("재시도 후에도 콘텐츠가 없으면 TTFT sentinel을 유지해야 한다")
+                .isEqualTo(-1);
         assertThat(counter("mio.llm.tokens", "type", "prompt")).isEqualTo(11.0);
         assertThat(counter("mio.llm.retries", "reason", "rate_limited"))
                 .as("재시도로 삼켜진 스로틀링은 결과가 success 라 별도 지표가 없으면 흔적이 없다")
