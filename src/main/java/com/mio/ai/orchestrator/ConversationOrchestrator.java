@@ -873,7 +873,13 @@ public class ConversationOrchestrator {
             UUID userId) {
         CrisisFlowService.CrisisPreview base =
                 crisisFlowService.preview(l1Result, trigger, originalMessage);
-        crisisFixedFlowCoordinator.begin(sessionId, userId);
+        if (!crisisFixedFlowCoordinator.begin(sessionId, userId)) {
+            // 전달되는 고정 응답은 그대로 유지한다(이미 fail-safe). 다만 상태 행이 없으면
+            // 다음 턴 라우팅이 crisis_events 에만 의존하므로, 그 기록까지 실패하는 복합
+            // 장애를 운영이 알 수 있게 남긴다. 전용 카운터는 coordinator.begin() 이 올린다.
+            log.warn("Crisis fixed-flow state row was not persisted — next-turn routing "
+                    + "depends solely on crisis_events sessionId={}", sessionId);
+        }
         return new CrisisFlowService.CrisisPreview(
                 base.severity(), base.fixedResponse() + " " + crisisFixedFlowCoordinator.initialResponse());
     }

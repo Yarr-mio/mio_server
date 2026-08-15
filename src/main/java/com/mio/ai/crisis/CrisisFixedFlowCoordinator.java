@@ -33,6 +33,9 @@ public class CrisisFixedFlowCoordinator {
         } catch (Exception e) {
             log.error("Failed to persist crisis fixed-flow start sessionId={}", sessionId, e);
             record("current_intent", "storage_failure");
+            // 상태 행 저장 실패 전용 카운터. crisis_events 기록까지 실패하면 다음 턴 라우팅
+            // 근거가 모두 사라지는 복합 장애라, 태그 분해 없이 단독으로 알람을 건다.
+            meterRegistry.counter("mio.crisis.flow.begin.failure").increment();
             return false;
         }
     }
