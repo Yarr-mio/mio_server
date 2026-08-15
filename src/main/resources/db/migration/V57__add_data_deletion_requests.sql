@@ -69,5 +69,9 @@ CREATE INDEX idx_data_deletion_requests_due
     ON data_deletion_requests (scheduled_at)
     WHERE status = 'pending';
 
+-- 상태 API는 terminal 행을 포함해 사용자의 최신 요청을 찾는다.
+CREATE INDEX idx_data_deletion_requests_user_requested_at
+    ON data_deletion_requests (user_id, requested_at DESC);
+
 COMMENT ON TABLE data_deletion_requests IS
     'User data deletion lifecycle. Gives the deletion path a terminal state and per-store progress so failures are distinguishable from completion.';

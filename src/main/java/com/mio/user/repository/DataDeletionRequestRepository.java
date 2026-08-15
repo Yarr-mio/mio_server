@@ -43,14 +43,31 @@ public interface DataDeletionRequestRepository extends JpaRepository<DataDeletio
      * <p>{@code scheduled_at} 부분 인덱스를 탄다. 상한을 두는 이유는 한 번의 실행이 전체를
      * 붙잡지 않게 하기 위해서다 — 남은 것은 다음 실행이 가져간다.
      */
+    @Query(value = """
+            SELECT r.*
+              FROM data_deletion_requests r
+             WHERE r.status = 'pending'
+               AND r.scheduled_at <= :now
+               AND (
+                    CAST(:afterScheduledAt AS timestamptz) IS NULL
+                    OR (r.scheduled_at, r.id) >
+                       (CAST(:afterScheduledAt AS timestamptz), CAST(:afterId AS uuid))
+               )
+             ORDER BY r.scheduled_at ASC, r.id ASC
+            """, nativeQuery = true)
+    List<DataDeletionRequest> findDueAfter(
+            @Param("now") OffsetDateTime now,
+            @Param("afterScheduledAt") OffsetDateTime afterScheduledAt,
+            @Param("afterId") UUID afterId,
+            org.springframework.data.domain.Pageable pageable);
+
+    /** 유예 기간이 끝났지만 아직 terminal state에 도달하지 못한 운영 backlog. */
     @Query("""
-            select r from DataDeletionRequest r
+            select count(r) from DataDeletionRequest r
              where r.status = com.mio.user.domain.DeletionStatus.PENDING
                and r.scheduledAt <= :now
-             order by r.scheduledAt asc
             """)
-    List<DataDeletionRequest> findDue(@Param("now") OffsetDateTime now,
-                                      org.springframework.data.domain.Pageable pageable);
+    long countDue(@Param("now") OffsetDateTime now);
 
     long countByStatus(DeletionStatus status);
 }
