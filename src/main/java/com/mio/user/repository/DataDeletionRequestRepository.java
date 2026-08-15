@@ -2,7 +2,9 @@ package com.mio.user.repository;
 
 import com.mio.user.domain.DataDeletionRequest;
 import com.mio.user.domain.DeletionStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -12,6 +14,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface DataDeletionRequestRepository extends JpaRepository<DataDeletionRequest, UUID> {
+
+    /** 멀티 인스턴스 배치가 같은 작업을 동시에 실행하지 못하도록 행을 선점한다. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from DataDeletionRequest r where r.id = :id")
+    Optional<DataDeletionRequest> findByIdForUpdate(@Param("id") UUID id);
 
     /**
      * 사용자의 가장 최근 삭제 요청. 상태 조회 API 가 쓴다.

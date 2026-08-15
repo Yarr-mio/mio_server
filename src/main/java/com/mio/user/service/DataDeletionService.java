@@ -91,7 +91,7 @@ public class DataDeletionService {
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean executeDeletion(UUID requestId) {
-        DataDeletionRequest request = deletionRequestRepository.findById(requestId).orElse(null);
+        DataDeletionRequest request = deletionRequestRepository.findByIdForUpdate(requestId).orElse(null);
         if (request == null || request.getStatus().isTerminal()) {
             return false;
         }
