@@ -3,6 +3,7 @@ package com.mio.admin.service;
 import com.mio.admin.dto.UserMonthlyCostResponse;
 import com.mio.ai.cost.AiCostAggregate;
 import com.mio.ai.cost.AiCostEventRepository;
+import com.mio.ai.cost.InfraCostAllocator;
 import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -26,12 +27,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-/** 이슈 #434 — #433과 같은 원칙(인프라 배분 null)으로 유저·월 단위 집계만 바뀐 것 검증. */
+/** 이슈 #434/#437 — #433과 같은 원칙(캐시 없으면 인프라 배분 null)으로 유저·월 단위 집계. */
 @ExtendWith(MockitoExtension.class)
 class AdminUserCostServiceTest {
 
     @Mock private UserRepository userRepository;
     @Mock private AiCostEventRepository aiCostEventRepository;
+    @Mock private InfraCostAllocator infraCostAllocator;
 
     private AdminUserCostService service;
 
@@ -39,7 +41,7 @@ class AdminUserCostServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdminUserCostService(userRepository, aiCostEventRepository);
+        service = new AdminUserCostService(userRepository, aiCostEventRepository, infraCostAllocator);
     }
 
     @Test
@@ -105,11 +107,13 @@ class AdminUserCostServiceTest {
     }
 
     @Test
-    @DisplayName("인프라 배분 필드는 #433과 같은 이유로 null이다")
-    void getMonthlyCost_infraFieldsAreNull() {
+    @DisplayName("인프라 배분 캐시가 없으면 필드는 여전히 null이다")
+    void getMonthlyCost_noInfraCache_fieldsAreNull() {
         when(userRepository.existsById(userId)).thenReturn(true);
         when(aiCostEventRepository.aggregateByUserIdAndCreatedAtBetween(eq(userId), any(), any()))
                 .thenReturn(new AiCostAggregate(new BigDecimal("2.0"), 1L, 4L));
+        when(infraCostAllocator.allocateForUserMonth(eq(userId), eq(YearMonth.of(2026, 8))))
+                .thenReturn(null);
 
         UserMonthlyCostResponse response = service.getMonthlyCost(userId, "2026-08");
 
@@ -117,5 +121,20 @@ class AdminUserCostServiceTest {
         assertThat(response.unpricedEvents()).isEqualTo(1L);
         assertThat(response.allocatedFixedInfraUsdEstimate()).isNull();
         assertThat(response.userMonthTechnicalCogsUsd()).isNull();
+    }
+
+    @Test
+    @DisplayName("인프라 배분 캐시가 있으면 기술원가 합계를 채운다")
+    void getMonthlyCost_infraAllocationAvailable_fillsTechnicalCogs() {
+        when(userRepository.existsById(userId)).thenReturn(true);
+        when(aiCostEventRepository.aggregateByUserIdAndCreatedAtBetween(eq(userId), any(), any()))
+                .thenReturn(new AiCostAggregate(new BigDecimal("1.5"), 0L, 3L));
+        when(infraCostAllocator.allocateForUserMonth(eq(userId), eq(YearMonth.of(2026, 8))))
+                .thenReturn(new BigDecimal("0.7"));
+
+        UserMonthlyCostResponse response = service.getMonthlyCost(userId, "2026-08");
+
+        assertThat(response.allocatedFixedInfraUsdEstimate()).isEqualByComparingTo(new BigDecimal("0.7"));
+        assertThat(response.userMonthTechnicalCogsUsd()).isEqualByComparingTo(new BigDecimal("2.2"));
     }
 }
