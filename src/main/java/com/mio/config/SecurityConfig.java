@@ -8,6 +8,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -73,6 +74,8 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        // 탈퇴 후 계정/인증이 사라져도 불투명 operation id로 삭제 상태 조회.
+                        .requestMatchers(PublicDataDeletionStatusRequestMatcher.INSTANCE).permitAll()
                         // 이슈 #279: users.is_admin 플래그로 발급된 JWT(scope에 "admin" 포함)만 통과.
                         // 플래그는 셀프서비스 승격 경로 없이 DB에서 직접 세운다.
                         .requestMatchers("/v1/admin/**").hasAuthority("ROLE_ADMIN")

@@ -26,6 +26,8 @@ public enum ErrorCode {
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다."),
     USER_SUSPENDED(HttpStatus.FORBIDDEN, "ACCOUNT_SUSPENDED", "이용이 제한된 계정입니다."),
     USER_WITHDRAWN(HttpStatus.GONE, "GONE", "탈퇴한 계정입니다."),
+    DATA_DELETION_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DATA_DELETION_REQUEST_NOT_FOUND",
+            "데이터 삭제 요청을 찾을 수 없습니다."),
     ONBOARDING_REQUIRED(HttpStatus.FORBIDDEN, "ONBOARDING_REQUIRED", "온보딩을 먼저 완료해야 합니다."),
 
     // Onboarding

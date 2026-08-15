@@ -3,6 +3,7 @@ package com.mio.auth.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.auth.service.JwtTokenService;
 import com.mio.common.error.ErrorCode;
+import com.mio.config.PublicDataDeletionStatusRequestMatcher;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
@@ -47,6 +48,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         if ("/error".equals(request.getRequestURI())) {
+            return true;
+        }
+        if (PublicDataDeletionStatusRequestMatcher.INSTANCE.matches(request)) {
             return true;
         }
         String key = request.getMethod() + " " + request.getRequestURI();
