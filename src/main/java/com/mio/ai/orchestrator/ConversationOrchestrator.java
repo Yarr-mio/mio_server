@@ -210,7 +210,7 @@ public class ConversationOrchestrator {
             InputJudgeResult judgeResult = null;
             boolean inputJudgeCalled = false;
             if (inputJudge.shouldCallJudge(combined, profile)) {
-                judgeResult = inputJudge.judge(normalized, combined, profile);
+                judgeResult = inputJudge.judge(normalized, combined, profile, userId, sessionId);
                 inputJudgeCalled = true;
             }
 
@@ -310,7 +310,8 @@ public class ConversationOrchestrator {
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
                 LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage)
-                        .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS);
+                        .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS)
+                        .withAttribution("MAIN_GENERATION", userId, sessionId);
                 StringBuilder contentBuilder = new StringBuilder();
 
                 DeliveryMode deliveryMode = decision.deliveryMode();
@@ -330,7 +331,7 @@ public class ConversationOrchestrator {
                     OutputPreFilterResult bufferedGuardInput =
                             mergeContractViolations(preFilterResult, contractResult);
                     if (!bufferedGuardInput.passed()) {
-                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput);
+                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
@@ -387,7 +388,9 @@ public class ConversationOrchestrator {
                                         unitCheck,
                                         responseContractValidator.validate(responsePlan, candidate));
                                 earlyJudgeFutureRef.set(CompletableFuture.supplyAsync(
-                                        () -> outputJudge.judge(candidate, unitGuardInput), outputJudgeExecutor));
+                                        () -> outputJudge.judge(
+                                                candidate, unitGuardInput, userId, sessionId),
+                                        outputJudgeExecutor));
                                 return false;
                             },
                             unit -> sendEvent(emitter, new SseEventDto.DeltaEvent(unit, outboundMsgId)));
@@ -435,7 +438,7 @@ public class ConversationOrchestrator {
                             final String fullContent = assistantContent;
                             final OutputPreFilterResult fullFilter = streamedGuardInput;
                             judgeFuture = CompletableFuture.supplyAsync(
-                                    () -> outputJudge.judge(fullContent, fullFilter), outputJudgeExecutor);
+                                    () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
                         }
                     }
 
@@ -836,7 +839,9 @@ public class ConversationOrchestrator {
                         assistantContent,
                         userSignal,
                         sessionDelta.socraticQuestionsUsed(),
-                        isCrisisFlagged)
+                        isCrisisFlagged,
+                        userId,
+                        sessionId)
                 : CbtMetadataResult.none();
 
         UUID emotionScoreTargetId = null;

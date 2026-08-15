@@ -165,7 +165,8 @@ public class ContextPreWarmer {
         try {
             RetrievalPlan plan = memoryRetrievalPlanner.plan(
                     combined, profile, userId, historyProbe.hasHistory());
-            float[] queryEmbedding = embedIfNeeded(plan, queryText, failedSources);
+            float[] queryEmbedding = embedIfNeeded(
+                    plan, queryText, userId, sessionId, failedSources);
             Set<String> relatedDistortionCodes =
                     expandRelatedCodes(plan, currentDistortionCode, failedSources);
             List<List<RetrievedItem>> results = retrieveParallel(
@@ -237,14 +238,14 @@ public class ContextPreWarmer {
      * <p>이전에는 조용히 {@code null} 을 반환해 벡터 검색을 건너뛰었다. 그러면 임베딩
      * 타임아웃이 잦아져도 "벡터 검색 결과가 원래 없다" 와 구별되지 않는다.
      */
-    private float[] embedIfNeeded(RetrievalPlan plan, String queryText,
+    private float[] embedIfNeeded(RetrievalPlan plan, String queryText, UUID userId, UUID sessionId,
                                   Set<RetrievalSource> failedSources) {
         if (!plan.sources().contains(RetrievalSource.VECTOR_EPISODE)
                 || queryText == null || queryText.isBlank()) {
             return null;
         }
         CompletableFuture<float[]> embeddingFuture = CompletableFuture.supplyAsync(
-                () -> embeddingClient.embed(queryText), retrievalPool);
+                () -> embeddingClient.embed(queryText, "RETRIEVAL_QUERY_EMBEDDING", userId, sessionId), retrievalPool);
         try {
             long timeoutMs = Math.min(plan.budgetMs(), MAX_EMBEDDING_WAIT_MS);
             return embeddingFuture.get(timeoutMs, TimeUnit.MILLISECONDS);

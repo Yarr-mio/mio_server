@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.UUID;
+
 /**
  * 현재 발화의 관계 맥락을 위한 최소 구조화 추출기.
  * 결과는 WorkingMemory TTL 내 활성화에만 사용하며 신념·증거를 새로 저장하지 않는다.
@@ -35,13 +37,14 @@ public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
     private final ObjectMapper objectMapper;
 
     @Override
-    public TurnOntologySignal extract(String userMessage) {
+    public TurnOntologySignal extract(String userMessage, UUID userId, UUID sessionId) {
         if (userMessage == null || userMessage.isBlank()) {
             return TurnOntologySignal.empty();
         }
         try {
             String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
-                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                    .withAttribution("ONTOLOGY_EXTRACTOR", userId, sessionId));
             JsonNode node = objectMapper.readTree(stripCodeFence(response));
             return new TurnOntologySignal(
                     nullableText(node, "distortionCode"),

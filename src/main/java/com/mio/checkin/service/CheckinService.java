@@ -111,7 +111,7 @@ public class CheckinService {
                         String cacheValue = serializeResponse(response);
                         redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
                     }
-                    aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
+                    aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay, userId);
                 }
             });
         } else {
@@ -120,7 +120,7 @@ public class CheckinService {
                 String cacheValue = serializeResponse(response);
                 redisTemplate.opsForValue().set(cacheKey, cacheValue, IDEMPOTENCY_TTL_SECONDS, TimeUnit.SECONDS);
             }
-            aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay);
+            aiResponseGenerator.generateAndSave(checkinId, emotionType, conditionScore, timeOfDay, userId);
         }
 
         return response;

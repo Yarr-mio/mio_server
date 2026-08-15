@@ -30,7 +30,7 @@ class OutputJudgeTest {
     void replaceVerdictIsNotAFailure() {
         OutputJudge judge = judgeReturning(() -> "{\"action\":\"REPLACE\",\"rewritten_content\":null}");
 
-        OutputJudgeResult result = judge.judge("위험한 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("위험한 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
         assertThat(result.failed()).isFalse();
@@ -45,7 +45,7 @@ class OutputJudgeTest {
             throw new RuntimeException("upstream timeout");
         });
 
-        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter(), null, null);
 
         // 동작은 이전과 같다 — 가장 보수적인 REPLACE.
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
@@ -61,7 +61,7 @@ class OutputJudgeTest {
     void malformedJsonIsAFailure() {
         OutputJudge judge = judgeReturning(() -> "{\"action\": ");
 
-        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
         assertThat(result.failed()).isTrue();
@@ -73,7 +73,7 @@ class OutputJudgeTest {
     void missingActionIsAFailure() {
         OutputJudge judge = judgeReturning(() -> "{\"rewritten_content\":null}");
 
-        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
         assertThat(result.failed()).isTrue();
@@ -86,7 +86,7 @@ class OutputJudgeTest {
     void unknownActionIsAFailure() {
         OutputJudge judge = judgeReturning(() -> "{\"action\":\"UNKNOWN\"}");
 
-        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
         assertThat(result.failed()).isTrue();
@@ -99,7 +99,7 @@ class OutputJudgeTest {
     void rewriteWithoutContentIsAFailure() {
         OutputJudge judge = judgeReturning(() -> "{\"action\":\"REWRITE\"}");
 
-        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
         assertThat(result.failed()).isTrue();
@@ -112,7 +112,7 @@ class OutputJudgeTest {
     void sendVerdictCountsAsSucceeded() {
         OutputJudge judge = judgeReturning(() -> "{\"action\":\"SEND\",\"rewritten_content\":null}");
 
-        OutputJudgeResult result = judge.judge("안전한 응답", failingPreFilter());
+        OutputJudgeResult result = judge.judge("안전한 응답", failingPreFilter(), null, null);
 
         assertThat(result.action()).isEqualTo(OutputJudgeAction.SEND);
         assertThat(result.failed()).isFalse();

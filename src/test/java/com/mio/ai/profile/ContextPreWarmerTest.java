@@ -80,7 +80,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-1", RetrievalSource.VECTOR_EPISODE,
                 "회의가 불안했던 날", "normal", 0.9, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("회의 때문에 불안해")).thenReturn(embedding);
+        when(embeddingClient.embed(eq("회의 때문에 불안해"), any(), any(), any())).thenReturn(embedding);
         when(vectorRetriever.retrieveEpisodes(userId, embedding, 3)).thenReturn(List.of(episode));
         when(lexicalRetriever.retrieveByKeywords(userId, "회의 때문에 불안해", 3)).thenReturn(List.of());
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
@@ -89,7 +89,7 @@ class ContextPreWarmerTest {
         MemoryContextResult context = preWarmer.buildContextSync(sessionId, userId, combined, profile, "회의 때문에 불안해");
 
         assertThat(context.text()).isEqualTo("live memory");
-        verify(embeddingClient).embed("회의 때문에 불안해");
+        verify(embeddingClient).embed(eq("회의 때문에 불안해"), any(), any(), any());
         verify(vectorRetriever).retrieveEpisodes(userId, embedding, 3);
         verify(lexicalRetriever).retrieveByKeywords(userId, "회의 때문에 불안해", 3);
     }
@@ -101,7 +101,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-2", RetrievalSource.LEXICAL_EPISODE,
                 "회의 전 긴장", "normal", 0.7, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("회의가 걱정돼")).thenThrow(new RuntimeException("timeout"));
+        when(embeddingClient.embed(eq("회의가 걱정돼"), any(), any(), any())).thenThrow(new RuntimeException("timeout"));
         when(lexicalRetriever.retrieveByKeywords(userId, "회의가 걱정돼", 3)).thenReturn(List.of(episode));
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
         when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("lexical memory");
@@ -120,7 +120,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-3", RetrievalSource.LEXICAL_EPISODE,
                 "발표 전 긴장", "normal", 0.7, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("발표가 걱정돼")).thenAnswer(invocation -> {
+        when(embeddingClient.embed(eq("발표가 걱정돼"), any(), any(), any())).thenAnswer(invocation -> {
             Thread.sleep(1_000);
             return new float[]{0.1f};
         });
@@ -181,7 +181,7 @@ class ContextPreWarmerTest {
                 "회의 전 긴장", "normal", 0.7, 1);
         float[] embedding = new float[]{0.1f, 0.2f};
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("회의가 걱정돼")).thenReturn(embedding);
+        when(embeddingClient.embed(eq("회의가 걱정돼"), any(), any(), any())).thenReturn(embedding);
         // pgvector 만 죽는다. 나머지 소스는 정상이므로 턴은 완주해야 한다.
         when(vectorRetriever.retrieveEpisodes(userId, embedding, 3))
                 .thenThrow(new RuntimeException("pgvector down"));
@@ -297,7 +297,8 @@ class ContextPreWarmerTest {
         RetrievalPlan plan = new RetrievalPlan(
                 List.of(RetrievalSource.VECTOR_EPISODE, RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("발표가 걱정돼")).thenThrow(new RuntimeException("embedding timeout"));
+        when(embeddingClient.embed(eq("발표가 걱정돼"), any(), any(), any()))
+                .thenThrow(new RuntimeException("embedding timeout"));
         when(lexicalRetriever.retrieveByKeywords(userId, "발표가 걱정돼", 3)).thenReturn(List.of());
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
         when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("");

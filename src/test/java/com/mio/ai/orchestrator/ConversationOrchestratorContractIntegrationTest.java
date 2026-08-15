@@ -30,6 +30,7 @@ import java.util.function.Consumer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -111,8 +112,8 @@ class ConversationOrchestratorContractIntegrationTest {
                 sessionId, userId);
 
         when(moderationClient.moderate(anyString())).thenReturn(ModerationResult.clear());
-        when(llmClient.embed(anyString())).thenReturn(new float[]{0.1f});
-        when(outputJudge.judge(anyString(), any())).thenReturn(OutputJudgeResult.send());
+        when(llmClient.embed(anyString(), anyString(), any(), any())).thenReturn(new float[]{0.1f});
+        when(outputJudge.judge(anyString(), any(), any(), any())).thenReturn(OutputJudgeResult.send());
         // InputJudge 는 실제 빈이다. MEDIUM 판정을 주면 EMOTION_CHECK 계약(질문 1개,
         // 4문장)이 붙고 전달은 CAUTIOUS_SPECULATIVE 가 된다 — 계약이 실제로 걸리는 턴.
         when(llmClient.completeJson(any())).thenReturn(MEDIUM_RISK_VERDICT);
@@ -189,7 +190,8 @@ class ConversationOrchestratorContractIntegrationTest {
 
         ArgumentCaptor<OutputPreFilterResult> judgeInput =
                 ArgumentCaptor.forClass(OutputPreFilterResult.class);
-        org.mockito.Mockito.verify(outputJudge).judge(anyString(), judgeInput.capture());
+        org.mockito.Mockito.verify(outputJudge).judge(
+                anyString(), judgeInput.capture(), eq(userId), eq(sessionId));
 
         assertThat(judgeInput.getValue().failReasons())
                 .as("계약 위반은 Judge 승격 사유다 — 조기 중단 여부가 그것을 바꾸면 안 된다")

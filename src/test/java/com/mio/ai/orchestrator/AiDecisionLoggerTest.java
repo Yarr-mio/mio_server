@@ -507,7 +507,7 @@ class AiDecisionLoggerTest {
     private LlmPricingProperties pricedProperties() {
         LlmPricingProperties properties = new LlmPricingProperties();
         properties.setModels(Map.of("gpt-4o-mini", new LlmPricingProperties.ModelPrice(
-                new java.math.BigDecimal("0.15"), new java.math.BigDecimal("0.60"))));
+                new java.math.BigDecimal("0.15"), new java.math.BigDecimal("0.075"), new java.math.BigDecimal("0.60"))));
         return properties;
     }
 

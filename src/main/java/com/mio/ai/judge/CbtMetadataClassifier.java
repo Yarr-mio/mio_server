@@ -11,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -53,7 +54,9 @@ public class CbtMetadataClassifier {
             String assistantResponse,
             UserMessageSignal userSignal,
             int socraticQuestionsUsed,
-            boolean crisisFlowTriggered) {
+            boolean crisisFlowTriggered,
+            UUID userId,
+            UUID sessionId) {
 
         if (crisisFlowTriggered || assistantResponse == null || assistantResponse.isBlank()) {
             return CbtMetadataResult.none();
@@ -67,7 +70,8 @@ public class CbtMetadataClassifier {
                     assistantResponse,
                     userSignal,
                     socraticQuestionsUsed))
-                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS);
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                    .withAttribution("CBT_CLASSIFIER", userId, sessionId);
             String responseJson = llmClient.completeJson(request);
             return parse(responseJson, CbtInterventionState.fromWireValue(previousState), userSignal);
         } catch (Exception e) {
