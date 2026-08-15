@@ -45,7 +45,7 @@ class DataDeletionServiceTest {
         UUID requestId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         DataDeletionRequest request = request(requestId, userId);
-        when(deletionRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(deletionRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
         doThrow(new IllegalStateException("database unavailable"))
                 .when(hardDeleteExecutor).deleteUser(userId);
 
@@ -64,7 +64,7 @@ class DataDeletionServiceTest {
         UUID requestId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         DataDeletionRequest request = request(requestId, userId);
-        when(deletionRequestRepository.findById(requestId)).thenReturn(Optional.of(request));
+        when(deletionRequestRepository.findByIdForUpdate(requestId)).thenReturn(Optional.of(request));
 
         boolean completed = service.executeDeletion(requestId);
 
