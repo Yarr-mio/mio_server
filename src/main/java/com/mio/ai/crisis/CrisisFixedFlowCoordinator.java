@@ -41,6 +41,11 @@ public class CrisisFixedFlowCoordinator {
         return stateMachine.initialResponse();
     }
 
+    /** 위기 맥락의 실패 폴백 등 최후 응답으로 쓰는, 핫라인이 포함된 고정 handoff 문구. */
+    public String handoffResponse() {
+        return stateMachine.handoffResponse();
+    }
+
     /** @return routed=false인 경우에만 기존 정책 경로를 계속 진행할 수 있다. */
     public CrisisFixedRoute route(UUID sessionId, UUID userId, String userMessage) {
         Optional<CrisisFlowSnapshot> snapshot;
