@@ -61,4 +61,37 @@ class DataDeletionControllerTest {
                 .andExpect(jsonPath("$.data.completed_at").value("2026-09-14T09:05:00+09:00"))
                 .andExpect(jsonPath("$.data.user_id").doesNotExist());
     }
+
+    @Test
+    @DisplayName("인증 사용자는 자신의 가장 최근 삭제 상태를 조회한다")
+    void getCurrentUserStatus_returnsMappedRequest() throws Exception {
+        UUID userId = UUID.randomUUID();
+        DataDeletionRequest request = mock(DataDeletionRequest.class);
+        UUID operationId = UUID.randomUUID();
+        when(request.getId()).thenReturn(operationId);
+        when(request.getStatus()).thenReturn(DeletionStatus.PENDING);
+        when(request.getRequestedAt()).thenReturn(OffsetDateTime.parse("2026-08-15T00:00:00Z"));
+        when(request.getScheduledAt()).thenReturn(OffsetDateTime.parse("2026-09-14T00:00:00Z"));
+        when(dataDeletionService.findLatest(userId)).thenReturn(Optional.of(request));
+
+        mockMvc.perform(get("/v1/users/me/deletion-status")
+                        .principal(() -> userId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.operation_id").value(operationId.toString()))
+                .andExpect(jsonPath("$.data.status").value("pending"));
+    }
+
+    @Test
+    @DisplayName("삭제 요청이 없으면 명시적인 none 상태를 반환한다")
+    void getCurrentUserStatus_withoutRequest_returnsNone() throws Exception {
+        UUID userId = UUID.randomUUID();
+        when(dataDeletionService.findLatest(userId)).thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/v1/users/me/deletion-status")
+                        .principal(() -> userId.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("none"))
+                .andExpect(jsonPath("$.data.operation_id").doesNotExist())
+                .andExpect(jsonPath("$.data.scheduled_at").doesNotExist());
+    }
 }

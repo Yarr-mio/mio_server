@@ -84,6 +84,8 @@ class DataDeletionIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        // users FK를 의도적으로 두지 않아 사용자 삭제만으로는 terminal audit가 지워지지 않는다.
+        jdbcTemplate.update("DELETE FROM data_deletion_requests WHERE user_id = ?", userId);
         jdbcTemplate.update("DELETE FROM sessions WHERE id = ?", sessionId);
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", userId);
         redisTemplate.delete(cacheKeys());

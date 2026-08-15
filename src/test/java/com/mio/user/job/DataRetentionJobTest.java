@@ -16,6 +16,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,7 +50,7 @@ class DataRetentionJobTest {
     void processesDueRequestsIndividually() {
         DataDeletionRequest first = request();
         DataDeletionRequest second = request();
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class)))
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
         when(deletionService.executeDeletion(any())).thenReturn(true);
 
@@ -65,7 +66,7 @@ class DataRetentionJobTest {
     void oneFailureDoesNotStopTheBatch() {
         DataDeletionRequest failing = request();
         DataDeletionRequest healthy = request();
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class)))
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(failing, healthy));
         when(deletionService.executeDeletion(failing.getId()))
                 .thenThrow(new RuntimeException("transaction broke"));
@@ -77,12 +78,13 @@ class DataRetentionJobTest {
         verify(deletionService).executeDeletion(healthy.getId());
         assertThat(counter("completed")).isEqualTo(1.0);
         assertThat(counter("transaction_failed")).isEqualTo(1.0);
+        assertThat(counter("deferred_or_failed")).isZero();
     }
 
     @Test
     @DisplayName("완료하지 못한 건수를 따로 센다")
     void countsUnfinishedSeparately() {
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class)))
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
                 .thenReturn(List.of(request(), request()));
         when(deletionService.executeDeletion(any())).thenReturn(false);
 
@@ -96,7 +98,8 @@ class DataRetentionJobTest {
     @Test
     @DisplayName("대상이 없으면 아무것도 하지 않는다")
     void noDueRequestsIsANoOp() {
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class))).thenReturn(List.of());
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of());
 
         job().hardDeleteExpiredUsers();
 
@@ -106,7 +109,7 @@ class DataRetentionJobTest {
     @Test
     @DisplayName("조회 자체가 실패하면 조용히 넘기지 않고 기록한다")
     void scanFailureIsRecorded() {
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class)))
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
                 .thenThrow(new RuntimeException("db down"));
 
         job().hardDeleteExpiredUsers();
@@ -118,16 +121,47 @@ class DataRetentionJobTest {
     @Test
     @DisplayName("유예 기간이 지난 요청만 조회한다")
     void onlyScansRequestsPastTheGracePeriod() {
-        when(deletionRequestRepository.findDue(any(), any(Pageable.class))).thenReturn(List.of());
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of());
 
         OffsetDateTime before = OffsetDateTime.now(ZoneOffset.UTC);
         job().hardDeleteExpiredUsers();
         OffsetDateTime after = OffsetDateTime.now(ZoneOffset.UTC);
 
         ArgumentCaptor<OffsetDateTime> now = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(deletionRequestRepository).findDue(now.capture(), any(Pageable.class));
+        verify(deletionRequestRepository).findDueAfter(
+                now.capture(), any(), any(), any(Pageable.class));
         // 유예 기간은 접수 시점에 scheduled_at 으로 고정했으므로, 배치는 "지금" 만 넘긴다.
         assertThat(now.getValue()).isBetween(before.minusSeconds(1), after.plusSeconds(1));
+    }
+
+    @Test
+    @DisplayName("한 배치 상한을 넘는 삭제 backlog도 같은 실행에서 끝까지 비운다")
+    void drainsMoreThanOneBatchInTheSameRun() {
+        List<DataDeletionRequest> firstBatch = IntStream.range(0, 100)
+                .mapToObj(ignored -> request())
+                .toList();
+        DataDeletionRequest tail = request();
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(firstBatch, List.of(tail));
+        when(deletionService.executeDeletion(any())).thenReturn(true);
+
+        job().hardDeleteExpiredUsers();
+
+        verify(deletionService, org.mockito.Mockito.times(101)).executeDeletion(any());
+        assertThat(counter("completed")).isEqualTo(101.0);
+    }
+
+    @Test
+    @DisplayName("실행 뒤 남은 만료 삭제 요청 수를 gauge로 노출한다")
+    void publishesDueBacklogGauge() {
+        when(deletionRequestRepository.findDueAfter(any(), any(), any(), any(Pageable.class)))
+                .thenReturn(List.of());
+        when(deletionRequestRepository.countDue(any())).thenReturn(7L);
+
+        job().hardDeleteExpiredUsers();
+
+        assertThat(meterRegistry.get("mio.deletion.backlog").gauge().value()).isEqualTo(7.0);
     }
 
     private double counter(String outcome) {
