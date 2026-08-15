@@ -69,6 +69,45 @@ class OutputJudgeTest {
     }
 
     @Test
+    @DisplayName("action 이 누락된 응답은 REPLACE 판정이 아니라 판정 실패다")
+    void missingActionIsAFailure() {
+        OutputJudge judge = judgeReturning(() -> "{\"rewritten_content\":null}");
+
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+
+        assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
+        assertThat(result.failed()).isTrue();
+        assertThat(counter("failed")).isEqualTo(1.0);
+        assertThat(counter("succeeded")).isZero();
+    }
+
+    @Test
+    @DisplayName("스키마에 없는 action 은 REPLACE 판정이 아니라 판정 실패다")
+    void unknownActionIsAFailure() {
+        OutputJudge judge = judgeReturning(() -> "{\"action\":\"UNKNOWN\"}");
+
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+
+        assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
+        assertThat(result.failed()).isTrue();
+        assertThat(counter("failed")).isEqualTo(1.0);
+        assertThat(counter("succeeded")).isZero();
+    }
+
+    @Test
+    @DisplayName("REWRITE 에 본문이 없으면 판정 실패다")
+    void rewriteWithoutContentIsAFailure() {
+        OutputJudge judge = judgeReturning(() -> "{\"action\":\"REWRITE\"}");
+
+        OutputJudgeResult result = judge.judge("아무 응답", failingPreFilter());
+
+        assertThat(result.action()).isEqualTo(OutputJudgeAction.REPLACE);
+        assertThat(result.failed()).isTrue();
+        assertThat(counter("failed")).isEqualTo(1.0);
+        assertThat(counter("succeeded")).isZero();
+    }
+
+    @Test
     @DisplayName("SEND 판정은 성공으로 센다")
     void sendVerdictCountsAsSucceeded() {
         OutputJudge judge = judgeReturning(() -> "{\"action\":\"SEND\",\"rewritten_content\":null}");
