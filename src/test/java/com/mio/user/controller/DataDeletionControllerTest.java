@@ -6,6 +6,7 @@ import com.mio.config.SecurityConfig;
 import com.mio.user.domain.DataDeletionRequest;
 import com.mio.user.domain.DeletionStatus;
 import com.mio.user.service.DataDeletionService;
+import com.mio.user.service.DataDeletionStatusRateLimiter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +42,7 @@ class DataDeletionControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @MockBean private DataDeletionService dataDeletionService;
+    @MockBean private DataDeletionStatusRateLimiter dataDeletionStatusRateLimiter;
 
     @Test
     @DisplayName("탈퇴 후 인증이 사라져도 operation_id로 완료 상태를 조회한다")
@@ -54,12 +56,17 @@ class DataDeletionControllerTest {
         when(request.getCompletedAt()).thenReturn(OffsetDateTime.parse("2026-09-14T00:05:00Z"));
         when(dataDeletionService.findByOperationId(operationId)).thenReturn(Optional.of(request));
 
-        mockMvc.perform(get("/v1/data-deletions/{operationId}", operationId))
+        mockMvc.perform(get("/v1/data-deletions/{operationId}", operationId)
+                        .with(servletRequest -> {
+                            servletRequest.setRemoteAddr("203.0.113.10");
+                            return servletRequest;
+                        }))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.operation_id").value(operationId.toString()))
                 .andExpect(jsonPath("$.data.status").value("completed"))
                 .andExpect(jsonPath("$.data.completed_at").value("2026-09-14T09:05:00+09:00"))
                 .andExpect(jsonPath("$.data.user_id").doesNotExist());
+        org.mockito.Mockito.verify(dataDeletionStatusRateLimiter).check("203.0.113.10");
     }
 
     @Test

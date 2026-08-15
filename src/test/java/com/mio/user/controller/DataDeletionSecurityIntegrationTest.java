@@ -1,6 +1,7 @@
 package com.mio.user.controller;
 
 import com.mio.user.service.DataDeletionService;
+import com.mio.user.service.DataDeletionStatusRateLimiter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,6 +26,7 @@ class DataDeletionSecurityIntegrationTest {
 
     @Autowired private MockMvc mockMvc;
     @MockBean private DataDeletionService dataDeletionService;
+    @MockBean private DataDeletionStatusRateLimiter dataDeletionStatusRateLimiter;
 
     @Test
     @DisplayName("operation_id 삭제 상태 조회는 인증 없이 허용한다")
