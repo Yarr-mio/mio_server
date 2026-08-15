@@ -11,6 +11,7 @@ import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -53,6 +54,9 @@ class ConversationOrchestratorContractIntegrationTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private MeterRegistry meterRegistry;
 
     /**
      * 인터페이스가 아니라 구현 타입을 목으로 둔다. {@code EmbeddingWorker} 가 구체 타입
@@ -172,6 +176,30 @@ class ConversationOrchestratorContractIntegrationTest {
                 .isIn("PASS", "VIOLATED");
     }
 
+    @Test
+    @DisplayName("실제 오케스트레이터 경로가 턴 지연·정책·계약 metric을 기록한다")
+    void operationalMetricsAreWiredToTheProductPath() {
+        double turnsBefore = counterTotal("mio.ai.turn.outcomes");
+        long latencyBefore = timerCount("mio.ai.turn.duration");
+
+        streamReplies("그런 일이 있었군요. 어떤 점이 가장 힘드셨나요?");
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new SseEmitter(30_000L), null);
+
+        assertThat(counterTotal("mio.ai.turn.outcomes")).isEqualTo(turnsBefore + 1);
+        assertThat(timerCount("mio.ai.turn.duration")).isEqualTo(latencyBefore + 1);
+        assertThat(meterRegistry.find("mio.ai.policy.decisions")
+                .tags(
+                        "risk", "medium",
+                        "response_act", "emotion_check",
+                        "generation_freedom", "constrained",
+                        "delivery_mode", "cautious_speculative")
+                .counter()).isNotNull();
+        assertThat(meterRegistry.find("mio.ai.contract.results")
+                .tags("response_act", "emotion_check")
+                .counters()).isNotEmpty();
+    }
+
     /**
      * 조기 중단 경로에서도 계약 위반이 판정 사유로 전달된다 (이 이슈의 본체).
      *
@@ -234,5 +262,17 @@ class ConversationOrchestratorContractIntegrationTest {
             }
         }
         throw new AssertionError("결정 로그가 기록되지 않았다 — trace 배선이 끊겼다는 뜻이다");
+    }
+
+    private double counterTotal(String name) {
+        return meterRegistry.find(name).counters().stream()
+                .mapToDouble(counter -> counter.count())
+                .sum();
+    }
+
+    private long timerCount(String name) {
+        return meterRegistry.find(name).timers().stream()
+                .mapToLong(timer -> timer.count())
+                .sum();
     }
 }

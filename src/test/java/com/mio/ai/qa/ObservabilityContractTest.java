@@ -38,7 +38,14 @@ class ObservabilityContractTest {
 
         String composeText = text("docker-compose.observability.yml");
         assertThat(composeText).doesNotContain("9090:9090");
-        assertThat(composeText).contains("alertmanager_slack_webhook");
+        assertThat(composeText)
+                .contains("alertmanager_slack_webhook")
+                .contains("GF_PLUGINS_PREINSTALL_DISABLED: \"true\"");
+        assertThat(ROOT.resolve("ops/observability/grafana/provisioning/alerting")).isDirectory();
+        assertThat(ROOT.resolve("ops/observability/grafana/provisioning/plugins")).isDirectory();
+        assertThat(ROOT.resolve("ops/observability/grafana/provisioning/alerting/.gitkeep"))
+                .as("Grafana는 provisioning 디렉터리의 알 수 없는 확장자를 경고한다")
+                .doesNotExist();
     }
 
     @Test
@@ -103,10 +110,27 @@ class ObservabilityContractTest {
                 .contains("Judge failures")
                 .contains("Contract")
                 .contains("Stuck work")
+                .contains("Summary pipeline")
                 .contains("histogram_quantile(0.95")
                 .contains("mio_ai_turn_duration_seconds_bucket")
                 .contains("mio_ai_turn_llm_ttft_seconds_bucket")
-                .contains("mio_ai_turn_first_substantive_seconds_bucket");
+                .contains("mio_ai_turn_first_substantive_seconds_bucket")
+                .contains("mio_summary_stage_duration_seconds_bucket")
+                .contains("mio_summary_component_total")
+                .contains("increase(mio_llm_cost_usd_total[24h])");
+    }
+
+    @Test
+    @DisplayName("요약 지연의 초 단위가 상태 이벤트 건수에 잘못 적용되지 않는다")
+    void summaryPanelUsesSecondsOnlyForLatencySeries() throws IOException {
+        JsonNode dashboard = JSON.readTree(text(
+                "ops/observability/grafana/dashboards/mio-ai-overview.json"));
+        JsonNode summaryPanel = findPanel(dashboard, "Summary pipeline status");
+
+        assertThat(summaryPanel).isNotNull();
+        assertThat(summaryPanel.path("fieldConfig").path("defaults").has("unit")).isFalse();
+        assertThat(summaryPanel.path("fieldConfig").path("overrides").toString())
+                .contains("byFrameRefID", "\"options\":\"A\"", "\"value\":\"s\"");
     }
 
     @Test
@@ -140,5 +164,14 @@ class ObservabilityContractTest {
         Path path = ROOT.resolve(relative);
         assertThat(path).as("필수 운영 artifact가 없다: " + relative).exists();
         return Files.readString(path);
+    }
+
+    private JsonNode findPanel(JsonNode dashboard, String title) {
+        for (JsonNode panel : dashboard.path("panels")) {
+            if (title.equals(panel.path("title").asText())) {
+                return panel;
+            }
+        }
+        return null;
     }
 }

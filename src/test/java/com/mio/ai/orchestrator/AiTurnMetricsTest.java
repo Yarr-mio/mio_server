@@ -15,6 +15,8 @@ import com.mio.ai.security.SecurityLevel;
 import io.micrometer.core.instrument.DistributionSummary;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -120,6 +122,32 @@ class AiTurnMetricsTest {
                 .toList();
         assertThat(tagValues)
                 .noneMatch(value -> value.contains("05619207"));
+    }
+
+    @Test
+    @DisplayName("Prometheus export 이름이 대시보드와 경보가 참조하는 bucket 계약과 일치한다")
+    void exportsExpectedPrometheusHistogramNames() {
+        PrometheusMeterRegistry prometheus =
+                new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+        AiTurnMetrics prometheusMetrics = new AiTurnMetrics(prometheus);
+
+        prometheusMetrics.recordCompleted(
+                constrainedDecision(),
+                ResponseContractResult.pass(),
+                1_800,
+                240,
+                520,
+                37,
+                "stop");
+
+        assertThat(prometheus.scrape())
+                .contains("mio_ai_turn_duration_seconds_bucket")
+                .contains("mio_ai_turn_llm_ttft_seconds_bucket")
+                .contains("mio_ai_turn_first_substantive_seconds_bucket")
+                .contains("mio_ai_turn_held_back_chars_bucket")
+                .contains("mio_ai_policy_decisions_total")
+                .contains("mio_ai_contract_results_total")
+                .contains("mio_ai_turn_outcomes_total");
     }
 
     private PolicyDecision constrainedDecision() {
