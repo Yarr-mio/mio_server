@@ -3,6 +3,7 @@ package com.mio.admin.service;
 import com.mio.admin.dto.SessionCostResponse;
 import com.mio.ai.cost.AiCostAggregate;
 import com.mio.ai.cost.AiCostEventRepository;
+import com.mio.ai.cost.InfraCostAllocator;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.session.domain.Session;
@@ -16,19 +17,23 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
-/** 이슈 #433 — AI 비용만 먼저 노출하고, 인프라 배분은 null로 비워 미지원을 드러내는지 검증. */
+/** 이슈 #433/#437 — AI 비용 + 인프라 배분(캐시 있으면), 캐시 없으면 인프라·합계는 null. */
 @ExtendWith(MockitoExtension.class)
 class AdminSessionCostServiceTest {
 
     @Mock private SessionRepository sessionRepository;
     @Mock private AiCostEventRepository aiCostEventRepository;
+    @Mock private InfraCostAllocator infraCostAllocator;
 
     private AdminSessionCostService service;
 
@@ -37,7 +42,7 @@ class AdminSessionCostServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AdminSessionCostService(sessionRepository, aiCostEventRepository);
+        service = new AdminSessionCostService(sessionRepository, aiCostEventRepository, infraCostAllocator);
     }
 
     @Test
@@ -68,7 +73,7 @@ class AdminSessionCostServiceTest {
         assertThat(response.unpricedEvents()).isZero();
         assertThat(response.allPriced()).isTrue();
         assertThat(response.allocatedFixedInfraUsdEstimate())
-                .as("AWS Cost Explorer 연동 전까지는 0이 아니라 null이어야 '인프라 비용 없음'으로 오독되지 않는다")
+                .as("인프라 비용 배치 캐시가 없으면 0이 아니라 null이어야 '인프라 비용 없음'으로 오독되지 않는다")
                 .isNull();
         assertThat(response.totalUsd()).isNull();
     }
@@ -86,5 +91,39 @@ class AdminSessionCostServiceTest {
 
         assertThat(response.allPriced()).isFalse();
         assertThat(response.unpricedEvents()).isEqualTo(1L);
+    }
+
+    @Test
+    @DisplayName("인프라 배분 캐시가 있으면 총액을 AI비용+인프라비용으로 채운다")
+    void getCost_infraAllocationAvailable_fillsTotal() {
+        User user = User.builder().id(userId).build();
+        OffsetDateTime startedAt = OffsetDateTime.parse("2026-08-10T10:00:00+09:00");
+        OffsetDateTime endedAt = OffsetDateTime.parse("2026-08-10T10:05:00+09:00");
+        Session session = Session.builder()
+                .id(sessionId).user(user).startedAt(startedAt).endedAt(endedAt).build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(aiCostEventRepository.aggregateBySessionId(sessionId))
+                .thenReturn(new AiCostAggregate(new BigDecimal("0.013"), 0L, 2L));
+        when(infraCostAllocator.allocateForSession(eq(YearMonth.of(2026, 8)), eq(300L)))
+                .thenReturn(new BigDecimal("0.555"));
+
+        SessionCostResponse response = service.getCost(sessionId);
+
+        assertThat(response.allocatedFixedInfraUsdEstimate()).isEqualByComparingTo(new BigDecimal("0.555"));
+        assertThat(response.totalUsd()).isEqualByComparingTo(new BigDecimal("0.568"));
+    }
+
+    @Test
+    @DisplayName("세션 길이가 0(진행 중이거나 미종료)이면 인프라 배분을 시도하지 않는다")
+    void getCost_zeroDuration_skipsInfraAllocation() {
+        User user = User.builder().id(userId).build();
+        Session session = Session.builder().id(sessionId).user(user).build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(aiCostEventRepository.aggregateBySessionId(sessionId))
+                .thenReturn(new AiCostAggregate(BigDecimal.ZERO, 0L, 0L));
+
+        service.getCost(sessionId);
+
+        org.mockito.Mockito.verifyNoInteractions(infraCostAllocator);
     }
 }
