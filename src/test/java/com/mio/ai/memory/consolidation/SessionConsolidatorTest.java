@@ -2,6 +2,8 @@ package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
+import com.mio.ai.crisis.CrisisTodoDecision;
+import com.mio.ai.crisis.CrisisTodoSafetyGate;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
@@ -53,6 +55,7 @@ class SessionConsolidatorTest {
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
+    private CrisisTodoSafetyGate crisisTodoSafetyGate;
     private ObjectProvider<SessionConsolidator> self;
 
     private SessionConsolidator newConsolidator() {
@@ -68,6 +71,9 @@ class SessionConsolidatorTest {
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
+        crisisTodoSafetyGate = mock(CrisisTodoSafetyGate.class);
+        when(crisisTodoSafetyGate.evaluate(any(), any()))
+                .thenReturn(new CrisisTodoDecision(false, "no_crisis_evidence"));
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
         when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
@@ -96,6 +102,7 @@ class SessionConsolidatorTest {
                 userSummaryWriter,
                 summaryStatusWriter,
                 crisisEpisodePromoter,
+                crisisTodoSafetyGate,
                 selfProvider
         );
     }
@@ -219,6 +226,30 @@ class SessionConsolidatorTest {
 
         verify(summaryStatusWriter, never()).markDone(sessionId);
         verify(summaryStatusWriter).markFailed(sessionId);
+    }
+
+    @Test
+    @DisplayName("위기 세션은 Todo만 차단하고 이미 생성한 핵심 요약은 노출한다")
+    void onSessionEnded_crisisSessionSuppressesTodoButKeepsSummary() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "위기 세션 요약", "crisis");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 0)).thenReturn(input);
+        when(crisisTodoSafetyGate.evaluate(userId, sessionId))
+                .thenReturn(new CrisisTodoDecision(true, "crisis_event"));
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
+
+        verify(proxy).consolidate(sessionId, userId, "mio", 0);
+        verify(proxy).enrichMemory(input);
+        verify(crisisTodoSafetyGate).evaluate(userId, sessionId);
+        verifyNoInteractions(todoRecommendationService);
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
     }
 
     @Test
