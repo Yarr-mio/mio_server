@@ -3,12 +3,15 @@ package com.mio.ai.memory.consolidation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.LlmStreamResult;
+import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.session.domain.SummaryStatus;
+import com.mio.session.domain.Session;
 import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
@@ -24,11 +27,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyShort;
@@ -39,6 +45,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doAnswer;
 
 class SessionConsolidatorTest {
 
@@ -57,6 +64,12 @@ class SessionConsolidatorTest {
     private CrisisEpisodePromoter crisisEpisodePromoter;
     private ObjectProvider<SessionConsolidator> self;
     private SimpleMeterRegistry meterRegistry;
+    private SessionSummaryRepository sessionSummaryRepository;
+    private SessionCheckpointRepository checkpointRepository;
+    private UserRepository userRepository;
+    private ExtractorLlmClient extractorLlmClient;
+    private LlmClient llmClient;
+    private OntologyValidator ontologyValidator;
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
@@ -66,6 +79,12 @@ class SessionConsolidatorTest {
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
         jdbcTemplate = mock(JdbcTemplate.class);
         sessionRepository = mock(SessionRepository.class);
+        sessionSummaryRepository = mock(SessionSummaryRepository.class);
+        checkpointRepository = mock(SessionCheckpointRepository.class);
+        userRepository = mock(UserRepository.class);
+        extractorLlmClient = mock(ExtractorLlmClient.class);
+        llmClient = mock(LlmClient.class);
+        ontologyValidator = mock(OntologyValidator.class);
         todoRecommendationService = mock(TodoRecommendationService.class);
         summaryStatusWriter = mock(SummaryStatusWriter.class);
         componentStatusWriter = mock(SummaryComponentStatusWriter.class);
@@ -83,19 +102,19 @@ class SessionConsolidatorTest {
 
         return new SessionConsolidator(
                 sessionRepository,
-                mock(SessionSummaryRepository.class),
-                mock(SessionCheckpointRepository.class),
-                mock(UserRepository.class),
+                sessionSummaryRepository,
+                checkpointRepository,
+                userRepository,
                 thoughtRepository,
                 beliefRepository,
                 evidenceAccumulator,
-                mock(ExtractorLlmClient.class),
-                mock(LlmClient.class),
+                extractorLlmClient,
+                llmClient,
                 messageEncryptor,
                 beliefIdentityHasher,
                 jdbcTemplate,
                 new ObjectMapper(),
-                mock(OntologyValidator.class),
+                ontologyValidator,
                 todoRecommendationService,
                 sessionSummaryRenderer,
                 userSummaryWriter,
@@ -130,6 +149,8 @@ class SessionConsolidatorTest {
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
                 .thenReturn(3);
+        when(sessionSummaryRenderer.render("세션 요약", "mio", userId, sessionId))
+                .thenReturn("사용자용 요약");
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
@@ -417,6 +438,40 @@ class SessionConsolidatorTest {
     }
 
     @Test
+    @DisplayName("핵심 요약 생성과 메타데이터 추출 지연을 서로 다른 단계로 기록한다")
+    void consolidate_recordsSummaryGenerationAndMetadataExtractionStages() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId)).thenReturn(ExtractorResult.empty());
+
+        SessionConsolidator.EnrichmentInput result =
+                consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        assertThat(result).isNotNull();
+        assertThat(timerCount("summary_generation", "done")).isEqualTo(1);
+        assertThat(timerCount("metadata_extraction", "done")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("메타데이터 추출 실패는 요약 생성 성공과 분리해 계측한다")
+    void consolidate_metadataExtractionFailure_recordsFailedStage() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId))
+                .thenThrow(new IllegalStateException("extractor down"));
+
+        assertThatThrownBy(() -> consolidator.consolidate(sessionId, userId, "mio", 0))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(timerCount("summary_generation", "done")).isEqualTo(1);
+        assertThat(timerCount("metadata_extraction", "failed")).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("허용값 밖 polarity는 thought만 저장하고 신념 연결은 만들지 않는다")
     void persistThought_invalidPolarity_skipsBeliefConnection() {
         SessionConsolidator consolidator = newConsolidator();
@@ -434,5 +489,27 @@ class SessionConsolidatorTest {
                 .tags("stage", stage, "outcome", outcome)
                 .timer();
         return timer == null ? 0 : timer.count();
+    }
+
+    private void stubCoreInputs(UUID userId, UUID sessionId) {
+        Session session = mock(Session.class);
+        User user = mock(User.class);
+        when(session.getId()).thenReturn(sessionId);
+        when(user.getId()).thenReturn(userId);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(checkpointRepository.findBySession_IdOrderByCheckpointSeqAsc(sessionId)).thenReturn(List.of());
+        when(jdbcTemplate.queryForList(anyString(), eq(sessionId))).thenReturn(List.of(Map.of(
+                "role", "user",
+                "content_ciphertext", new byte[]{1}
+        )));
+        when(messageEncryptor.decrypt(any())).thenReturn("대화 원문".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<String> chunks = invocation.getArgument(1, Consumer.class);
+            chunks.accept("세션 요약");
+            return new LlmStreamResult(1, LlmUsage.unresolved("gpt-4o-mini"), false);
+        }).when(llmClient).stream(any(), any());
+        when(sessionSummaryRepository.findBySession_Id(sessionId)).thenReturn(Optional.empty());
     }
 }

@@ -102,6 +102,7 @@ public class SessionConsolidator {
     private final SummaryStatusWriter summaryStatusWriter;
     private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
+    private final SummaryStageMetrics stageMetrics;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -123,12 +124,14 @@ public class SessionConsolidator {
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
         EnrichmentInput enrichInput;
+        SummaryStageMetrics.StageSample coreReady = stageMetrics.start(SummaryStageMetrics.CORE_SUMMARY_READY);
         try {
             // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화한다.
             // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
             enrichInput = self.getObject().consolidate(
                     event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
         } catch (Exception e) {
+            coreReady.stop("failed");
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
             // REQUIRES_NEW: 현재 트랜잭션이 rollback-only 또는 DB-aborted 상태일 수 있으므로
             // 별도 트랜잭션에서 failed 상태를 저장한다.
@@ -140,10 +143,12 @@ public class SessionConsolidator {
         // 상태를 그대로 두면 pending 에 영구 고착되고, 요약 조회가 끝없이 202 를 반환해
         // 사용자는 앱을 다시 켜기 전까지 무한 로딩에서 빠져나오지 못한다 (이슈 #356).
         if (enrichInput == null) {
+            coreReady.stop("failed");
             log.info("SessionConsolidator: nothing to summarize, marking failed sessionId={}", event.sessionId());
             summaryStatusWriter.markFailed(event.sessionId());
             return;
         }
+        coreReady.stop("done");
 
         // 핵심 요약은 이미 독립 트랜잭션으로 커밋됐다. 선택 작업이 실패해도 사용자가 비용을
         // 치른 요약을 잃지 않도록 여기서 즉시 조회 가능하게 만든다 (이슈 #345, #378, #426).
@@ -164,9 +169,12 @@ public class SessionConsolidator {
                     event.sessionId(), e);
         }
 
+        SummaryStageMetrics.StageSample enrichment = stageMetrics.start(SummaryStageMetrics.MEMORY_ENRICHMENT);
         try {
             self.getObject().enrichMemory(enrichInput);
+            enrichment.stop("done");
         } catch (Exception e) {
+            enrichment.stop("failed");
             log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
                     event.sessionId(), e);
         }
@@ -175,16 +183,20 @@ public class SessionConsolidator {
         // 실행하고, 쓰기만 별도 트랜잭션으로 분리한다.
         // 실패해도 진행한다 — user_summary_text 가 비면 조회 시 summary_text 로 폴백되므로
         // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
+        SummaryStageMetrics.StageSample render = stageMetrics.start(SummaryStageMetrics.USER_RENDER);
         try {
             String userSummary = sessionSummaryRenderer.render(
                     enrichInput.summaryText(), event.characterId(), enrichInput.userId(), enrichInput.sessionId());
             if (userSummary != null) {
                 userSummaryWriter.write(enrichInput.sessionId(), userSummary);
                 componentStatusWriter.markUserRenderDone(event.sessionId());
+                render.stop("done");
             } else {
                 componentStatusWriter.markUserRenderFailed(event.sessionId(), "CONTRACT_INVALID");
+                render.stop("failed");
             }
         } catch (Exception e) {
+            render.stop("failed");
             log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                     event.sessionId(), e);
             componentStatusWriter.markUserRenderFailed(event.sessionId(), "USER_RENDER_FAILED");
@@ -193,6 +205,7 @@ public class SessionConsolidator {
         // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
         // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
         int generatedTodoCount;
+        SummaryStageMetrics.StageSample todo = stageMetrics.start(SummaryStageMetrics.TODO_GENERATION);
         try {
             generatedTodoCount = todoRecommendationService.generateForSession(
                     enrichInput.userId(), enrichInput.sessionId(),
@@ -200,6 +213,7 @@ public class SessionConsolidator {
                             enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
                             enrichInput.triggerTags(), enrichInput.summaryText()));
         } catch (Exception e) {
+            todo.stop("failed");
             log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
             componentStatusWriter.markTodoFailed(event.sessionId(), "TODO_GENERATION_FAILED");
             return;
@@ -208,9 +222,11 @@ public class SessionConsolidator {
             log.info("SessionConsolidator: no todo generated; core summary remains available sessionId={}",
                     event.sessionId());
             componentStatusWriter.markTodoSkipped(event.sessionId());
+            todo.stop("skipped");
             return;
         }
         componentStatusWriter.markTodoDone(event.sessionId());
+        todo.stop("done");
     }
 
     /**
@@ -235,14 +251,32 @@ public class SessionConsolidator {
         }
 
         // 2. 세션 요약 생성 (LLM)
-        String summaryText = generateSummary(conversationText, userId, sessionId);
+        SummaryStageMetrics.StageSample summaryGeneration =
+                stageMetrics.start(SummaryStageMetrics.SUMMARY_GENERATION);
+        String summaryText;
+        try {
+            summaryText = generateSummary(conversationText, userId, sessionId);
+            summaryGeneration.stop("done");
+        } catch (Exception e) {
+            summaryGeneration.stop("failed");
+            throw e;
+        }
 
         // 3. AES-256 암호화
         byte[] ciphertext = messageEncryptor.encrypt(summaryText.getBytes(StandardCharsets.UTF_8));
         String dekId = messageEncryptor.dekId();
 
         // 4. ExtractorLLM — thought/emotion/trigger 추출
-        ExtractorResult extracted = extractorLlmClient.extract(summaryText, userId, sessionId);
+        SummaryStageMetrics.StageSample metadataExtraction =
+                stageMetrics.start(SummaryStageMetrics.METADATA_EXTRACTION);
+        ExtractorResult extracted;
+        try {
+            extracted = extractorLlmClient.extract(summaryText, userId, sessionId);
+            metadataExtraction.stop("done");
+        } catch (Exception e) {
+            metadataExtraction.stop("failed");
+            throw e;
+        }
 
         // 5. OntologyValidator 필터 (Phase 3-1 의존, optional)
         List<ExtractorResult.ExtractedThought> validThoughts = filterValidThoughts(extracted.thoughts());
