@@ -702,11 +702,11 @@ class CellBenchmarkHarnessTest {
         ReportableRate low = ReportableRate.of("수용률", 150, 200);
         var frontier = CandidateElimination.pareto(List.of(
                 new CandidateElimination.Point("cheap-good",
-                        java.util.Optional.of(new java.math.BigDecimal("0.001")), high, 1000),
+                        java.util.Optional.of(new java.math.BigDecimal("0.001")), high, 1000, 190),
                 new CandidateElimination.Point("dear-bad",
-                        java.util.Optional.of(new java.math.BigDecimal("0.010")), low, 5000),
+                        java.util.Optional.of(new java.math.BigDecimal("0.010")), low, 5000, 150),
                 new CandidateElimination.Point("unpriced",
-                        java.util.Optional.empty(), low, 5000)));
+                        java.util.Optional.empty(), low, 5000, 150)));
 
         assertThat(frontier.dominatedBy()).containsEntry("dear-bad", "cheap-good");
         assertThat(frontier.onFrontier())

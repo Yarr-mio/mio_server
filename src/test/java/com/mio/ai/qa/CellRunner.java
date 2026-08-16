@@ -502,6 +502,9 @@ final class CellRunner {
                     ContractOutcome.NOT_APPLICABLE, List.of(),
                     Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
         }
+        if (isEmpty(generated.text())) {
+            return emptyResponse(decision, generated, firstSubstantiveMs);
+        }
 
         boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
         OutputPreFilterResult preFilter =
@@ -517,6 +520,30 @@ final class CellRunner {
         }
         return secondLook(decision, plan, userMessage, priorTurns, caseKey, generated,
                 preFilter, contract, firstSubstantiveMs, startNanos);
+    }
+
+    /**
+     * 사용자에게 보일 본문이 <b>없다</b>.
+     *
+     * <p>1단계 실 실행이 드러낸 결함의 수정 지점이다. 빈 문자열은 pre-filter 도 계약 검사도
+     * 자명하게 통과한다 — 금지어가 없고 문장 수가 상한을 넘지 않는다. 그래서 아무 검사도
+     * 걸리지 않고 {@link Acceptance#ACCEPTED} 가 됐고, 47/47 케이스에서 한 글자도 내지 않은
+     * 후보가 "수용률 100%, 최저 원가" 로 표에 올랐다.
+     *
+     * <p>검사에 걸리지 않았다는 것과 응답을 냈다는 것은 다르다. 여기서 <b>검사 이전에</b>
+     * 막는다 — 어떤 검사를 추가하더라도 "빈 응답은 그 검사도 통과한다" 는 성질은 그대로이기
+     * 때문이다.
+     */
+    private Delivery emptyResponse(PolicyDecision decision, Generated generated,
+                                   long firstSubstantiveMs) {
+        return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
+                ContractOutcome.NOT_APPLICABLE, List.of(), Acceptance.REJECTED_EMPTY_RESPONSE,
+                null, firstSubstantiveMs);
+    }
+
+    /** 공백만 있는 응답도 빈 응답이다 — 사용자가 보는 것이 없다는 점에서 다르지 않다. */
+    private static boolean isEmpty(String text) {
+        return text == null || text.isBlank();
     }
 
     /**
@@ -576,6 +603,13 @@ final class CellRunner {
             return new Delivery(exposureOf(decision), true, true, false, truncated,
                     outcomeOf(contract), contract.violations(),
                     Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
+        }
+        if (isEmpty(retry.text())) {
+            // 재생성이 빈 본문이면 회복이 아니다. "escalation 을 돌렸다" 는 사실이 전달을
+            // 만들어 주지 않는다.
+            return new Delivery(exposureOf(decision), true, true, false, truncated,
+                    ContractOutcome.NOT_APPLICABLE, List.of(),
+                    Acceptance.REJECTED_EMPTY_RESPONSE, null, firstSubstantiveMs);
         }
         ResponseContractResult retryContract = contractValidator.validate(plan, retry.text());
         ContractOutcome retryOutcome = outcomeOf(retryContract);

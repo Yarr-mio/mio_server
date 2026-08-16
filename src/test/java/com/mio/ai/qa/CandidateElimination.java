@@ -328,22 +328,44 @@ final class CandidateElimination {
      * 비용 축을 비교할 수 없으므로 <b>지배 판정에서 빼고</b> 프론티어에 남긴다 — 모르는 것을
      * 나쁜 것으로 접지 않는다.
      */
-    record Frontier(List<String> onFrontier, Map<String, String> dominatedBy) {
+    /**
+     * @param notComparable 세 축을 대볼 수 없어 프론티어 계산에서 <b>뺀</b> 후보와 그 사유.
+     *                      단가 미상과 달리 이쪽은 프론티어에 남기지도 않는다 — 수용 응답이
+     *                      0 건이면 "수용 응답당 원가" 의 분모가 없어서 비용 축이 존재하지
+     *                      않는데, 그것을 "모르니 남긴다" 로 처리하면 <b>아무것도 내지 않은
+     *                      후보가 프론티어에 앉는다</b>. 1단계 실 실행에서 실제로 그렇게 됐다
+     */
+    record Frontier(List<String> onFrontier, Map<String, String> dominatedBy,
+                    Map<String, String> notComparable) {
 
         Frontier {
             onFrontier = List.copyOf(onFrontier);
             dominatedBy = Map.copyOf(dominatedBy);
+            notComparable = Map.copyOf(notComparable);
         }
     }
 
+    /**
+     * @param acceptedResponses 수용된 응답 수. 0 이면 비용 축의 분모가 없어 이 후보는 세 축
+     *                          비교의 대상이 아니다
+     */
     record Point(String label, Optional<BigDecimal> costPerAccepted, ReportableRate acceptanceRate,
-                 long p95LatencyMs) {}
+                 long p95LatencyMs, long acceptedResponses) {}
 
     static Frontier pareto(List<Point> points) {
+        List<Point> comparable = points.stream()
+                .filter(point -> point.acceptedResponses() > 0)
+                .toList();
+        Map<String, String> notComparable = new LinkedHashMap<>();
+        points.stream()
+                .filter(point -> point.acceptedResponses() <= 0)
+                .forEach(point -> notComparable.put(point.label(),
+                        "수용 응답 0건 — 수용 응답당 원가의 분모가 없어 세 축 비교에 넣을 수 없다"));
+
         List<String> frontier = new ArrayList<>();
         Map<String, String> dominated = new LinkedHashMap<>();
-        for (Point point : points) {
-            Optional<Point> dominator = points.stream()
+        for (Point point : comparable) {
+            Optional<Point> dominator = comparable.stream()
                     .filter(other -> !other.label().equals(point.label()))
                     .filter(other -> dominates(other, point))
                     .findFirst();
@@ -353,7 +375,7 @@ final class CandidateElimination {
                 frontier.add(point.label());
             }
         }
-        return new Frontier(frontier, dominated);
+        return new Frontier(frontier, dominated, notComparable);
     }
 
     private static boolean dominates(Point better, Point worse) {

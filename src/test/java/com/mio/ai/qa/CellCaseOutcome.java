@@ -105,7 +105,22 @@ record CellCaseOutcome(
         REJECTED_CONTRACT,
         REJECTED_OUTPUT_JUDGE,
         REJECTED_JUDGE_FAILURE,
-        REJECTED_EXTERNAL_FAILURE
+        REJECTED_EXTERNAL_FAILURE,
+        /**
+         * 모델이 사용자에게 보일 텍스트를 한 글자도 내지 않았다.
+         *
+         * <p>1단계 실 실행이 드러낸 결함이다. 빈 문자열은 {@code OutputPreFilter} 도
+         * {@code ResponseContractValidator} 도 <b>자명하게</b> 통과한다 — 금지어가 없고 문장
+         * 수도 상한을 넘지 않는다. 그래서 second look 이 발동하지 않고 그대로
+         * {@link #ACCEPTED} 가 됐고, 47/47 케이스에서 아무것도 내지 않은 후보가 "수용률
+         * 100%%, 최저 원가" 로 표에 올랐다. 아무것도 하지 않는 것이 1등이 되는 채점은 채점이
+         * 아니다.
+         *
+         * <p>외부 장애({@link #REJECTED_EXTERNAL_FAILURE})와 나눠 두는 이유는 대응이 다르기
+         * 때문이다. 전자는 네트워크·rate limit 이고, 이것은 <b>모델이 정상 응답으로 빈 본문을
+         * 돌려준 것</b>이다.
+         */
+        REJECTED_EMPTY_RESPONSE
     }
 
     CellCaseOutcome {

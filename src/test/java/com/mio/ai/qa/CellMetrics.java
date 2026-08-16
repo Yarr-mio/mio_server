@@ -126,6 +126,11 @@ record CellMetrics(
             return ReportableRate.of(name + " 수용률", accepted(), size);
         }
 
+        /** 모델이 정상 응답으로 빈 본문을 돌려준 턴. 외부 장애와 다르게 센다. */
+        long emptyResponses() {
+            return acceptance.getOrDefault(Acceptance.REJECTED_EMPTY_RESPONSE, 0L);
+        }
+
         /**
          * 생성 턴 중 출력 토큰 상한에 걸린 비율.
          *

@@ -24,6 +24,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 않아도 되게.
  *
  * <ol>
+ *   <li><b>빈 응답이 수용으로 세졌다.</b> {@code gpt-5-nano} 는 47/47 케이스에서 사용자에게
+ *       보일 텍스트를 한 글자도 내지 않았는데 수용률 100%·최저 원가로 표에 올랐다. 빈 문자열은
+ *       pre-filter 도 계약 검사도 자명하게 통과하기 때문이다.</li>
  *   <li><b>추론 모델이 프로덕션 토큰 예산 안에서 출력을 못 낸다.</b> 400 토큰을 내부 추론에
  *       전부 쓰고 잘린다. 그 사실이 경고 로그로만 남고 점수에는 반영되지 않아, 대부분 잘린
  *       후보가 순위표에 그대로 올랐다.</li>
@@ -59,6 +62,90 @@ class CellStage1RegressionTest {
         } catch (Exception e) {
             throw new IllegalStateException("회귀 실행이 예외로 멈췄다", e);
         }
+    }
+
+    // ── 결함 1: 빈 응답이 수용으로 세진다 ────────────────────────────
+
+    @Test
+    @DisplayName("빈 응답은 수용이 아니라 REJECTED_EMPTY_RESPONSE 로 세진다")
+    void emptyResponseIsNeverAccepted() {
+        CellRunner.Result empty = run((ledger, pricing) ->
+                new FixedTextLlmClient(ledger, pricing, ""));
+
+        assertThat(empty.outcomes())
+                .filteredOn(CellCaseOutcome::generationCalled)
+                .as("생성을 부른 턴이 하나도 없으면 이 테스트가 아무것도 검사하지 않는다")
+                .isNotEmpty()
+                .as("사용자에게 아무것도 전달하지 않은 턴이 수용으로 세지면 '아무것도 안 하는 모델' 이 1등이 된다")
+                .noneMatch(CellCaseOutcome::accepted)
+                .allMatch(o -> o.acceptance()
+                        == CellCaseOutcome.Acceptance.REJECTED_EMPTY_RESPONSE);
+        assertThat(empty.outcomes())
+                .filteredOn(CellCaseOutcome::accepted)
+                .as("수용으로 남는 것은 모델을 부르지 않은 고정 경로(위기·보안 거절·가드)뿐이다")
+                .allMatch(o -> !o.generationCalled());
+    }
+
+    @Test
+    @DisplayName("공백만 있는 응답도 빈 응답과 같게 센다")
+    void whitespaceOnlyResponseIsRejectedToo() {
+        CellRunner.Result blank = run((ledger, pricing) ->
+                new FixedTextLlmClient(ledger, pricing, "   \n\t  "));
+
+        assertThat(blank.outcomes())
+                .filteredOn(CellCaseOutcome::generationCalled)
+                .isNotEmpty()
+                .allMatch(o -> o.acceptance()
+                        == CellCaseOutcome.Acceptance.REJECTED_EMPTY_RESPONSE);
+    }
+
+    @Test
+    @DisplayName("빈 응답은 수용률·수용 응답당 원가 분모·리포트에 전부 반영된다")
+    void emptyResponseFlowsIntoEveryDerivedNumber() {
+        CellMetrics.Population empty = CellMetrics.of(run((ledger, pricing) ->
+                new FixedTextLlmClient(ledger, pricing, ""))).modelDiscriminating();
+        CellMetrics.Population healthy = CellMetrics.of(run((ledger, pricing) ->
+                new FixedTextLlmClient(ledger, pricing, "그렇게 느끼셨군요. 조금 더 들려주실 수 있을까요?")))
+                .modelDiscriminating();
+
+        assertThat(empty.emptyResponses())
+                .as("빈 응답 수가 생성 호출 수와 같아야 한다 — 모든 생성이 빈 본문이었다")
+                .isEqualTo(empty.generationCalls());
+        assertThat(empty.accepted())
+                .as("빈 응답 하나하나가 분자에서 빠진다")
+                .isEqualTo(healthy.accepted() - empty.generationCalls());
+        assertThat(rate(empty.acceptanceRate()))
+                .as("47/47 이 100%% 로 찍히던 것이 이 수정의 대상이다")
+                .isLessThan(rate(healthy.acceptanceRate()));
+        assertThat(empty.totalCostUsd())
+                .as("호출은 실제로 일어났으므로 총 원가는 0 이 아니다 — 청구서는 그대로다")
+                .isPresent();
+        assertThat(empty.costPerAcceptedResponse().orElseThrow())
+                .as("수용 응답당 원가의 분모가 줄었으므로 값은 올라간다 — 내려가면 분모가 틀린 것이다")
+                .isGreaterThan(healthy.costPerAcceptedResponse().orElseThrow());
+    }
+
+    private static double rate(ReportableRate rate) {
+        return rate instanceof ReportableRate.Reported reported ? reported.percent() : -1.0;
+    }
+
+    @Test
+    @DisplayName("빈 응답으로 수용 0 이 된 후보는 파레토 프론티어에 올라가지 않는다")
+    void zeroAcceptedCandidateIsExcludedFromPareto() {
+        ReportableRate good = ReportableRate.of("수용률", 190, 200);
+        ReportableRate none = ReportableRate.of("수용률", 0, 200);
+
+        CandidateElimination.Frontier frontier = CandidateElimination.pareto(List.of(
+                new CandidateElimination.Point("B/정상",
+                        java.util.Optional.of(new java.math.BigDecimal("0.001")), good, 4000, 190),
+                new CandidateElimination.Point("B/빈응답",
+                        java.util.Optional.empty(), none, 1000, 0)));
+
+        assertThat(frontier.onFrontier()).containsExactly("B/정상");
+        assertThat(frontier.notComparable())
+                .as("전달한 것이 없는 후보를 '단가 미상' 과 같이 취급하면 프론티어에 그대로 남는다")
+                .containsOnlyKeys("B/빈응답");
+        assertThat(frontier.notComparable().get("B/빈응답")).contains("수용 응답 0건");
     }
 
     // ── 결함 2: 추론 모델의 절단 ─────────────────────────────────────

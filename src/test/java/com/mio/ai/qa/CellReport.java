@@ -157,6 +157,8 @@ final class CellReport {
         out.append("    생성 절단        %d/%d턴 (%.1f%%)  ← 출력 토큰 상한에 걸려 잘린 생성%n"
                 .formatted(population.truncatedGenerations(), population.generationCalls(),
                         population.truncationRatePercent()));
+        out.append(("    빈 응답          %d건  ← 모델이 정상 응답으로 본문을 내지 않은 턴 "
+                + "(수용으로 세지 않는다)%n").formatted(population.emptyResponses()));
         out.append("    케이스 타임아웃  %d건  ← 셀을 중단시키지 않고 실패로 기록한 건수%n"
                 .formatted(population.timedOutCases()));
         out.append("    토큰             prompt %d / completion %d%n".formatted(
@@ -272,6 +274,8 @@ final class CellReport {
                 metrics.modelDiscriminating().truncatedGenerations(),
                 metrics.modelDiscriminating().generationCalls(),
                 metrics.modelDiscriminating().truncationRatePercent()));
+        extra.put("empty_responses",
+                String.valueOf(metrics.modelDiscriminating().emptyResponses()));
         extra.put("latency_measured", result.latencyMeasured()
                 ? "실측 (동기 스트리밍)" : BatchQualityMode.NOT_MEASURED);
         extra.put("frontier_candidate", result.variant().frontierCandidate() == null
