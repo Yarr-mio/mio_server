@@ -7,11 +7,15 @@ public record CrisisFlowSnapshot(
         UUID sessionId,
         UUID userId,
         CrisisFlowStage stage,
-        CrisisFlowStatus status
+        CrisisFlowStatus status,
+        int severity
 ) {
     public CrisisFlowSnapshot {
         if (sessionId == null || userId == null || stage == null || status == null) {
             throw new IllegalArgumentException("crisis flow snapshot fields are required");
+        }
+        if (severity < 1 || severity > 3) {
+            throw new IllegalArgumentException("crisis severity must be within 1..3: " + severity);
         }
     }
 }

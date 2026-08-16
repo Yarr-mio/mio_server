@@ -19,20 +19,21 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
 
     @Override
     @Transactional
-    public void begin(UUID sessionId, UUID userId) {
+    public void begin(UUID sessionId, UUID userId, int severity) {
         jdbcTemplate.update(
                 """
                 INSERT INTO crisis_flow_states (
-                    session_id, user_id, stage, status,
+                    session_id, user_id, stage, status, severity,
                     current_intent, plan, means, means_access, immediate_support,
                     version, last_error_code, started_at, updated_at, terminal_at
-                ) VALUES (?, ?, 'current_intent', 'active',
+                ) VALUES (?, ?, 'current_intent', 'active', ?,
                           'unknown', 'unknown', 'unknown', 'unknown', 'unknown',
                           0, NULL, now(), now(), NULL)
                 ON CONFLICT (session_id) DO UPDATE SET
                     user_id = EXCLUDED.user_id,
                     stage = 'current_intent',
                     status = 'active',
+                    severity = EXCLUDED.severity,
                     current_intent = 'unknown',
                     plan = 'unknown',
                     means = 'unknown',
@@ -44,14 +45,14 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                     updated_at = now(),
                     terminal_at = NULL
                 """,
-                sessionId, userId);
+                sessionId, userId, severity);
     }
 
     @Override
     public Optional<CrisisFlowSnapshot> find(UUID sessionId) {
         List<CrisisFlowSnapshot> rows = jdbcTemplate.query(
                 """
-                SELECT session_id, user_id, stage, status
+                SELECT session_id, user_id, stage, status, severity
                 FROM crisis_flow_states
                 WHERE session_id = ?
                 """,
@@ -59,7 +60,8 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                         rs.getObject("session_id", UUID.class),
                         rs.getObject("user_id", UUID.class),
                         CrisisFlowStage.valueOf(rs.getString("stage").toUpperCase(Locale.ROOT)),
-                        CrisisFlowStatus.valueOf(rs.getString("status").toUpperCase(Locale.ROOT))),
+                        CrisisFlowStatus.valueOf(rs.getString("status").toUpperCase(Locale.ROOT)),
+                        rs.getInt("severity")),
                 sessionId);
         return rows.stream().findFirst();
     }

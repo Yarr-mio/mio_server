@@ -38,7 +38,7 @@ class CrisisFixedFlowCoordinatorTest {
     void activeStateRoutesThroughFixedTransition() {
         when(store.find(sessionId)).thenReturn(Optional.of(
                 new CrisisFlowSnapshot(sessionId, userId,
-                        CrisisFlowStage.CURRENT_INTENT, CrisisFlowStatus.ACTIVE)));
+                        CrisisFlowStage.CURRENT_INTENT, CrisisFlowStatus.ACTIVE, 2)));
 
         CrisisFixedRoute route = coordinator.route(sessionId, userId, "네");
 
@@ -46,6 +46,8 @@ class CrisisFixedFlowCoordinatorTest {
         assertThat(route.stage()).isEqualTo(CrisisFlowStage.PLAN);
         assertThat(route.status()).isEqualTo(CrisisFlowStatus.ACTIVE);
         assertThat(route.fixedResponse()).contains("계획").contains("109");
+        // 후속 턴은 플로우를 연 판정의 severity 를 그대로 잇는다 — 하드코딩 3 금지.
+        assertThat(route.severity()).isEqualTo(2);
         verify(store).advance(
                 sessionId, CrisisFlowStage.CURRENT_INTENT, CrisisAnswer.YES,
                 CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE);
@@ -56,7 +58,7 @@ class CrisisFixedFlowCoordinatorTest {
     void unknownAnswerPersistsHandoff() {
         when(store.find(sessionId)).thenReturn(Optional.of(
                 new CrisisFlowSnapshot(sessionId, userId,
-                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE)));
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 3)));
 
         CrisisFixedRoute route = coordinator.route(sessionId, userId, "잘 모르겠어요");
 
@@ -87,7 +89,7 @@ class CrisisFixedFlowCoordinatorTest {
     void transitionWriteFailureFailsClosed() {
         when(store.find(sessionId)).thenReturn(Optional.of(
                 new CrisisFlowSnapshot(sessionId, userId,
-                        CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE)));
+                        CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE, 3)));
         org.mockito.Mockito.doThrow(new IllegalStateException("write failed"))
                 .when(store).advance(any(), any(), any(), any(), any());
 
@@ -131,7 +133,7 @@ class CrisisFixedFlowCoordinatorTest {
     void terminalStateDoesNotRoute() {
         when(store.find(sessionId)).thenReturn(Optional.of(
                 new CrisisFlowSnapshot(sessionId, userId,
-                        CrisisFlowStage.COMPLETED, CrisisFlowStatus.COMPLETED)));
+                        CrisisFlowStage.COMPLETED, CrisisFlowStatus.COMPLETED, 3)));
 
         assertThat(coordinator.route(sessionId, userId, "연락했어요").routed()).isFalse();
     }
@@ -140,9 +142,9 @@ class CrisisFixedFlowCoordinatorTest {
     @DisplayName("새 위기 진입 상태 저장 실패는 metric에 남기되 호출부가 고정 응답을 계속 보낼 수 있다")
     void beginFailureIsReportedWithoutThrowing() {
         org.mockito.Mockito.doThrow(new IllegalStateException("insert failed"))
-                .when(store).begin(sessionId, userId);
+                .when(store).begin(sessionId, userId, 3);
 
-        assertThat(coordinator.begin(sessionId, userId)).isFalse();
+        assertThat(coordinator.begin(sessionId, userId, 3)).isFalse();
         assertThat(meterRegistry.find("mio.crisis.fixed.flow")
                 .tags("stage", "current_intent", "outcome", "storage_failure")
                 .counter().count()).isEqualTo(1);

@@ -24,7 +24,7 @@ class CrisisTodoSafetyGateTest {
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         when(store.find(sessionId)).thenReturn(Optional.of(new CrisisFlowSnapshot(
-                sessionId, userId, CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE)));
+                sessionId, userId, CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE, 3)));
         when(jdbcTemplate.update(anyString(), eq(sessionId), eq(userId),
                 eq("suppressed"), eq("active_crisis_flow"))).thenReturn(1);
 

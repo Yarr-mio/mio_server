@@ -70,7 +70,8 @@ class CrisisFixedFlowOrchestratorIntegrationTest {
         jdbcTemplate.update(
                 "INSERT INTO sessions (id, user_id, character_id) VALUES (?, ?, 'mio')",
                 sessionId, userId);
-        crisisFlowStateStore.begin(sessionId, userId);
+        // severity 2 로 연 플로우. 후속 고정 턴이 이 값을 그대로 이어야 한다 — 3 하드코딩 금지.
+        crisisFlowStateStore.begin(sessionId, userId, 2);
         when(moderationClient.moderate(anyString())).thenReturn(ModerationResult.clear());
         when(llmClient.embed(anyString(), anyString(), any(), any()))
                 .thenReturn(new float[]{0.1f});
@@ -104,7 +105,9 @@ class CrisisFixedFlowOrchestratorIntegrationTest {
                 String.class, sessionId)).isEqualTo("crisis_flow");
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT crisis_severity FROM message_turns WHERE session_id = ?",
-                Integer.class, sessionId)).isEqualTo(3);
+                Integer.class, sessionId))
+                .as("후속 고정 턴은 플로우를 연 판정의 severity(2)를 기록해야 한다")
+                .isEqualTo(2);
 
         verifyNoInteractions(llmClient, moderationClient);
         assertThat(meterRegistry.find("mio.ai.turn.outcomes")

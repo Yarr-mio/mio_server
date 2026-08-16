@@ -50,10 +50,13 @@ class CrisisFlowStateStoreIntegrationTest {
     @Test
     @DisplayName("초기 상태와 닫힌 응답 값을 저장하고 전이를 감사 행으로 남긴다")
     void persistsStateAndTransitionWithoutRawMessage() {
-        store.begin(sessionId, userId);
+        store.begin(sessionId, userId, 2);
         CrisisFlowSnapshot initial = store.find(sessionId).orElseThrow();
         assertThat(initial.stage()).isEqualTo(CrisisFlowStage.CURRENT_INTENT);
         assertThat(initial.status()).isEqualTo(CrisisFlowStatus.ACTIVE);
+        assertThat(initial.severity())
+                .as("플로우를 연 판정의 severity 가 상태 행에 남아야 한다")
+                .isEqualTo(2);
 
         store.advance(sessionId, CrisisFlowStage.CURRENT_INTENT, CrisisAnswer.YES,
                 CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE);
@@ -71,7 +74,7 @@ class CrisisFlowStateStoreIntegrationTest {
     @Test
     @DisplayName("현재 stage와 어긋난 stale 전이는 거부한다")
     void rejectsStaleTransition() {
-        store.begin(sessionId, userId);
+        store.begin(sessionId, userId, 3);
 
         assertThatThrownBy(() -> store.advance(
                 sessionId, CrisisFlowStage.PLAN, CrisisAnswer.YES,

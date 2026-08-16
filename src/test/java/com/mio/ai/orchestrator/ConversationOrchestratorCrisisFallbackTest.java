@@ -149,7 +149,7 @@ class ConversationOrchestratorCrisisFallbackTest {
         when(crisisFixedFlowCoordinator.route(sessionId, userId, "네"))
                 .thenReturn(CrisisFixedRoute.routed(
                         stateMachine.initialResponse(),
-                        CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE, "advanced"));
+                        CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE, "advanced", 3));
         doThrow(new RuntimeException("db down mid-crisis"))
                 .when(messagePersistenceService)
                 .completeTurn(any(), any(), anyString(), anyBoolean(), anyString(), any());

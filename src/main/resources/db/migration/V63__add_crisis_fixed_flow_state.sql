@@ -1,11 +1,14 @@
 -- P0-5 위기 고정 플로우 상태와 전이 감사 기록.
--- 아직 미적용인 다음 연속 버전부터 사용한다. 후속 P0-7 마이그레이션은 V62 이후로 잇는다.
+-- PR #445 가 V60~V62 를 사용하므로 이 브랜치는 V63부터 잇는다. 후속 P0-7 은 V64.
 
 CREATE TABLE crisis_flow_states (
     session_id         UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     stage              TEXT NOT NULL DEFAULT 'current_intent',
     status             TEXT NOT NULL DEFAULT 'active',
+    -- 플로우를 연 위기 판정의 severity. 후속 고정 턴의 crisis_severity 기록과
+    -- 재생(replay) 시 핫라인 이벤트 복원에 쓴다. 보수적 기본값 3.
+    severity           SMALLINT NOT NULL DEFAULT 3,
     current_intent     TEXT NOT NULL DEFAULT 'unknown',
     plan               TEXT NOT NULL DEFAULT 'unknown',
     means              TEXT NOT NULL DEFAULT 'unknown',
@@ -21,6 +24,7 @@ CREATE TABLE crisis_flow_states (
         'immediate_support', 'completed', 'handoff'
     )),
     CONSTRAINT ck_crisis_flow_status CHECK (status IN ('active', 'completed', 'handoff')),
+    CONSTRAINT ck_crisis_flow_severity CHECK (severity BETWEEN 1 AND 3),
     CONSTRAINT ck_crisis_flow_current_intent CHECK (current_intent IN ('yes', 'no', 'unknown')),
     CONSTRAINT ck_crisis_flow_plan CHECK (plan IN ('yes', 'no', 'unknown')),
     CONSTRAINT ck_crisis_flow_means CHECK (means IN ('yes', 'no', 'unknown')),

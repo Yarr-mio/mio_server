@@ -25,9 +25,9 @@ public class CrisisFixedFlowCoordinator {
     private final MeterRegistry meterRegistry;
 
     /** 초기 고정 응답 전 상태를 연다. 실패해도 호출부가 위기 응답을 전달할 수 있도록 삼킨다. */
-    public boolean begin(UUID sessionId, UUID userId) {
+    public boolean begin(UUID sessionId, UUID userId, int severity) {
         try {
-            store.begin(sessionId, userId);
+            store.begin(sessionId, userId, severity);
             record("current_intent", "started");
             return true;
         } catch (Exception e) {
@@ -69,7 +69,8 @@ public class CrisisFixedFlowCoordinator {
             record("unknown", "missing_state");
             return CrisisFixedRoute.routed(
                     stateMachine.handoffResponse(), CrisisFlowStage.HANDOFF,
-                    CrisisFlowStatus.HANDOFF, "missing_state");
+                    CrisisFlowStatus.HANDOFF, "missing_state",
+                    CrisisFixedRoute.FALLBACK_SEVERITY);
         }
 
         CrisisFlowSnapshot current = snapshot.get();
@@ -80,7 +81,7 @@ public class CrisisFixedFlowCoordinator {
             record(tag(current.stage()), "identity_mismatch");
             return CrisisFixedRoute.routed(
                     stateMachine.handoffResponse(), CrisisFlowStage.HANDOFF,
-                    CrisisFlowStatus.HANDOFF, "identity_mismatch");
+                    CrisisFlowStatus.HANDOFF, "identity_mismatch", current.severity());
         }
 
         CrisisAnswer answer = answerParser.parse(userMessage);
@@ -99,7 +100,8 @@ public class CrisisFixedFlowCoordinator {
                 ? "ambiguous_answer"
                 : outcome;
         return CrisisFixedRoute.routed(
-                transition.fixedResponse(), transition.nextStage(), transition.status(), reason);
+                transition.fixedResponse(), transition.nextStage(), transition.status(), reason,
+                current.severity());
     }
 
     private CrisisFixedRoute storageFailure(UUID sessionId, String stage, Exception error) {
@@ -107,7 +109,8 @@ public class CrisisFixedFlowCoordinator {
         record(stage, "storage_failure");
         return CrisisFixedRoute.routed(
                 stateMachine.handoffResponse(), CrisisFlowStage.HANDOFF,
-                CrisisFlowStatus.HANDOFF, "storage_failure");
+                CrisisFlowStatus.HANDOFF, "storage_failure",
+                CrisisFixedRoute.FALLBACK_SEVERITY);
     }
 
     private void record(String stage, String outcome) {
