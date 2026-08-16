@@ -206,12 +206,15 @@ public class ConversationOrchestrator {
             if (fixedRoute.routed()) {
                 crisisContextRef.set(true);
                 String fixedResponse = fixedRoute.fixedResponse();
+                // 플로우를 연 판정의 severity 를 그대로 잇는다. 3 으로 고정하면 severity 1~2
+                // 진입의 후속 턴이 crisis_events·리포트에서 실제보다 높게 기록된다.
+                int severity = fixedRoute.severity();
                 finishedReasonRef.set("crisis_flow");
-                crisisSeverityRef.set(3);
+                crisisSeverityRef.set(severity);
                 persistTurnOutcome(turn, turnPersisted, fixedResponse, true,
-                        "crisis_flow", 3);
+                        "crisis_flow", severity);
                 boolean delivered = crisisFlowService.deliverFixedResponse(
-                        fixedResponse, 3, emitter, outboundMsgId,
+                        fixedResponse, severity, emitter, outboundMsgId,
                         userSignal.emotionScore(), sessionId);
                 if (!delivered) {
                     log.warn("Crisis fixed-flow turn persisted but not delivered sessionId={}", sessionId);
