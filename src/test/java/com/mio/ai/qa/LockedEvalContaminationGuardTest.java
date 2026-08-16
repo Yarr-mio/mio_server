@@ -1,23 +1,17 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.qa.LockedEvalContaminationScanner.Hit;
+import com.mio.ai.qa.LockedEvalContaminationScanner.Probes;
 import com.mio.ai.qa.LockedEvalSet.LockedCase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
-import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -37,18 +31,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>가드는 <b>발견하면 실패</b>가 아니라 <b>발견하지 못하면 통과</b>가 되지 않도록 설계했다.
  *
  * <ul>
- *   <li>스캔 대상 파일이 하나도 없으면 그 자체로 실패한다. 경로가 바뀌어 아무것도 검사하지
+ *   <li>스캔 대상 파일이 하나도 없으면 예외로 죽는다. 경로가 바뀌어 아무것도 검사하지
  *       못하는 상태가 조용한 통과로 보이면 안 된다.</li>
- *   <li>탐지는 정규화 후 문자열 포함으로 한다. 정규화는 NFKC·소문자·결합 문자 제거·공백
- *       제거까지만 하고 구두점은 남긴다 — 표기 우회 케이스는 구분자가 곧 내용이다.</li>
- *   <li>16자 이상 케이스는 <b>모든 16자 창</b>을 검사한다. 문장을 잘라서 옮겨 붙여도 걸린다.
- *       8~15자는 전문 일치로 본다. 8자 미만은 우연 일치가 잦아 기계 판정을 포기하고,
- *       포기했다는 사실을 {@link #reportsCasesTooShortToGuard()} 가 명시적으로 출력한다.</li>
+ *   <li>탐지 규칙과 구간은 {@link LockedEvalContaminationScanner} 에 있고, 그 로직이 실제로
+ *       유출을 잡는지는 {@link LockedEvalContaminationSelfTest} 가 심어 둔 가짜 유출로
+ *       매번 확인한다 — "히트 없음" 이 "탐지가 죽었음" 과 구분되게 만드는 장치다.</li>
+ *   <li>스캔 대상 확장자 허용목록의 드리프트도 검사한다({@link #scanExtensionAllowlistHasNoDrift()}).
+ *       새 템플릿 형식이 들어오면 사각지대가 생기는 대신 빌드가 깨진다.</li>
  * </ul>
  *
- * <p>잡을 수 없는 것도 적어 둔다. 사람이 케이스를 <b>바꿔 쓰는 것</b>(패러프레이즈)은 어떤
- * 문자열 검사로도 잡히지 않는다. 이 가드는 복사·붙여넣기를 막을 뿐이고, 나머지는 라벨 절차
- * 문서의 규칙과 리뷰가 담당한다.
+ * <p>잡을 수 없는 것도 적어 둔다. 사람이 케이스를 <b>바꿔 쓰는 것</b>(문장 전체를 다시 쓰는
+ * 패러프레이즈)은 어떤 문자열 검사로도 잡히지 않는다. 이 가드가 막는 것은 복사·붙여넣기와
+ * 글자 몇 개를 고친 옮겨 적기까지다.
  *
  * <h2>dev_gold 분리</h2>
  *
@@ -60,22 +54,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("[QA] 잠금 평가셋 오염 방지 가드")
 class LockedEvalContaminationGuardTest {
 
-    /** 프롬프트·템플릿·튜닝 소스로 간주하는 스캔 루트. */
-    private static final List<String> SCAN_ROOTS = List.of(
-            "src/main/java", "src/main/resources",
-            "src/test/java", "src/test/resources",
-            "docs", "scripts", "ops", ".github");
+    /**
+     * 8자 미만이라 기계 판정을 포기한 턴 수의 상한.
+     *
+     * <p>포기한 사실을 출력만 하고 상한을 두지 않으면 짧은 케이스가 늘어도 아무도 모른다.
+     */
+    private static final int MAX_UNGUARDABLE_TURNS = 10;
 
-    /** 텍스트로 읽을 확장자. 이 밖은 사람이 문장을 옮겨 붙일 대상이 아니다. */
-    private static final Set<String> SCAN_EXTENSIONS = Set.of(
-            ".java", ".yml", ".yaml", ".json", ".md", ".sql", ".txt", ".py", ".sh", ".kts",
-            ".properties");
+    /**
+     * 8~15자 구간(전문 일치 + 9자 창 + 유사도로만 지켜지는 구간)의 상한.
+     *
+     * <p>16자 이상 구간은 16자 창 전수 검사로 잘라 붙이기까지 잡히지만, 8~15자 구간은
+     * 창이 짧아 우연 일치 위험 때문에 규칙을 더 조일 수 없다. 즉 <b>보호가 상대적으로
+     * 약한 구간</b>이다. 8자 미만 코호트와 마찬가지로 크기를 보고하고 상한을 걸어,
+     * 짧은 케이스만 늘어나 가드의 실질 커버리지가 조용히 무너지는 일을 막는다.
+     */
+    private static final int MAX_SHORT_BAND_TURNS = 120;
 
-    /** 잠금 세트 자신은 스캔에서 제외한다. */
-    private static final String LOCKED_DIR = "src/test/resources/eval/locked";
-
-    private static final int FRAGMENT_LENGTH = 16;
-    private static final int MIN_VERBATIM_LENGTH = 8;
+    /** 짧은 구간이 전체 턴에서 차지하는 비율 상한. 세트가 커져도 구성이 짧은 쪽으로 쏠리지 않게 한다. */
+    private static final double MAX_SHORT_BAND_SHARE = 50.0;
 
     /**
      * 근사 중복 임계값 (3-gram Jaccard).
@@ -85,83 +82,62 @@ class LockedEvalContaminationGuardTest {
      * 깨져 잠금이 아니라 소음이 된다. 반대로 0.8 처럼 느슨하게 두면 표현만 살짝 바꾼 복제를
      * 통과시킨다.
      */
-    private static final double NEAR_DUPLICATE_THRESHOLD = 0.55;
+    private static final double NEAR_DUPLICATE_THRESHOLD =
+            LockedEvalContaminationScanner.SIMILARITY_THRESHOLD;
 
-    private final Path repoRoot = findRepoRoot();
+    private final Path repoRoot = LockedEvalContaminationScanner.findRepoRoot();
 
     // ── 소스 오염 ───────────────────────────────────────────────────
 
     @Test
     @DisplayName("잠금 케이스 본문이 프롬프트·템플릿·튜닝 소스에 나타나지 않는다")
     void lockedCaseTextNeverAppearsInSources() {
-        Map<String, String> fragmentOwner = new HashMap<>();
-        List<Probe> verbatimProbes = new ArrayList<>();
+        Probes probes = LockedEvalContaminationScanner.probesFromLockedSet();
+        List<Hit> hits = LockedEvalContaminationScanner.scan(repoRoot, probes);
 
-        for (LockedCase c : LockedEvalSet.CASES) {
-            for (var turn : c.userTurns()) {
-                String normalized = LockedEvalSet.normalize(turn.text());
-                if (normalized.length() >= FRAGMENT_LENGTH) {
-                    for (int i = 0; i + FRAGMENT_LENGTH <= normalized.length(); i++) {
-                        fragmentOwner.putIfAbsent(
-                                normalized.substring(i, i + FRAGMENT_LENGTH), c.id());
-                    }
-                } else if (normalized.length() >= MIN_VERBATIM_LENGTH) {
-                    verbatimProbes.add(new Probe(c.id(), normalized));
-                }
-            }
-        }
+        System.out.printf("%n[locked-guard] 조각 %d개 · 짧은 케이스 프로브 %d건 · 규칙별 히트 %s%n",
+                probes.fragmentCount(), probes.shortProbes().size(),
+                LockedEvalContaminationScanner.countByRule(hits));
 
-        List<Path> files = scanTargets();
-        assertThat(files)
-                .as("스캔 대상 파일이 하나도 없다 — 경로가 바뀌었는데 통과로 보이면 가드가 아니다")
-                .isNotEmpty();
-        assertThat(fragmentOwner)
-                .as("검사할 조각이 하나도 없다")
-                .isNotEmpty();
-
-        List<String> hits = new ArrayList<>();
-        for (Path file : files) {
-            String content = LockedEvalSet.normalize(read(file));
-            String relative = repoRoot.relativize(file).toString();
-
-            for (int i = 0; i + FRAGMENT_LENGTH <= content.length(); i++) {
-                String owner = fragmentOwner.get(content.substring(i, i + FRAGMENT_LENGTH));
-                if (owner != null) {
-                    hits.add("%s ← %s".formatted(owner, relative));
-                    break;
-                }
-            }
-            for (Probe probe : verbatimProbes) {
-                if (content.contains(probe.normalized())) {
-                    hits.add("%s ← %s (전문 일치)".formatted(probe.caseId(), relative));
-                }
-            }
-        }
-
-        assertThat(new LinkedHashSet<>(hits))
+        assertThat(hits)
                 .as("잠금 케이스가 소스에 유출됐다. 잠금 세트는 프롬프트·few-shot·룰 확장·"
-                        + "튜닝 어디에도 쓰지 않는다:%n  %s", String.join("\n  ", hits))
+                        + "튜닝 어디에도 쓰지 않는다:%n  %s", join(hits))
                 .isEmpty();
     }
 
     @Test
     @DisplayName("기계로 검사할 수 없는 짧은 케이스를 숨기지 않고 보고한다")
     void reportsCasesTooShortToGuard() {
-        List<String> tooShort = new ArrayList<>();
-        for (LockedCase c : LockedEvalSet.CASES) {
-            for (var turn : c.userTurns()) {
-                if (LockedEvalSet.normalize(turn.text()).length() < MIN_VERBATIM_LENGTH) {
-                    tooShort.add(c.id());
-                }
-            }
-        }
+        Probes probes = LockedEvalContaminationScanner.probesFromLockedSet();
 
-        System.out.printf("%n[locked-guard] 문자열 검사 미적용 케이스 %d건: %s%n",
-                tooShort.size(), tooShort);
+        System.out.printf("[locked-guard] 문자열 검사 미적용(8자 미만) 턴 %d건: %s%n",
+                probes.unguardableCaseIds().size(), probes.unguardableCaseIds());
 
-        assertThat(tooShort)
+        assertThat(probes.unguardableCaseIds())
                 .as("짧아서 기계 판정을 포기한 케이스가 늘면 가드의 실질 커버리지가 무너진다")
-                .hasSizeLessThanOrEqualTo(10);
+                .hasSizeLessThanOrEqualTo(MAX_UNGUARDABLE_TURNS);
+    }
+
+    @Test
+    @DisplayName("보호가 약한 8~15자 구간의 크기를 보고하고 상한을 건다")
+    void shortGuardBandStaysBounded() {
+        Probes probes = LockedEvalContaminationScanner.probesFromLockedSet();
+        int totalTurns = (int) LockedEvalSet.CASES.stream()
+                .mapToLong(c -> c.userTurns().size())
+                .sum();
+        int band = probes.shortBandCaseIds().size();
+        double share = totalTurns == 0 ? 0.0 : band * 100.0 / totalTurns;
+
+        System.out.printf("[locked-guard] 8~15자 구간 %d턴 / 전체 %d턴 (%.1f%%, 상한 %d턴·%.0f%%)%n",
+                band, totalTurns, share, MAX_SHORT_BAND_TURNS, MAX_SHORT_BAND_SHARE);
+
+        assertThat(band)
+                .as("8~15자 구간은 16자 창 전수 검사를 걸 수 없어 보호가 약하다. "
+                        + "이 구간이 커지면 가드는 통과하는데 실제로는 지켜지지 않는다")
+                .isLessThanOrEqualTo(MAX_SHORT_BAND_TURNS);
+        assertThat(share)
+                .as("짧은 케이스 쏠림 비율")
+                .isLessThanOrEqualTo(MAX_SHORT_BAND_SHARE);
     }
 
     // ── dev_gold 분리 ───────────────────────────────────────────────
@@ -206,7 +182,7 @@ class LockedEvalContaminationGuardTest {
             }
         }
 
-        System.out.printf("%n[locked-guard] dev_gold 최대 유사도 %.3f (임계 %.2f)%n",
+        System.out.printf("[locked-guard] dev_gold 최대 유사도 %.3f (임계 %.2f)%n",
                 worst, NEAR_DUPLICATE_THRESHOLD);
         assertThat(offenders)
                 .as("dev_gold 근사 중복:%n  %s", String.join("\n  ", offenders))
@@ -249,8 +225,12 @@ class LockedEvalContaminationGuardTest {
     @Test
     @DisplayName("dev_gold 는 잠금 gold 로 승격되지 않는다 — 두 세트의 id 공간이 겹치지 않는다")
     void devGoldStaysDevGold() {
+        // dev_gold 버전을 여기에 적어 두는 이유: CrisisCorpus.VERSION 이 올라가면(= 케이스가
+        // 추가·변경되면) 그 세트는 더 이상 이 잠금 세트가 분리를 확인한 그 세트가 아니다.
+        // 값을 자동으로 따라가면 dev_gold 가 바뀌어도 분리 검사가 통과해 버린다. 버전을 올릴
+        // 때는 dev_gold 중복·근사 중복 검사를 다시 돌리고 이 상수를 손으로 갱신한다.
         assertThat(CrisisCorpus.VERSION)
-                .as("dev_gold 버전")
+                .as("dev_gold 버전 — 올릴 때는 이 파일의 중복 검사를 다시 확인하고 함께 갱신한다")
                 .isEqualTo("crisis-corpus-v1");
         assertThat(LockedEvalSet.VERSION).isNotEqualTo(CrisisCorpus.VERSION);
         assertThat(LockedEvalSet.CASES)
@@ -261,64 +241,15 @@ class LockedEvalContaminationGuardTest {
 
     // ── 보조 ────────────────────────────────────────────────────────
 
-    private record Probe(String caseId, String normalized) {}
+    private static String join(List<Hit> hits) {
+        Set<String> lines = new LinkedHashSet<>();
+        hits.forEach(h -> lines.add(h.toString()));
+        return String.join("\n  ", lines);
+    }
 
     private Set<String> devGoldNormalized() {
         Set<String> out = new LinkedHashSet<>();
         CrisisCorpus.PROBES.forEach(p -> out.add(LockedEvalSet.normalize(p.message())));
         return out;
-    }
-
-    private List<Path> scanTargets() {
-        List<Path> files = new ArrayList<>();
-        Set<Path> seen = new HashSet<>();
-        for (String root : SCAN_ROOTS) {
-            Path dir = repoRoot.resolve(root);
-            if (!Files.isDirectory(dir)) {
-                continue;
-            }
-            try (Stream<Path> walk = Files.walk(dir)) {
-                walk.filter(Files::isRegularFile)
-                        .filter(this::hasScannableExtension)
-                        .filter(p -> !repoRoot.relativize(p).toString().startsWith(LOCKED_DIR))
-                        .forEach(p -> {
-                            if (seen.add(p.toAbsolutePath())) {
-                                files.add(p);
-                            }
-                        });
-            } catch (IOException e) {
-                throw new UncheckedIOException("스캔 대상을 읽지 못했다: " + dir, e);
-            }
-        }
-        return files;
-    }
-
-    private boolean hasScannableExtension(Path path) {
-        String name = path.getFileName().toString();
-        int dot = name.lastIndexOf('.');
-        return dot >= 0 && SCAN_EXTENSIONS.contains(name.substring(dot));
-    }
-
-    private static String read(Path path) {
-        try {
-            return new String(Files.readAllBytes(path), StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return "";
-        }
-    }
-
-    /**
-     * 저장소 루트. 테스트 작업 디렉터리가 어디든 {@code settings.gradle.kts} 를 기준으로 찾는다.
-     * 찾지 못하면 조용히 빈 스캔으로 넘어가지 않고 실패한다.
-     */
-    private static Path findRepoRoot() {
-        Path current = Path.of("").toAbsolutePath();
-        while (current != null) {
-            if (Files.exists(current.resolve("settings.gradle.kts"))) {
-                return current;
-            }
-            current = current.getParent();
-        }
-        throw new IllegalStateException("저장소 루트를 찾지 못했다 — 오염 스캔을 건너뛸 수 없다");
     }
 }
