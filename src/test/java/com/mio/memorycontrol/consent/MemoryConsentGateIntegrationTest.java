@@ -77,8 +77,7 @@ class MemoryConsentGateIntegrationTest {
                 messageEncryptor.dekId());
 
         when(llmClient.stream(any(), any())).thenAnswer(invocation -> {
-            Consumer<String> chunkHandler = invocation.getArgument(1);
-            chunkHandler.accept("발표에 대한 걱정을 나눈 세션 요약.");
+            emitChunk(invocation, "발표에 대한 걱정을 나눈 세션 요약.");
             return new LlmStreamResult(10, LlmUsage.unresolved("test"), false);
         });
         when(extractorLlmClient.extract(anyString(), any(), any()))
@@ -125,8 +124,7 @@ class MemoryConsentGateIntegrationTest {
             Thread withdrawer = new Thread(() -> memoryControlService.withdrawConsent(userId));
             withdrawer.start();
             withdrawer.join();
-            Consumer<String> chunkHandler = invocation.getArgument(1);
-            chunkHandler.accept("발표에 대한 걱정을 나눈 세션 요약.");
+            emitChunk(invocation, "발표에 대한 걱정을 나눈 세션 요약.");
             return new LlmStreamResult(10, LlmUsage.unresolved("test"), false);
         });
 
@@ -172,6 +170,20 @@ class MemoryConsentGateIntegrationTest {
         assertThat(selfModelCount(consentedUserId)).isEqualTo(1);
     }
 
+    /**
+     * 스트리밍 청크를 흘려보낸다.
+     *
+     * <p>{@code any()} 스텁은 요약 생성 외에 청크 핸들러 없이 {@code stream} 을 부르는 경로
+     * (렌더링·개인화)까지 함께 잡는다. 핸들러가 없으면 흘릴 곳이 없을 뿐 스텁이 깨질 일은
+     * 아니므로 조용히 건너뛴다.
+     */
+    private void emitChunk(org.mockito.invocation.InvocationOnMock invocation, String chunk) {
+        Consumer<String> chunkHandler = invocation.getArgument(1);
+        if (chunkHandler != null) {
+            chunkHandler.accept(chunk);
+        }
+    }
+
     /** 지난주 활동 흔적: 종료 세션 + 지배 감정 — 주간 회고 대상 선정과 집계에 걸리게 한다. */
     private void seedWeeklyActivity(UUID targetUserId) {
         UUID weeklySession = UUID.randomUUID();
@@ -184,7 +196,7 @@ class MemoryConsentGateIntegrationTest {
         jdbcTemplate.update(
                 """
                 INSERT INTO emotional_states (user_id, source_event_id, primary_emotion, intensity, source)
-                VALUES (?, ?, 'anxiety', 60, 'chat')
+                VALUES (?, ?, 'anxious', 60, 'chat')
                 """,
                 targetUserId, weeklySession);
     }
