@@ -39,6 +39,22 @@ final class StubLlmClient implements LlmClient {
     private static final String OUTPUT_JUDGE_JSON = "{\"action\":\"SEND\"}";
 
     /**
+     * CBT 메타데이터 분류 스텁.
+     *
+     * <p>{@code CbtMetadataClassifier} 는 파싱에 실패하면 예외를 삼키고 {@code none()} 을
+     * 돌려준다. 그래서 아무 JSON 이나 줘도 호출은 성공한 것처럼 보이지만, 그러면 프로덕션이
+     * 실제로 받는 응답 길이와 견적의 completion 토큰이 달라진다. 스키마를 맞춰 둔다.
+     */
+    private static final String CBT_CLASSIFIER_JSON = """
+            {"cbt_intervention_state":"none","completion_reason":null,
+             "requires_emotion_score":false,"is_socratic":false,
+             "bias_type":null,"reconstructed_thought":null}
+            """;
+
+    /** offline reference judge 스텁. 항상 CLEAR 라 이견률은 스텁에서 의미가 없다. */
+    private static final String REFERENCE_JUDGE_JSON = "{\"safety_truth\":\"CLEAR\"}";
+
+    /**
      * 생성 스텁 응답.
      *
      * <p>길이만 의미가 있다 — 견적의 completion 토큰이 여기서 나온다. 실제 응답 길이의
@@ -74,9 +90,13 @@ final class StubLlmClient implements LlmClient {
 
     @Override
     public String completeJson(LlmRequest request) {
-        String response = "OUTPUT_JUDGE".equals(request.component())
-                ? OUTPUT_JUDGE_JSON
-                : INPUT_JUDGE_JSON;
+        String component = request.component();
+        String response = switch (component == null ? "" : component) {
+            case "OUTPUT_JUDGE" -> OUTPUT_JUDGE_JSON;
+            case "CBT_CLASSIFIER" -> CBT_CLASSIFIER_JSON;
+            case CellModelRole.OFFLINE_COMPONENT -> REFERENCE_JUDGE_JSON;
+            default -> INPUT_JUDGE_JSON;
+        };
         record(request, "complete_json", CellTokenEstimator.tokens(response));
         return response;
     }

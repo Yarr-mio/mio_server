@@ -27,6 +27,16 @@ enum CellModelRole {
     OUTPUT_JUDGE("output_judge", "OUTPUT_JUDGE"),
 
     /**
+     * CBT 메타데이터 분류 — 프로덕션 {@code CbtMetadataClassifier}.
+     *
+     * <p>{@code ConversationOrchestrator.sendDoneEvent()} 가 응답 전달 직후 <b>매 턴 동기로</b>
+     * 부르는 실호출이다. 하네스가 이 호출을 빼면 전 셀이 같은 상수만큼 턴당 원가·지연을 과소
+     * 보고하고, 15%/20% 같은 <b>비율 게이트의 경계에서 판정이 뒤집힐 수 있다.</b> 그래서 제외
+     * 목록에 적어 두는 대신 온라인 역할로 넣는다.
+     */
+    CBT_CLASSIFIER("cbt_classifier", "CBT_CLASSIFIER"),
+
+    /**
      * 난례 에스컬레이션 (로드맵 §10.3 cascade 마지막 단계).
      *
      * <p>온라인 호출이지만 생성과 다른 모델을 쓸 수 있어 역할을 나눈다. 셀 D·E 만 쓴다.
@@ -43,8 +53,22 @@ enum CellModelRole {
      *
      * <p><b>운영 경로에서 호출하지 않는다.</b> 셀 C 의 가설은 "운영비 증가 없이 오류 발견이
      * 개선되는가" 이므로, 이 역할이 턴당 원가에 들어가는 순간 가설 자체가 성립하지 않는다.
+     * 그래서 {@link #component()} 는 {@code null} 이고 {@link #isOnline()} 은 거짓이다 —
+     * 온라인 원장({@link CellTokenLedger})이 이 역할의 호출을 받을 수 있는 경로 자체가 없다.
+     *
+     * <p>대신 offline 채점 pass 는 별도 원장·별도 클라이언트로 돌고, 그 요청에는
+     * {@link #OFFLINE_COMPONENT} 태그가 붙는다. 온라인 태그와 이름이 다르므로 두 원장이
+     * 실수로 섞여도 어느 쪽 호출인지 사후에 구별할 수 있다.
      */
     REFERENCE_JUDGE("reference_judge", null);
+
+    /**
+     * offline reference judge 요청의 귀속 태그.
+     *
+     * <p>온라인 역할의 {@code component} 어느 것과도 겹치지 않는다. 온라인 원장에서 이 태그가
+     * 하나라도 발견되면 그건 셀 C 가 오염됐다는 뜻이고, {@link CellParity} 가 그것을 단언한다.
+     */
+    static final String OFFLINE_COMPONENT = "REFERENCE_JUDGE_OFFLINE";
 
     private final String key;
     private final String component;

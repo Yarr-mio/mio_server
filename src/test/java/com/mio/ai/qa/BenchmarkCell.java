@@ -29,28 +29,44 @@ enum BenchmarkCell {
     A("A 기준선", "현재 운영 모델", "현재 룰 + mini Judge + holdback", "비교 기준",
             Map.of(CellModelRole.GENERATION, ModelTier.OPERATIONAL,
                     CellModelRole.INPUT_SAFETY, ModelTier.OPERATIONAL,
-                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL),
+                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL,
+                    CellModelRole.CBT_CLASSIFIER, ModelTier.OPERATIONAL),
             HarnessShape.CURRENT),
 
     /** B 상위 생성 — 상위 모델 + 현재 하네스. 모델 자체의 품질 상승 폭과 비용을 본다. */
     B("B 상위 생성", "상위 모델", "현재 하네스", "모델 자체의 품질 상승 폭과 비용",
             Map.of(CellModelRole.GENERATION, ModelTier.FRONTIER,
                     CellModelRole.INPUT_SAFETY, ModelTier.OPERATIONAL,
-                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL),
+                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL,
+                    CellModelRole.CBT_CLASSIFIER, ModelTier.OPERATIONAL),
             HarnessShape.CURRENT),
 
     /**
      * C 상위 teacher — 운영 경로는 A 와 같고, 상위 모델은 offline reference 로만 쓴다.
      *
-     * <p>{@link CellModelRole#REFERENCE_JUDGE} 는 온라인 역할이 아니다. 그래서 이 셀의
-     * 턴당 원가·p95 는 정의상 A 와 같아야 하고, 다르게 나오면 그건 셀 C 가 오염됐다는 신호다.
-     * {@link CellRunner} 가 그 사실을 단언한다.
+     * <h2>이 셀이 실제로 무엇을 하는가</h2>
+     *
+     * <p>온라인 경로는 셀 A 와 <b>같은 역할·같은 모델</b>로 돈다. 그 뒤에 별도 pass 로
+     * {@link CellModelRole#REFERENCE_JUDGE} 가 같은 케이스를 다시 채점한다
+     * ({@link CellReferenceReview}). 이 pass 는 자기 원장·자기 클라이언트를 쓰고, 온라인
+     * 결과가 모두 확정된 뒤에 돌기 때문에 턴당 원가·지연에 <b>구조적으로</b> 들어갈 수 없다.
+     * 산출물은 "gold 라벨과의 이견률" 과 "온라인 등급이 놓친 것을 reference 가 잡아낸 건수"
+     * 이며, 둘 다 온라인 지표와 <b>분리된 절</b>로만 보고된다.
+     *
+     * <h2>A==C 로 무엇을 단언하고 무엇을 단언하지 않는가</h2>
+     *
+     * <p>{@link CellParity} 가 단언하는 것은 <b>구성의 동일성</b>이다 — 온라인 역할별 모델이
+     * A 와 같고, 온라인 원장에 {@link CellModelRole#OFFLINE_COMPONENT} 태그 호출이 0건이다.
+     * 턴당 원가·p95 의 <b>수치 동일성은 단언하지 않는다</b>: 같은 모델이라도 샘플링 때문에
+     * completion 토큰과 OutputJudge 발화 횟수가 달라지므로 정확히 같을 수 없다. 대신 그
+     * 차이를 오염 <b>신호</b>로 리포트에 찍고, 구성이 같은데 차이가 크면 사람이 본다.
      */
     C("C 상위 teacher", "현재 운영 모델", "상위 모델은 offline reference 만",
             "운영비 증가 없이 오류 발견·라벨 품질 개선 여부",
             Map.of(CellModelRole.GENERATION, ModelTier.OPERATIONAL,
                     CellModelRole.INPUT_SAFETY, ModelTier.OPERATIONAL,
                     CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL,
+                    CellModelRole.CBT_CLASSIFIER, ModelTier.OPERATIONAL,
                     CellModelRole.REFERENCE_JUDGE, ModelTier.FRONTIER),
             HarnessShape.CURRENT),
 
@@ -65,6 +81,7 @@ enum BenchmarkCell {
             Map.of(CellModelRole.GENERATION, ModelTier.LIGHTWEIGHT,
                     CellModelRole.INPUT_SAFETY, ModelTier.OPERATIONAL,
                     CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL,
+                    CellModelRole.CBT_CLASSIFIER, ModelTier.OPERATIONAL,
                     CellModelRole.ESCALATION, ModelTier.FRONTIER),
             HarnessShape.RULE_FIRST_CASCADE),
 
@@ -73,7 +90,8 @@ enum BenchmarkCell {
             "높은 생성 품질로 하네스 비용을 상쇄할 수 있는지",
             Map.of(CellModelRole.GENERATION, ModelTier.FRONTIER,
                     CellModelRole.INPUT_SAFETY, ModelTier.OPERATIONAL,
-                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL),
+                    CellModelRole.OUTPUT_JUDGE, ModelTier.OPERATIONAL,
+                    CellModelRole.CBT_CLASSIFIER, ModelTier.OPERATIONAL),
             HarnessShape.REDUCED_HARNESS);
 
     /**

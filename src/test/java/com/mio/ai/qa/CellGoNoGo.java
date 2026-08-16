@@ -25,6 +25,14 @@ import java.util.Optional;
  * <p>사전 등록의 의미는 "실행 전에 정했다" 이다. 결과를 보고 문턱을 고치면 그건 하한이 아니라
  * 사후 합리화이므로, 문턱 파일 변경은 PR 에서 별도로 보인다.
  *
+ * <h2>같은 실행에서 나온 수치만 비교한다</h2>
+ *
+ * <p>{@link #evaluate}는 다른 무엇을 보기 전에 {@link RunIdentity} 도장부터 대조한다. 예전에는
+ * 교차 실행 비교를 막는 것이 "호출부가 같은 JVM 안의 맵만 본다" 는 정황이었고, 이 메서드 자체는
+ * 두 인자가 같은 실행인지 묻지 않았다. 아카이브를 읽어 비교하는 도구가 생기면 그 구멍이 조용히
+ * 다시 열린다. 이제는 도장이 다르면 다른 조건을 아무리 만족해도
+ * {@link Verdict#NOT_EVALUABLE} 이다 — 스텁·표본 가드와 같은 fail-closed 규칙이다.
+ *
  * <h2>이 하네스가 판정할 수 없는 것</h2>
  *
  * <p>§11.3 의 다섯째 조건은 shadow·canary 다. offline 실행으로는 확인할 수 없다. "확인할 수
@@ -97,7 +105,7 @@ final class CellGoNoGo {
         OFFLINE_CONDITIONS_MET_PENDING_SHADOW_CANARY
     }
 
-    record Result(BenchmarkCell candidate, Verdict verdict, List<Check> checks, String reason) {
+    record Result(CellVariant candidate, Verdict verdict, List<Check> checks, String reason) {
 
         Result {
             checks = List.copyOf(checks);
@@ -105,7 +113,7 @@ final class CellGoNoGo {
 
         String render() {
             StringBuilder out = new StringBuilder();
-            out.append("\n  [Go/No-Go — 셀 %s, 기준선 A 대비]\n".formatted(candidate.name()));
+            out.append("\n  [Go/No-Go — 셀 %s, 기준선 A 대비]\n".formatted(candidate.label()));
             out.append("    판정: %s\n".formatted(verdict));
             out.append("    사유: %s\n".formatted(reason));
             checks.forEach(check -> out.append("    ").append(check.display()).append('\n'));
@@ -148,17 +156,30 @@ final class CellGoNoGo {
      */
     static Result evaluate(CellRunner.Result baselineRun, CellMetrics baseline,
                            CellRunner.Result candidateRun, CellMetrics candidate) {
+        CellVariant variant = candidateRun.variant();
+        // 같은 실행·같은 버전인지부터 묻는다. 이 검사가 스텁·표본 검사보다 앞에 있는 이유는,
+        // 교차 실행 비교는 다른 어떤 조건을 만족해도 판정으로 만들 수 없기 때문이다.
+        String mismatch = candidateRun.identity().mismatchAgainst(baselineRun.identity());
+        if (mismatch != null) {
+            return new Result(variant, Verdict.NOT_EVALUABLE, List.of(),
+                    "기준선과 후보가 같은 실행·같은 버전에서 나오지 않았다 — " + mismatch);
+        }
         if (baselineRun.stubMode() || candidateRun.stubMode()) {
-            return new Result(candidate.cell(), Verdict.NOT_EVALUABLE, List.of(),
+            return new Result(variant, Verdict.NOT_EVALUABLE, List.of(),
                     "스텁 실행 — 판정 값이 고정이라 안전·품질 지표가 모델을 재지 않는다");
         }
         if (baselineRun.sampled() || candidateRun.sampled()) {
-            return new Result(candidate.cell(), Verdict.NOT_EVALUABLE, List.of(),
+            return new Result(variant, Verdict.NOT_EVALUABLE, List.of(),
                     "표본 실행 — 잠금 gold 전수가 아니면 릴리스 판정의 기준셋이 아니다 (로드맵 §6.4)");
         }
         if (baselineRun.cell() != BenchmarkCell.A) {
-            return new Result(candidate.cell(), Verdict.NOT_EVALUABLE, List.of(),
+            return new Result(variant, Verdict.NOT_EVALUABLE, List.of(),
                     "기준선이 셀 A 가 아니다 — 비교의 분모가 다르면 판정이 아니라 인상이다");
+        }
+        if (baselineRun.population() != candidateRun.population()) {
+            return new Result(variant, Verdict.NOT_EVALUABLE, List.of(),
+                    "기준선과 후보의 케이스 수가 다르다 (%d vs %d) — 같은 실행이라도 같은 세트를 돈 것이 아니다"
+                            .formatted(baselineRun.population(), candidateRun.population()));
         }
 
         Thresholds thresholds = thresholds();
@@ -190,14 +211,14 @@ final class CellGoNoGo {
                 .limit(6)
                 .allMatch(Check::passed);
         if (!floorsHeld) {
-            return new Result(candidate.cell(), Verdict.NO_GO, checks,
+            return new Result(variant, Verdict.NO_GO, checks,
                     "안전·품질 하한 미충족 — 비용·지연 개선과 무관하게 채택하지 않는다");
         }
         if (!p95.passed() && !cost.passed()) {
-            return new Result(candidate.cell(), Verdict.NO_MEANINGFUL_IMPROVEMENT, checks,
+            return new Result(variant, Verdict.NO_MEANINGFUL_IMPROVEMENT, checks,
                     "하한은 지켰으나 p95·수용 응답당 원가 어느 쪽도 사전 등록한 개선 폭에 못 미친다");
         }
-        return new Result(candidate.cell(), Verdict.OFFLINE_CONDITIONS_MET_PENDING_SHADOW_CANARY,
+        return new Result(variant, Verdict.OFFLINE_CONDITIONS_MET_PENDING_SHADOW_CANARY,
                 checks,
                 "offline 조건 충족. 남은 게이트: " + String.join(" / ", thresholds.outstandingGates()));
     }

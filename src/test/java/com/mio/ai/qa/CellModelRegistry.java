@@ -74,7 +74,8 @@ final class CellModelRegistry {
     private static final Map<CellModelRole, String> OPERATIONAL_DEFAULTS = Map.of(
             CellModelRole.GENERATION, "gpt-4o",
             CellModelRole.INPUT_SAFETY, "gpt-4o-mini",
-            CellModelRole.OUTPUT_JUDGE, "gpt-4o-mini");
+            CellModelRole.OUTPUT_JUDGE, "gpt-4o-mini",
+            CellModelRole.CBT_CLASSIFIER, "gpt-4o-mini");
 
     /** 경량 등급의 기본값. 상위 모델과 달리 기본값을 두는 이유는 프로덕션에 이미 있는 모델이기 때문이다. */
     private static final Map<CellModelRole, String> LIGHTWEIGHT_DEFAULTS = Map.of(
@@ -118,6 +119,32 @@ final class CellModelRegistry {
             filled.putIfAbsent(MODEL_PROPERTY_PREFIX + role.key(), UNPINNED_PLACEHOLDER);
         }
         return resolve(cell, filled);
+    }
+
+    /**
+     * 후보 스크리닝용 해석 — 이 셀의 <b>상위 모델 역할 전부</b>를 지정한 후보로 채운다.
+     *
+     * <p>후보가 {@code -PcellModels} 의 상위 모델 핀을 이긴다. 스크리닝의 정의가 "같은 자리에
+     * 후보를 하나씩 갈아 끼워 본다" 이므로, 후보를 지정했는데 다른 핀이 남아 있으면 그 실행은
+     * 이름과 다른 것을 잰다. 상위 모델이 아닌 역할(운영·경량)은 건드리지 않는다 — 그것까지
+     * 바뀌면 후보 간 차이가 아니라 셀 정의가 바뀐다.
+     *
+     * @param variant 후보가 {@code null} 이면 기존 해석과 동일하다
+     */
+    static CellModelRegistry resolveForVariant(CellVariant variant, Map<String, String> pins) {
+        if (variant.frontierCandidate() == null) {
+            return resolve(variant.cell(), pins);
+        }
+        Map<String, String> overridden = new LinkedHashMap<>(pins);
+        for (CellModelRole role : variant.cell().frontierRoles()) {
+            overridden.put(MODEL_PROPERTY_PREFIX + role.key(), variant.frontierCandidate());
+        }
+        return resolve(variant.cell(), overridden);
+    }
+
+    /** 시스템 프로퍼티를 읽는 실행 경로용 후보 해석. */
+    static CellModelRegistry resolveForVariant(CellVariant variant) {
+        return resolveForVariant(variant, readPins());
     }
 
     /** 테스트가 핀 소스를 직접 넣을 수 있는 형태. 프로퍼티 읽기와 해석을 분리한다. */
@@ -233,18 +260,39 @@ final class CellModelRegistry {
                 return;
             }
             String model = key.substring(PRICE_PROPERTY_PREFIX.length());
-            String[] parts = value.split("/");
+            String[] parts = value.split("/", -1);
             if (parts.length != 3) {
                 throw new IllegalArgumentException(
                         "단가 형식이 잘못됐다: %s=%s — <input>/<cachedInput>/<output> 형식이어야 한다 "
-                                .formatted(key, value) + "(캐시 단가가 없으면 input 과 같은 값을 적는다)");
+                                .formatted(key, value)
+                                + "(캐시 단가가 공표되지 않은 모델은 '-' 를 적는다: 5.0/-/20.0)");
             }
             prices.put(model, new ModelPrice(
                     new BigDecimal(parts[0].trim()),
-                    new BigDecimal(parts[1].trim()),
+                    unpublishedOrValue(parts[1]),
                     new BigDecimal(parts[2].trim())));
         });
         return prices;
+    }
+
+    /**
+     * 캐시 입력 단가가 <b>공표되지 않은</b> 모델의 표기.
+     *
+     * <p>일부 상위 모델({@code *-pro} 계열)은 캐시 입력 단가를 공개하지 않는다. 그것을 0 으로
+     * 적으면 캐시된 프롬프트가 공짜로 집계되고, input 과 같게 적으면 "확인했더니 같더라" 와
+     * 구별되지 않는다. {@code null} 로 두면 {@link CellPricingBook} 이 input 단가로 되돌아가
+     * <b>보수적으로</b> 계산하며, 그 사실이 값 자체에 남는다.
+     *
+     * <p>지금 하네스는 캐시 토큰을 0 으로 넘기므로 실제 계산에는 영향이 없다. 나중에 캐시를
+     * 쓰게 됐을 때 이 자리가 조용히 0 이 되지 않게 하는 것이 목적이다.
+     */
+    private static BigDecimal unpublishedOrValue(String raw) {
+        String trimmed = raw.trim();
+        if (trimmed.isEmpty() || "-".equals(trimmed) || "?".equals(trimmed)
+                || "미상".equals(trimmed)) {
+            return null;
+        }
+        return new BigDecimal(trimmed);
     }
 
     private static long readSeed(Map<String, String> pins) {

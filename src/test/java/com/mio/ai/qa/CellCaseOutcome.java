@@ -35,10 +35,20 @@ record CellCaseOutcome(
         boolean generationCalled,
         boolean escalated,
         boolean outputJudgeCalled,
+        /** 프로덕션이 매 턴 부르는 {@code CbtMetadataClassifier} 를 이 턴에서 불렀는가. */
+        boolean cbtClassifierCalled,
 
         ContractOutcome contract,
         List<String> contractViolations,
         Acceptance acceptance,
+        /**
+         * 케이스 타임아웃으로 끝났는가.
+         *
+         * <p>{@link Acceptance#REJECTED_EXTERNAL_FAILURE} 만으로는 "모델이 500 을 냈다" 와
+         * "3분 안에 끝나지 않았다" 가 구별되지 않는다. 유료 실행에서 후자가 늘면 원인이 모델이
+         * 아니라 동시성·rate limit 일 수 있어 대응이 다르므로 값으로 나눠 둔다.
+         */
+        boolean timedOut,
 
         long totalMs,
         long firstSubstantiveMs,

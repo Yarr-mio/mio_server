@@ -33,8 +33,15 @@ final class CellReport {
     static String render(CellRunner.Result result, CellMetrics metrics) {
         StringBuilder out = new StringBuilder();
         out.append('\n').append(LINE).append('\n');
-        out.append("  셀 %s — %s\n".formatted(result.cell().name(), result.cell().label()));
+        out.append("  셀 %s — %s\n".formatted(result.variant().label(), result.cell().label()));
         out.append("  가설: %s\n".formatted(result.cell().hypothesis()));
+        if (result.variant().isScreeningVariant()) {
+            out.append("  상위 모델 후보: %s (후보 스크리닝 변형)\n"
+                    .formatted(result.variant().frontierCandidate()));
+        }
+        out.append("  실행 도장: run_id %s · 세트 %s\n".formatted(
+                result.identity().runId(), result.identity().datasetVersion()));
+        out.append("  ↑ 이 수치는 같은 run_id 도장을 가진 결과와만 비교할 수 있다\n");
         out.append(LINE).append('\n');
 
         if (result.stubMode()) {
@@ -56,6 +63,7 @@ final class CellReport {
         appendRates(out, "하위 그룹 미탐률 (모델 변별 모집단)", metrics.subgroupSafetyRates());
         appendReliability(out, metrics);
         appendFailures(out, result, metrics);
+        result.referenceReview().ifPresent(review -> out.append(review.render()));
         out.append(LINE).append('\n');
         return out.toString();
     }
@@ -95,17 +103,28 @@ final class CellReport {
         out.append("    공감·도움도      %s%n".formatted(CellMetrics.EMPATHY_NOT_MEASURED));
         out.append("    수용률           %s%n".formatted(population.acceptanceRate().display()));
         appendAcceptance(out, population);
-        out.append("    지연 p50/p95     %d ms / %d ms%n"
-                .formatted(population.p50LatencyMs(), population.p95LatencyMs()));
-        out.append("    첫 실질 토큰     p50 %d ms / p95 %d ms%n".formatted(
-                population.p50FirstSubstantiveMs(), population.p95FirstSubstantiveMs()));
+        if (result.latencyMeasured()) {
+            out.append("    지연 p50/p95     %d ms / %d ms%n"
+                    .formatted(population.p50LatencyMs(), population.p95LatencyMs()));
+            out.append("    첫 실질 토큰     p50 %d ms / p95 %d ms%n".formatted(
+                    population.p50FirstSubstantiveMs(), population.p95FirstSubstantiveMs()));
+        } else {
+            out.append("    지연 p50/p95     %s%n".formatted(BatchQualityMode.NOT_MEASURED));
+            out.append("    첫 실질 토큰     %s%n".formatted(BatchQualityMode.NOT_MEASURED));
+        }
         out.append("    LLM 호출         %d건 (턴당 %.2f)%n".formatted(
                 population.llmCalls(), population.llmCalls() / (double) population.size()));
-        out.append("      역할별        InputJudge %d · 생성 %d · escalation %d · OutputJudge %d%n"
+        out.append("      역할별        InputJudge %d · 생성 %d · escalation %d · OutputJudge %d "
+                        + "· CBT 분류 %d%n"
                 .formatted(population.inputJudgeCalls(), population.generationCalls(),
-                        population.escalations(), population.outputJudgeCalls()));
+                        population.escalations(), population.outputJudgeCalls(),
+                        population.cbtClassifierCalls()));
         out.append("      ↑ InputJudge 를 부르지 않은 턴은 룰 레이어가 결정한 것이라 "
                 + "판정 모델이 셀을 변별하지 않는다%n");
+        out.append("      ↑ CBT 분류는 프로덕션이 매 턴 부르는 실호출이다 — 전 셀 공통이지만 "
+                + "빼면 턴당 원가가 프로덕션보다 낮게 나온다%n");
+        out.append("    케이스 타임아웃  %d건  ← 셀을 중단시키지 않고 실패로 기록한 건수%n"
+                .formatted(population.timedOutCases()));
         out.append("    토큰             prompt %d / completion %d%n".formatted(
                 population.promptTokens(), population.completionTokens()));
         out.append("    총 원가          %s%n"
@@ -170,7 +189,7 @@ final class CellReport {
                     "스텁 실행은 아카이브를 남기지 않는다 — 고정 판정으로 낸 수치가 실행 기록으로 남으면 "
                             + "나중에 실 LLM 실행과 구별되지 않는다");
         }
-        return EvalRunArchive.write("cell-%s".formatted(result.cell().name().toLowerCase()),
+        return EvalRunArchive.write("cell-%s".formatted(result.variant().fileLabel()),
                 manifest(result, metrics), report);
     }
 
@@ -183,6 +202,7 @@ final class CellReport {
      */
     static EvalRunManifest manifest(CellRunner.Result result, CellMetrics metrics) {
         Map<String, String> extra = new LinkedHashMap<>();
+        extra.putAll(result.identity().asManifestFields());
         extra.putAll(LockedEvalSet.DATA_RIGHTS.asManifestFields());
         extra.putAll(LockedEvalSet.LABELING.asManifestFields());
         extra.putAll(LockedEvalSet.REPORTING.asManifestFields());
@@ -207,13 +227,25 @@ final class CellReport {
         extra.put("elapsed", "%dm %ds".formatted(
                 metrics.elapsed().toMinutes(), metrics.elapsed().toSecondsPart()));
         extra.put("model_pin_source", result.registry().pinSources().toString());
+        extra.put("cbt_classifier_calls", String.valueOf(
+                metrics.modelDiscriminating().cbtClassifierCalls()
+                        + metrics.deterministicLayer().cbtClassifierCalls()));
+        extra.put("timed_out_cases", String.valueOf(
+                metrics.modelDiscriminating().timedOutCases()
+                        + metrics.deterministicLayer().timedOutCases()));
+        extra.put("latency_measured", result.latencyMeasured()
+                ? "실측 (동기 스트리밍)" : BatchQualityMode.NOT_MEASURED);
+        extra.put("frontier_candidate", result.variant().frontierCandidate() == null
+                ? "n/a (후보 스크리닝 아님 — registry 핀 그대로)"
+                : result.variant().frontierCandidate());
         extra.put("sampled", result.sampled()
                 ? "표본 %d/%d — 릴리스 판정 불가".formatted(result.population(), LockedEvalSet.CASES.size())
                 : "전수");
+        result.referenceReview().ifPresent(review -> extra.putAll(review.asManifestFields()));
 
         return new EvalRunManifest(
                 CellRunner.SCOPE,
-                result.cell().manifestValue(),
+                result.variant().manifestValue(),
                 LockedEvalSet.VERSION,
                 EvalRunManifest.DatasetSplit.LOCKED_GOLD,
                 result.population(),
@@ -225,14 +257,29 @@ final class CellReport {
                 policyVersion(),
                 result.registry().pricing().pricingAsOf(),
                 String.valueOf(result.registry().seed()),
-                "./gradlew test -PllmTests -Pcells=%s --tests \"com.mio.ai.qa.CellBenchmarkLlmTest\""
-                        .formatted(result.cell().name()),
+                reproduceCommand(result),
                 CellGoNoGo.thresholds().asManifestGates(),
                 extra);
     }
 
+    /**
+     * 재현 명령.
+     *
+     * <p>후보 스크리닝 변형이면 기준선 A 를 <b>같이</b> 적는다. 후보 하나만 다시 돌린 결과는
+     * 이 실행의 기준선과 비교할 수 없으므로, 재현 명령이 그것을 유도하면 안 된다.
+     */
+    private static String reproduceCommand(CellRunner.Result result) {
+        if (!result.variant().isScreeningVariant()) {
+            return "./gradlew test -PllmTests -Pcells=%s --tests \"com.mio.ai.qa.CellBenchmarkLlmTest\""
+                    .formatted(result.cell().name());
+        }
+        return ("./gradlew test -PllmTests -Pcells=A,%s -PfrontierCandidates=\"%s\" "
+                + "--tests \"com.mio.ai.qa.CellBenchmarkLlmTest\"")
+                .formatted(result.cell().name(), result.variant().frontierCandidate());
+    }
+
     /** 정책 버전은 프로덕션 엔진에게 직접 묻는다 — 손으로 적으면 바뀌었을 때 기록만 옛 값이 된다. */
-    private static String policyVersion() {
+    static String policyVersion() {
         return new com.mio.ai.policy.PolicyEngine(
                 new com.mio.ai.security.EffectiveSecurityResolver())
                 .decide(new com.mio.ai.safety.SafetySignalCombiner().combine(

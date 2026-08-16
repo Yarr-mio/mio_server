@@ -80,6 +80,10 @@ record CellMetrics(
             long generationCalls,
             long escalations,
             long outputJudgeCalls,
+            /** 프로덕션이 매 턴 부르는 CBT 메타데이터 분류 호출 수. 턴당 원가에 그대로 들어간다. */
+            long cbtClassifierCalls,
+            /** 3분 안에 끝나지 않아 실패로 기록된 케이스. 셀 전체를 중단시키지 않는다. */
+            long timedOutCases,
             long llmCalls,
             long promptTokens,
             long completionTokens,
@@ -164,6 +168,8 @@ record CellMetrics(
                 count(outcomes, CellCaseOutcome::generationCalled),
                 count(outcomes, CellCaseOutcome::escalated),
                 count(outcomes, CellCaseOutcome::outputJudgeCalled),
+                count(outcomes, CellCaseOutcome::cbtClassifierCalled),
+                count(outcomes, CellCaseOutcome::timedOut),
                 outcomes.stream().mapToLong(CellCaseOutcome::llmCalls).sum(),
                 outcomes.stream().mapToLong(CellCaseOutcome::promptTokens).sum(),
                 outcomes.stream().mapToLong(CellCaseOutcome::completionTokens).sum(),
