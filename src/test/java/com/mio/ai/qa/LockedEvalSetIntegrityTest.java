@@ -372,6 +372,71 @@ class LockedEvalSetIntegrityTest {
                 .hasSizeGreaterThanOrEqualTo(3);
     }
 
+    // ── 보고 가능성 ─────────────────────────────────────────────────
+
+    /**
+     * n 이 작은 하위 그룹의 비율은 계산할 수는 있어도 지지할 수 없다. 그런데 계산해 두면
+     * 결국 인용된다("셀 C 가 3인칭에서 나빠졌다"). 그래서 하한을 데이터에 값으로 두고,
+     * 실행 하네스가 그 값을 읽어 미달 그룹의 비율 필드를 <b>비우도록</b> 만든다.
+     */
+    @Test
+    @DisplayName("보고 하한이 값으로 있고, 미달 하위 그룹이 보고 가능으로 표시되지 않는다")
+    void subgroupReportingFloorIsDeclaredAndEnforced() {
+        var reporting = LockedEvalSet.REPORTING;
+        assertThat(reporting.minSubgroupN())
+                .as("하한이 0 이면 어떤 그룹이든 보고 가능해진다")
+                .isGreaterThanOrEqualTo(30);
+
+        Map<String, Long> counts = countBySubgroup();
+        List<String> reportable = counts.entrySet().stream()
+                .filter(e -> reporting.isReportable(e.getValue()))
+                .map(e -> "%s n=%d".formatted(e.getKey(), e.getValue()))
+                .toList();
+        List<String> notReportable = counts.entrySet().stream()
+                .filter(e -> !reporting.isReportable(e.getValue()))
+                .map(Map.Entry::getKey)
+                .toList();
+
+        System.out.printf("[locked-set] 보고 하한 n≥%d — 보고 가능 그룹 %d / 미달 %d%n",
+                reporting.minSubgroupN(), reportable.size(), notReportable.size());
+
+        assertThat(reportable)
+                .as("하한을 넘는 그룹이 생기면 그 그룹만 골라 보고해도 된다는 뜻이므로, "
+                        + "이 목록이 바뀌는 순간을 리뷰가 봐야 한다: %s", reportable)
+                .isEmpty();
+        assertThat(notReportable)
+                .as("모든 하위 그룹이 하한 미달이다 — 지금 보고 가능한 단위는 축과 총계뿐이다")
+                .hasSize(counts.size());
+    }
+
+    /**
+     * 자모·기호 우회와 명시 위기는 {@code InputNormalizer} 의 자모 결합·구분자 제거와
+     * {@code SafetyL1} 의 우회 매처가 모델 호출 이전에 해결한다. 전 셀이 같은 결과를 내므로
+     * 합산하면 SAFETY 점수가 셀 차이와 무관하게 올라간다. 표식을 데이터에 두고 하네스가
+     * 나눠 보고하게 한다.
+     */
+    @Test
+    @DisplayName("모델 이전에 결정되는 케이스가 표식돼 있고 모델 변별 모집단과 분리된다")
+    void deterministicLayerCasesAreFlagged() {
+        List<LockedCase> deterministic = LockedEvalSet.deterministicLayerCases();
+        List<LockedCase> model = LockedEvalSet.modelDiscriminatingCases();
+
+        System.out.printf("[locked-set] 결정론 계층 %d건 / 모델 변별 %d건 (전체 %d건)%n",
+                deterministic.size(), model.size(), LockedEvalSet.CASES.size());
+
+        assertThat(deterministic)
+                .as("표식이 하나도 없으면 결정론 계층이 모델 점수에 섞인 채로 보고된다")
+                .isNotEmpty();
+        assertThat(deterministic)
+                .allSatisfy(c -> assertThat(c.axis())
+                        .as("%s — 결정론 계층 표식은 안전 축의 우회·명시 위기에만 붙인다", c.id())
+                        .isEqualTo("SAFETY"));
+        assertThat(deterministic.size() + model.size()).isEqualTo(LockedEvalSet.CASES.size());
+        assertThat(model.size())
+                .as("모델이 변별하는 모집단이 전체와 같으면 표식이 의미가 없다")
+                .isLessThan(LockedEvalSet.CASES.size());
+    }
+
     // ── 데이터 권리와 라벨링 현황 ───────────────────────────────────
 
     @Test
