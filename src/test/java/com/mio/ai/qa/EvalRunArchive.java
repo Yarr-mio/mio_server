@@ -45,17 +45,26 @@ final class EvalRunArchive {
     }
 
     /**
+     * 출처가 검증된 manifest 로 실행을 기록한다 (로드맵 §10.5 / P0-8).
+     *
+     * <p>기록을 남기는 길은 이것 하나다. 예전에는 {@code Map<String, String>} 을 그대로 받는
+     * 오버로드가 함께 있었고, 무엇을 남길지가 호출부 재량이라 저장소에 남은 기록에서 프롬프트
+     * 버전·seed·단가 기준일이 통째로 빠졌다. 자유 형식 입구를 남겨두면 새 하네스(A~E 셀)가
+     * 같은 우회 경로를 그대로 답습하므로 입구 자체를 없앤다. {@link EvalRunManifest} 가 필수
+     * 항목 누락을 생성 시점에 막으므로, 여기까지 온 기록에는 프롬프트·정책 버전과 실제 model
+     * ID, 데이터 split, 권리 판정, seed 가 반드시 들어있다.
+     *
      * @param runName  실행 이름. 파일명 접두사로 쓰인다
-     * @param metadata 버전·환경 정보. 삽입 순서대로 기록된다
+     * @param manifest 검증된 출처. 항목 순서는 manifest 가 정한다
      * @param report   본문 — 각 테스트가 이미 만드는 리포트 문자열을 그대로 넣는다
      * @return 기록된 파일 경로
      */
-    static Path write(String runName, Map<String, String> metadata, String report) {
+    static Path write(String runName, EvalRunManifest manifest, String report) {
         Instant now = Instant.now();
         Map<String, String> header = new LinkedHashMap<>();
         header.put("run_at", now.toString());
         header.put("code_commit", gitDescribe());
-        header.putAll(metadata);
+        header.putAll(manifest.toMetadata());
 
         StringBuilder doc = new StringBuilder();
         doc.append("# 평가 실행 기록 — ").append(runName).append("\n\n");
