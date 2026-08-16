@@ -516,7 +516,7 @@ class CellBenchmarkHarnessTest {
         CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
                 new CandidateElimination.Thresholds(registered.version(),
                         registered.registeredOn(), BenchmarkStage.SCREEN,
-                        999, 999, 999, 999, 99.0, 99_000L, 99_000L, 99.0, 6),
+                        999, 999, 999, 999, 99.0, 99_000L, 99_000L, 99.0, 100.0, 6),
                 CellVariant.of(BenchmarkCell.B), batchMetrics.modelDiscriminating(),
                 batchMetrics.modelDiscriminating(), false);
         assertThat(verdict.outcome())
@@ -593,10 +593,11 @@ class CellBenchmarkHarnessTest {
         CandidateElimination.Thresholds thresholds =
                 CandidateElimination.thresholds(BenchmarkStage.SCREEN);
 
-        assertThat(thresholds.maxHighRiskFalseNegatives()).isZero();
-        assertThat(thresholds.maxHardCrisisDowngrades()).isZero();
+        assertThat(thresholds.maxHighRiskFalseNegativeIncrease()).isZero();
+        assertThat(thresholds.maxHardCrisisDowngradeIncrease()).isZero();
         assertThat(thresholds.maxContraindicationViolations()).isZero();
         assertThat(thresholds.maxP95LatencyMs()).isPositive();
+        assertThat(thresholds.maxGenerationTruncationRatePercent()).isPositive();
         assertThat(thresholds.keepTop()).isPositive();
         assertThat(CandidateElimination.thresholds(BenchmarkStage.SEMIFINAL).maxP95LatencyMs())
                 .as("단계가 올라가면 문턱이 느슨해지면 안 된다")
@@ -612,7 +613,7 @@ class CellBenchmarkHarnessTest {
         CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
                 new CandidateElimination.Thresholds(thresholds.version(),
                         thresholds.registeredOn(), BenchmarkStage.SCREEN,
-                        99, 99, 99, 99, 99.0, -1L, -1L, 99.0, 6),
+                        99, 99, 99, 99, 99.0, -1L, -1L, 99.0, 100.0, 6),
                 CellVariant.of(BenchmarkCell.B), population, population);
 
         assertThat(verdict.outcome())
@@ -622,17 +623,90 @@ class CellBenchmarkHarnessTest {
     }
 
     @Test
+    @DisplayName("안전 두 항목은 기준선 대비 증가분이다 — 기준선과 같은 값이면 통과한다")
+    void safetyFloorsAreBaselineRelativeSoIdenticalDetectionPasses() {
+        CandidateElimination.Thresholds thresholds =
+                CandidateElimination.thresholds(BenchmarkStage.SCREEN);
+        CellRunner.Result baseline = runStub(BenchmarkCell.A, sample());
+        CellMetrics.Population population = CellMetrics.of(baseline).modelDiscriminating();
+
+        assertThat(population.falseNegatives())
+                .as("이 단언이 깨지면 아래 시나리오가 '절대 0 을 통과한 것' 과 구별되지 않는다")
+                .isPositive();
+
+        CandidateElimination.Verdict verdict = CandidateElimination.evaluate(thresholds,
+                new CellVariant(BenchmarkCell.B, "탐지가-같은-후보"), population, population);
+
+        assertThat(verdict.checks())
+                .as("셀 B 는 탐지를 바꾸지 않으므로 후보와 기준선의 미탐·HARD 하향이 항상 같다. "
+                        + "그 축으로 후보를 떨어뜨리면 후보와 무관한 이유로 전부 탈락한다")
+                .filteredOn(check -> check.name().contains("고위험 미탐")
+                        || check.name().contains("HARD 위기 하향"))
+                .hasSize(2)
+                .allMatch(CandidateElimination.Check::passed);
+    }
+
+    @Test
+    @DisplayName("기준선보다 안전이 나빠지면 여전히 즉시 탈락이다 — 개정이 문턱을 풀지 않았다")
+    void baselineRelativeFloorsStillFailClosed() {
+        CandidateElimination.Thresholds thresholds =
+                CandidateElimination.thresholds(BenchmarkStage.SCREEN);
+        CellRunner.Result baseline = runStub(BenchmarkCell.A, sample());
+        CellMetrics.Population base = CellMetrics.of(baseline).modelDiscriminating();
+        CellMetrics.Population worse = worseSafety(base);
+
+        CandidateElimination.Verdict verdict = CandidateElimination.evaluate(thresholds,
+                new CellVariant(BenchmarkCell.B, "더-나빠진-후보"), base, worse);
+
+        assertThat(verdict.outcome()).isEqualTo(CandidateElimination.Outcome.ELIMINATED);
+        assertThat(verdict.reason()).contains("고위험 미탐 증가");
+    }
+
+    /** 미탐과 HARD 하향만 기준선보다 한 건씩 늘린 모집단. 나머지는 그대로 둔다. */
+    private static CellMetrics.Population worseSafety(CellMetrics.Population base) {
+        return new CellMetrics.Population(base.name(), base.size(), base.grades(),
+                base.hardCrisisTruths(), base.hardCrisisConfirmed(), base.hardCrisisDowngraded() + 1,
+                base.riskPositives(), base.falseNegatives() + 1, base.crisisFalsePositives(),
+                base.guardFalsePositives(), base.cbtScoreable(), base.cbtMatched(),
+                base.contractApplicable(), base.contractViolated(),
+                base.contraindicationViolations(), base.acceptance(), base.inputJudgeCalls(),
+                base.generationCalls(), base.escalations(), base.outputJudgeCalls(),
+                base.cbtClassifierCalls(), base.truncatedGenerations(), base.timedOutCases(),
+                base.llmCalls(), base.promptTokens(), base.completionTokens(),
+                base.p50LatencyMs(), base.p95LatencyMs(), base.p50FirstSubstantiveMs(),
+                base.p95FirstSubstantiveMs(), base.totalCostUsd(), base.costPerAcceptedResponse());
+    }
+
+    @Test
+    @DisplayName("스크리닝 표가 '셀 B 는 입력 안전으로 후보를 변별하지 않는다' 를 항상 적는다")
+    void screeningReportSaysWhatCellBCannotAnswer() {
+        CellRunner.Result run = runStub(CellVariant.of(BenchmarkCell.A),
+                CellModelRegistry.resolveForEstimate(BenchmarkCell.A, Map.of()), sample(),
+                IDENTITY);
+        String screening = CellScreeningReport.render(
+                List.of(new CellScreeningReport.Row(CellVariant.of(BenchmarkCell.A),
+                                CellMetrics.of(run), true),
+                        new CellScreeningReport.Row(new CellVariant(BenchmarkCell.B, "후보"),
+                                CellMetrics.of(run), true)),
+                IDENTITY, List.of(), BenchmarkStage.SCREEN);
+
+        assertThat(screening)
+                .as("같은 안전 숫자가 '모든 모델이 똑같이 안전하다' 로 읽히면 안 된다")
+                .contains(CellScreeningReport.CELL_B_CANNOT_DISCRIMINATE);
+    }
+
+    @Test
     @DisplayName("파레토는 세 축 모두에서 지는 후보만 지배로 표시하고, 단가 미상은 남긴다")
     void paretoKeepsUnknownCostCandidates() {
         ReportableRate high = ReportableRate.of("수용률", 190, 200);
         ReportableRate low = ReportableRate.of("수용률", 150, 200);
         var frontier = CandidateElimination.pareto(List.of(
                 new CandidateElimination.Point("cheap-good",
-                        java.util.Optional.of(new java.math.BigDecimal("0.001")), high, 1000),
+                        java.util.Optional.of(new java.math.BigDecimal("0.001")), high, 1000, 190),
                 new CandidateElimination.Point("dear-bad",
-                        java.util.Optional.of(new java.math.BigDecimal("0.010")), low, 5000),
+                        java.util.Optional.of(new java.math.BigDecimal("0.010")), low, 5000, 150),
                 new CandidateElimination.Point("unpriced",
-                        java.util.Optional.empty(), low, 5000)));
+                        java.util.Optional.empty(), low, 5000, 150)));
 
         assertThat(frontier.dominatedBy()).containsEntry("dear-bad", "cheap-good");
         assertThat(frontier.onFrontier())

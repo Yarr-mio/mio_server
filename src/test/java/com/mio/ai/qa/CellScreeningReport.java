@@ -39,6 +39,20 @@ final class CellScreeningReport {
             "이 표는 후보를 좁히기 위한 스크리닝 비교다. 채택 판정이 아니다 — "
                     + "판정은 사전 등록 문턱으로 CellGoNoGo 만 내리고, 그 규칙은 그대로다.";
 
+    /**
+     * 셀 B 가 입력 안전 지표로 후보를 변별할 수 없다는 사실.
+     *
+     * <p>표에 미탐·HARD 하향·위기 오탐이 모든 후보에서 같은 값으로 찍히면, 읽는 사람은 그것을
+     * "모델들이 똑같이 안전하다" 로 읽는다. 그게 아니라 <b>이 셀이 그 질문을 묻지 않는다</b>는
+     * 뜻이다 — 셀 B 는 생성 모델만 바꾸고 탐지(SafetyL1 + InputJudge)는 고정이다.
+     */
+    static final String CELL_B_CANNOT_DISCRIMINATE =
+            "셀 B 는 입력 안전 지표로 후보를 변별하지 않는다. 생성 모델만 바꾸고 탐지"
+                    + "(SafetyL1 + InputJudge)는 전 변형 고정이라, 미탐·HARD 하향·위기 오탐은 "
+                    + "구조적으로 기준선과 같은 값이 나온다. 같은 숫자를 '모든 모델이 똑같이 "
+                    + "안전하다' 로 읽으면 안 된다 — 셀 B 가 대답할 수 있는 것은 생성 품질·계약 "
+                    + "준수·금기 위반·지연·원가다.";
+
     private CellScreeningReport() {
     }
 
@@ -135,6 +149,11 @@ final class CellScreeningReport {
                     .formatted(percentOf(p.acceptanceRate()), percentOf(p.cbtFitRate()),
                             p.cbtScoreable(), p.contractViolated(), p.contractApplicable(),
                             p.contraindicationViolations()));
+            out.append("      전달     빈 응답 %d건 · 생성 절단 %d/%d턴 (%.1f%%)%s%n"
+                    .formatted(p.emptyResponses(), p.truncatedGenerations(), p.generationCalls(),
+                            p.truncationRatePercent(),
+                            p.truncationRatePercent() > 0 || p.emptyResponses() > 0
+                                    ? "  ← 사용자에게 전달된 것이 없는 턴은 수용이 아니다" : ""));
             out.append(row.latencyMeasured()
                     ? "      지연     p50 %d / p95 %d ms · 첫 실질 토큰 p50 %d / p95 %d ms%n"
                     .formatted(p.p50LatencyMs(), p.p95LatencyMs(),
@@ -167,6 +186,7 @@ final class CellScreeningReport {
                 .formatted(thresholds.version(), thresholds.registeredOn()));
         out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v1.json)은 따로이고 더 엄격하다. **\n");
         out.append("  ** 통과가 '안전하다' 는 뜻이 아니다 — 표본 실행은 어떤 안전 주장도 지지하지 않는다. **\n");
+        out.append("  ** %s **\n".formatted(CELL_B_CANNOT_DISCRIMINATE));
         rows.stream().filter(row -> !row.isBaseline()).forEach(row -> {
             CandidateElimination.Verdict verdict = CandidateElimination.evaluate(thresholds,
                     row.variant(), baseline.get().population(), row.population(),
@@ -186,7 +206,8 @@ final class CellScreeningReport {
                 .map(row -> new CandidateElimination.Point(row.variant().label(),
                         row.population().costPerAcceptedResponse(),
                         row.population().acceptanceRate(),
-                        row.latencyMeasured() ? row.population().p95LatencyMs() : -1L))
+                        row.latencyMeasured() ? row.population().p95LatencyMs() : -1L,
+                        row.population().accepted()))
                 .toList();
         CandidateElimination.Frontier frontier = CandidateElimination.pareto(points);
 
@@ -199,8 +220,12 @@ final class CellScreeningReport {
                     "    %s 는 %s 에게 세 축 모두에서 진다 — 어떤 가중치로도 고를 이유가 없다%n"
                             .formatted(dominated, dominator)));
         }
+        frontier.notComparable().forEach((label, reason) -> out.append(
+                "    %s 는 프론티어 계산에서 뺐다 — %s%n".formatted(label, reason)));
         out.append("    ↑ 단가 미상 후보는 비용 축을 비교할 수 없어 지배 판정에서 빼고 프론티어에 남긴다. "
                 + "모르는 것을 나쁜 것으로 접지 않는다.\n");
+        out.append("    ↑ 수용 응답이 0 건인 후보는 프론티어에도 남기지 않는다. 분모가 없어 원가가 "
+                + "'미상' 이 되는데, 그걸 '모른다' 로 접으면 아무것도 내지 않은 후보가 프론티어에 앉는다.\n");
     }
 
     /**

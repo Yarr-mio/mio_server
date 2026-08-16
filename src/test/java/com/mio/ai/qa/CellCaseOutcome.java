@@ -37,6 +37,14 @@ record CellCaseOutcome(
         boolean outputJudgeCalled,
         /** 프로덕션이 매 턴 부르는 {@code CbtMetadataClassifier} 를 이 턴에서 불렀는가. */
         boolean cbtClassifierCalled,
+        /**
+         * 생성이 출력 토큰 상한에 걸려 잘렸는가.
+         *
+         * <p>1단계 실 실행에서 추론 모델은 400 토큰 예산을 내부 추론에 전부 쓰고 잘렸다. 그
+         * 사실이 {@code OpenAiLlmClient} 의 경고 로그로만 남고 점수에는 들어가지 않아,
+         * 47/47 이 잘린 후보가 수용률 100%% 로 표에 올랐다. 절단은 값으로 남겨야 계산에 들어간다.
+         */
+        boolean generationTruncated,
 
         ContractOutcome contract,
         List<String> contractViolations,
@@ -97,7 +105,22 @@ record CellCaseOutcome(
         REJECTED_CONTRACT,
         REJECTED_OUTPUT_JUDGE,
         REJECTED_JUDGE_FAILURE,
-        REJECTED_EXTERNAL_FAILURE
+        REJECTED_EXTERNAL_FAILURE,
+        /**
+         * 모델이 사용자에게 보일 텍스트를 한 글자도 내지 않았다.
+         *
+         * <p>1단계 실 실행이 드러낸 결함이다. 빈 문자열은 {@code OutputPreFilter} 도
+         * {@code ResponseContractValidator} 도 <b>자명하게</b> 통과한다 — 금지어가 없고 문장
+         * 수도 상한을 넘지 않는다. 그래서 second look 이 발동하지 않고 그대로
+         * {@link #ACCEPTED} 가 됐고, 47/47 케이스에서 아무것도 내지 않은 후보가 "수용률
+         * 100%%, 최저 원가" 로 표에 올랐다. 아무것도 하지 않는 것이 1등이 되는 채점은 채점이
+         * 아니다.
+         *
+         * <p>외부 장애({@link #REJECTED_EXTERNAL_FAILURE})와 나눠 두는 이유는 대응이 다르기
+         * 때문이다. 전자는 네트워크·rate limit 이고, 이것은 <b>모델이 정상 응답으로 빈 본문을
+         * 돌려준 것</b>이다.
+         */
+        REJECTED_EMPTY_RESPONSE
     }
 
     CellCaseOutcome {

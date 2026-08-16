@@ -1,7 +1,36 @@
 {
-  "version": "candidate-roster-v1",
+  "version": "candidate-roster-v1.1",
   "registeredOn": "2026-08-16",
   "source": "계정의 /v1/models chat 가능 목록 (39건, 2026-08-16 조회)",
+  "amendments": [
+    {
+      "on": "2026-08-16",
+      "from": "candidate-roster-v1",
+      "what": "gpt-5 · gpt-5-mini · gpt-5-nano 의 reasoningModel 을 false → true 로 고쳤다",
+      "why": [
+        "v1 은 gpt-5 계열을 비추론 모델로 적었다. 그건 사실이 아니다.",
+        "근거는 1단계 실 실행이다 (run_id 826444f8-e896-4582-8784-5895439eb042,",
+        "2026-08-16, 표본 50건 / 모델 변별 47건).",
+        "OpenAiLlmClient 의 finish_reason=length 경고 수 vs 사용자에게 본문을 실제로 전달한 턴 수:",
+        "  gpt-5-nano  절단 47회 / 전달  0턴  ← 400 토큰을 전부 내부 추론에 썼다",
+        "  gpt-5-mini  절단 47회 / 전달  4턴",
+        "  gpt-5       절단 45회 / 전달  5턴",
+        "  o3-mini     절단 39회 / 전달 15턴  (v1 부터 추론 모델로 표기)",
+        "  o4-mini     절단 24회 / 전달 32턴  (v1 부터 추론 모델로 표기)",
+        "  o3          절단 19회 / 전달 36턴  (v1 부터 추론 모델로 표기)",
+        "비교: 나머지 12개 후보는 절단 0회 / 전달 46~47턴이었다.",
+        "gpt-5 계열의 절단 패턴은 이미 추론 모델로 표기된 o 계열보다 더 심하다.",
+        "'전달 턴 수' 는 CbtMetadataClassifier 호출 수로 센다 — 프로덕션이 생성한 응답을",
+        "실제로 전달한 턴에서만 부르는 호출이라, 아카이브 manifest 의 cbt_classifier_calls 가",
+        "그대로 그 수다."
+      ],
+      "notChanged": [
+        "gpt-5.1 · gpt-5.2 · gpt-5.4* · gpt-5.5 · gpt-5.6* 는 false 를 유지한다.",
+        "같은 실행에서 절단 0회 · 전달 46~47턴으로, 추론 모델의 흔적이 전혀 없었다.",
+        "이름이 gpt-5 로 시작한다는 이유로 같이 바꾸면 그건 증거가 아니라 유추다."
+      ]
+    }
+  ],
   "note": [
     "이 파일은 '어떤 모델이 어느 단계에 들어가고, 무엇이 왜 빠졌는가' 만 담는다.",
     "단가는 담지 않는다 — 로드맵 §11.3 이 '정확한 후보 ID 와 당시 단가는 코드 상수나 문서의",
@@ -99,23 +128,26 @@
     {
       "id": "gpt-5",
       "decision": "SCREEN",
-      "reasoningModel": false,
+      "reasoningModel": true,
+      "reasoningModelEvidence": "run_id 826444f8: 절단 45회 / 47턴 중 5턴만 본문 전달 (v1 은 false 로 잘못 적었다)",
       "roles": ["generation"],
-      "reason": "기준선보다 싼 상위 세대 후보"
+      "reason": "기준선보다 싼 상위 세대 후보. 추론 모델이라 400 토큰 프로덕션 예산으로는 본문을 내지 못한다 — 평가하려면 -PcellMaxCompletionTokens 로 예산을 올려야 한다"
     },
     {
       "id": "gpt-5-mini",
       "decision": "SCREEN",
-      "reasoningModel": false,
+      "reasoningModel": true,
+      "reasoningModelEvidence": "run_id 826444f8: 절단 47회 / 47턴 중 4턴만 본문 전달 (v1 은 false 로 잘못 적었다)",
       "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
-      "reason": "경량 후보"
+      "reason": "경량 추론 모델. 판정 역할은 JSON 출력이라 절단이 파싱 실패로 이어진다 — 판정 후보로 볼 때도 예산을 같이 본다"
     },
     {
       "id": "gpt-5-nano",
       "decision": "SCREEN",
-      "reasoningModel": false,
+      "reasoningModel": true,
+      "reasoningModelEvidence": "run_id 826444f8: 절단 47회 / 47턴 전부 본문 전달 0 (v1 은 false 로 잘못 적었다)",
       "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
-      "reason": "로스터에서 가장 싼 후보 — 판정 역할 하한을 본다"
+      "reason": "로스터에서 가장 싼 후보 — 판정 역할 하한을 본다. 다만 1단계에서 400 토큰 예산으로는 한 글자도 내지 못했다"
     },
     {
       "id": "gpt-4.1",

@@ -72,8 +72,13 @@ final class CellCandidateRoster {
         }
     }
 
-    record Entry(String id, Decision decision, boolean reasoningModel, Set<String> roles,
-                 String reason) {
+    /**
+     * @param reasoningModelEvidence {@code reasoningModel} 판정의 근거. 비어 있으면 실행 증거
+     *                               없이 사전 분류한 것이다 — 둘을 구별할 수 있어야 나중에
+     *                               "이건 확인한 값인가 짐작한 값인가" 를 물을 수 있다
+     */
+    record Entry(String id, Decision decision, boolean reasoningModel,
+                 String reasoningModelEvidence, Set<String> roles, String reason) {
 
         Entry {
             roles = Set.copyOf(roles);
@@ -119,7 +124,8 @@ final class CellCandidateRoster {
                             "후보 %s 에 사유가 없다 — 사유 없는 판정은 나중에 검토할 수 없다".formatted(id));
                 }
                 entries.add(new Entry(id, Decision.valueOf(node.get("decision").asText()),
-                        node.path("reasoningModel").asBoolean(false), roles, reason));
+                        node.path("reasoningModel").asBoolean(false),
+                        node.path("reasoningModelEvidence").asText(""), roles, reason));
             });
             return new CellCandidateRoster(root.get("version").asText(),
                     root.get("registeredOn").asText(), root.get("source").asText(), entries);
@@ -194,8 +200,17 @@ final class CellCandidateRoster {
         out.append("\n  [스크리닝 진입]\n");
         entries.stream()
                 .filter(entry -> entry.decision().entersScreening())
-                .forEach(entry -> out.append("    %-16s %-10s %s%s%n".formatted(entry.id(),
-                        entry.decision(), entry.reasoningModel() ? "[추론] " : "", entry.reason())));
+                .forEach(entry -> {
+                    out.append("    %-16s %-10s %s%s%n".formatted(entry.id(), entry.decision(),
+                            entry.reasoningModel() ? "[추론] " : "", entry.reason()));
+                    if (!entry.reasoningModelEvidence().isBlank()) {
+                        out.append("      ↑ 추론 모델 판정 근거: %s%n"
+                                .formatted(entry.reasoningModelEvidence()));
+                    }
+                });
+        out.append("    ** [추론] 표시 후보는 프로덕션 400 토큰 예산 안에서 본문을 내지 못할 수 있다. "
+                + "-PcellMaxCompletionTokens 로 예산을 올려 재거나, 절단률 문턱에 걸려 "
+                + "NOT_EVALUABLE 로 보고된다. **\n");
 
         out.append("\n  [offline reference judge 전용]\n");
         entries.stream()

@@ -153,6 +153,32 @@ tasks.withType<Test> {
             )
         }
 
+    // "<모델 ID>=<정수>" 목록 → mio.eval.maxCompletionTokens.<모델 ID>
+    //
+    // 후보별 생성 출력 토큰 예산. 지정하지 않은 모델은 프로덕션 상수(400) 그대로다.
+    // 추론 모델은 400 토큰을 내부 추론에 전부 쓰고 사용자에게 보일 본문을 내지 못한다
+    // (run_id 826444f8: gpt-5-nano 47/47턴 절단, 전달 0턴). 예산을 올려야 비교가 성립한다.
+    //
+    //   -PcellMaxCompletionTokens="gpt-5-nano=4000,o3=4000"
+    //
+    // 올려서 잰 수치는 프로덕션 수치가 아니다 — 리포트·manifest 가 그 사실을 찍는다.
+    // 프로덕션 상수를 올리는 것은 원가와 "2~4문장 간결" 계약을 같이 바꾸는 제품 결정이라
+    // 하네스가 대신 정하지 않는다 (docs/eval/cell-benchmark.md §0-4).
+    project.findProperty("cellMaxCompletionTokens")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) {
+                "cellMaxCompletionTokens 항목 형식이 잘못됐다: '$entry' — <모델 ID>=<정수> 여야 한다"
+            }
+            systemProperty(
+                "mio.eval.maxCompletionTokens." + entry.substring(0, idx).trim(),
+                entry.substring(idx + 1).trim()
+            )
+        }
+
     // "<모델 ID>=<input>/<cachedInput>/<output>" 목록 → mio.eval.price.<모델 ID>
     project.findProperty("cellPrices")?.toString()
         ?.split(",")
