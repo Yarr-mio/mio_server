@@ -11,6 +11,9 @@ import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
+import com.mio.ai.delivery.SafePrefixCatalog;
+import com.mio.ai.plan.ResponseAct;
+import com.mio.session.service.SessionMessagePersistenceService;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -57,6 +60,12 @@ class ConversationOrchestratorContractIntegrationTest {
 
     @Autowired
     private MeterRegistry meterRegistry;
+
+    @Autowired
+    private SafePrefixCatalog safePrefixCatalog;
+
+    @Autowired
+    private SessionMessagePersistenceService messagePersistenceService;
 
     /**
      * 인터페이스가 아니라 구현 타입을 목으로 둔다. {@code EmbeddingWorker} 가 구체 타입
@@ -239,12 +248,127 @@ class ConversationOrchestratorContractIntegrationTest {
                 .anyMatch(reason -> reason.startsWith("contract:"));
     }
 
+    // ── 검토된 safe prefix (P0-4, 로드맵 §5.6) ────────────────────────────────
+
+    @Test
+    @DisplayName("검토된 첫 문장이 모델 응답보다 먼저 전달된다")
+    void reviewedSafePrefixIsDeliveredBeforeTheGeneratedText() {
+        String reply = "지금 어떤 감정이 가장 크게 느껴지나요?";
+        streamReplies(reply);
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "prefix-order-key");
+
+        String prefix = safePrefixCatalog.reviewedCopy().get(ResponseAct.EMOTION_CHECK);
+        String stream = emitter.joined();
+        // 사용자가 먼저 읽는 것이 서버 문구여야 한다. 순서가 뒤집히면 이 기능은 지연을
+        // 개선하지 않고 문장만 하나 늘린다.
+        assertThat(stream).contains(prefix);
+        assertThat(stream.indexOf(prefix))
+                .as("검토된 서버 문구가 생성 텍스트보다 먼저 나가야 한다")
+                .isLessThan(stream.indexOf(reply));
+        // 저장하지 않으면 재생·요약·워킹 메모리가 사용자가 읽은 것과 달라진다.
+        assertThat(storedAssistantContent("prefix-order-key"))
+                .as("서버가 보낸 문장도 이 턴의 응답이다")
+                .startsWith(prefix);
+    }
+
+    @Test
+    @DisplayName("prefix 가 붙은 턴은 첫 렌더와 첫 실질 토큰 지연이 갈라진다")
+    void renderedAndSubstantiveLatencyDivergeOnPrefixedTurns() {
+        // 생성이 즉시 끝나면 두 값이 모두 0ms 라 갈라짐을 확인할 수 없다. 실제 스트림에는
+        // 항상 존재하는 첫 토큰 지연을 명시적으로 만든다.
+        streamRepliesAfter(120L, "지금 어떤 감정이 가장 크게 느껴지나요?");
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new SseEmitter(30_000L), null);
+
+        JsonNode trace = awaitTrace();
+        assertThat(trace.path("safe_prefix_applied").asBoolean()).isTrue();
+        assertThat(trace.path("first_rendered_token_ms").asLong())
+                .as("서버 문구는 첫 승인 모델 콘텐츠보다 먼저 나간다")
+                .isLessThan(trace.path("first_substantive_token_ms").asLong());
+    }
+
+    @Test
+    @DisplayName("prefix 가 없는 턴에서는 두 지연이 같다")
+    void renderedAndSubstantiveLatencyStayEqualWithoutAPrefix() {
+        // Judge 판정을 받지 못한 보수 경로 — prefix 를 붙이지 않는 턴이다.
+        when(llmClient.completeJson(any())).thenThrow(new IllegalStateException("judge down"));
+        streamRepliesAfter(120L, "무슨 일이 있었는지 조금 더 들려주실 수 있을까요?");
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new SseEmitter(30_000L), null);
+
+        JsonNode trace = awaitTrace();
+        assertThat(trace.path("safe_prefix_applied").asBoolean()).isFalse();
+        assertThat(trace.path("first_rendered_token_ms").asLong())
+                .as("먼저 보인 것이 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠다")
+                .isEqualTo(trace.path("first_substantive_token_ms").asLong());
+    }
+
+    /**
+     * 전송된 SSE 이벤트를 그대로 모으는 emitter.
+     *
+     * <p>실제 요청 없이 {@code SseEmitter} 를 쓰면 전송이 무시되므로, 전송 순서를 보려면
+     * 여기서 가로채는 수밖에 없다. {@code super.send} 는 부르지 않는다 — 부를 대상이 없다.
+     */
+    private static final class RecordingEmitter extends SseEmitter {
+        private final List<String> parts = new java.util.ArrayList<>();
+
+        private RecordingEmitter() {
+            super(30_000L);
+        }
+
+        @Override
+        public void send(SseEventBuilder builder) {
+            builder.build().forEach(part -> parts.add(String.valueOf(part.getData())));
+        }
+
+        private String joined() {
+            return String.join("", parts);
+        }
+    }
+
+    /** 암호화 컬럼이라 서비스 경로로 읽는다. */
+    private String storedAssistantContent(String idempotencyKey) {
+        for (int attempt = 0; attempt < 50; attempt++) {
+            String content = messagePersistenceService.findTurn(sessionId, idempotencyKey)
+                    .map(turn -> turn.getAssistantMessageId())
+                    .flatMap(messagePersistenceService::loadAssistantContent)
+                    .orElse(null);
+            if (content != null) {
+                return content;
+            }
+            sleepBriefly();
+        }
+        throw new AssertionError("assistant 메시지가 저장되지 않았다");
+    }
+
+    private void sleepBriefly() {
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     /** LLM 이 주어진 텍스트를 한 청크로 흘리도록 한다. */
     private void streamReplies(String reply) {
         when(llmClient.stream(any(), any())).thenAnswer(invocation -> {
             Consumer<String> chunkHandler = invocation.getArgument(1);
             chunkHandler.accept(reply);
             return new LlmStreamResult(10L, LlmUsage.unresolved("gpt-4o"), false);
+        });
+    }
+
+    /** 첫 토큰까지의 지연이 있는 스트림. 실제 생성에는 항상 이 구간이 있다. */
+    private void streamRepliesAfter(long ttftMs, String reply) {
+        when(llmClient.stream(any(), any())).thenAnswer(invocation -> {
+            Thread.sleep(ttftMs);
+            Consumer<String> chunkHandler = invocation.getArgument(1);
+            chunkHandler.accept(reply);
+            return new LlmStreamResult(ttftMs, LlmUsage.unresolved("gpt-4o"), false);
         });
     }
 

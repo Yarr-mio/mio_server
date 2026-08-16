@@ -25,6 +25,7 @@ public class AiTurnMetrics {
     private static final String TURN_DURATION = "mio.ai.turn.duration";
     private static final String LLM_TTFT = "mio.ai.turn.llm.ttft";
     private static final String FIRST_SUBSTANTIVE = "mio.ai.turn.first.substantive";
+    private static final String FIRST_RENDERED = "mio.ai.turn.first.rendered";
     private static final String HELD_BACK_CHARS = "mio.ai.turn.held.back.chars";
     private static final String TURN_OUTCOMES = "mio.ai.turn.outcomes";
     private static final String POLICY_DECISIONS = "mio.ai.policy.decisions";
@@ -42,6 +43,7 @@ public class AiTurnMetrics {
             long totalPipelineMs,
             long llmTtftMs,
             long firstSubstantiveTokenMs,
+            long firstRenderedTokenMs,
             int heldBackChars,
             String finishedReason) {
 
@@ -76,6 +78,16 @@ public class AiTurnMetrics {
                     "First approved substantive content latency",
                     "delivery_mode", deliveryMode)
                     .record(Duration.ofMillis(firstSubstantiveTokenMs));
+        }
+        // 사용자가 무언가를 보기까지 (P0-4). 승인된 첫 모델 콘텐츠와 따로 잰다 — 하나로 재면
+        // 서버가 먼저 보내는 문구만으로 수치가 좋아져 지연 개선과 지연 은폐가 섞인다.
+        if (firstRenderedTokenMs >= 0) {
+            latencyTimer(
+                    FIRST_RENDERED,
+                    "First user-visible content latency (server safe prefix included)",
+                    "response_act", responseAct,
+                    "delivery_mode", deliveryMode)
+                    .record(Duration.ofMillis(firstRenderedTokenMs));
         }
 
         DistributionSummary.builder(HELD_BACK_CHARS)

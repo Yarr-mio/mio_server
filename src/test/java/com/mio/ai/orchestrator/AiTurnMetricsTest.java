@@ -31,7 +31,7 @@ class AiTurnMetricsTest {
     private final AiTurnMetrics metrics = new AiTurnMetrics(registry);
 
     @Test
-    @DisplayName("턴 전체·LLM TTFT·첫 실질 노출 지연을 histogram으로 기록한다")
+    @DisplayName("턴 전체·LLM TTFT·첫 실질 노출·첫 렌더 지연을 histogram으로 기록한다")
     void recordsLatencyHistograms() {
         PolicyDecision decision = constrainedDecision();
 
@@ -41,6 +41,7 @@ class AiTurnMetricsTest {
                 1_800,
                 240,
                 520,
+                180,
                 37,
                 "stop");
 
@@ -53,6 +54,9 @@ class AiTurnMetricsTest {
         Timer firstSubstantive = registry.find("mio.ai.turn.first.substantive")
                 .tags("delivery_mode", "cautious_speculative")
                 .timer();
+        Timer firstRendered = registry.find("mio.ai.turn.first.rendered")
+                .tags("response_act", "emotion_check", "delivery_mode", "cautious_speculative")
+                .timer();
         DistributionSummary heldBack = registry.find("mio.ai.turn.held.back.chars")
                 .tags("delivery_mode", "cautious_speculative", "outcome", "stop")
                 .summary();
@@ -64,6 +68,10 @@ class AiTurnMetricsTest {
         assertThat(ttft.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(240);
         assertThat(firstSubstantive).isNotNull();
         assertThat(firstSubstantive.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(520);
+        // safe prefix 가 나간 턴은 두 지연이 갈라진다 (P0-4). 같은 값으로 기록되면 서버가
+        // 먼저 보낸 문구가 첫 실질 토큰 지연까지 좋아 보이게 만든다.
+        assertThat(firstRendered).isNotNull();
+        assertThat(firstRendered.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(180);
         assertThat(heldBack).isNotNull();
         assertThat(heldBack.totalAmount()).isEqualTo(37);
     }
@@ -78,6 +86,7 @@ class AiTurnMetricsTest {
                 ResponseContractResult.violated(List.of("question_limit")),
                 900,
                 100,
+                300,
                 300,
                 12,
                 "crisis_flow");
@@ -111,6 +120,7 @@ class AiTurnMetricsTest {
                 100,
                 -1,
                 -1,
+                -1,
                 0,
                 "session-05619207-f2d2-43ea-bc87-a7c59ac8afa3");
 
@@ -137,6 +147,7 @@ class AiTurnMetricsTest {
                 1_800,
                 240,
                 520,
+                180,
                 37,
                 "stop");
 
@@ -144,6 +155,7 @@ class AiTurnMetricsTest {
                 .contains("mio_ai_turn_duration_seconds_bucket")
                 .contains("mio_ai_turn_llm_ttft_seconds_bucket")
                 .contains("mio_ai_turn_first_substantive_seconds_bucket")
+                .contains("mio_ai_turn_first_rendered_seconds_bucket")
                 .contains("mio_ai_turn_held_back_chars_bucket")
                 .contains("mio_ai_policy_decisions_total")
                 .contains("mio_ai_contract_results_total")

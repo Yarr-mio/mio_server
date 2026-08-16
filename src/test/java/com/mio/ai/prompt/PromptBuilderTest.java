@@ -1,5 +1,6 @@
 package com.mio.ai.prompt;
 
+import com.mio.ai.delivery.SafePrefixCatalog;
 import com.mio.ai.plan.GenerationFreedom;
 import com.mio.ai.plan.ResponseAct;
 import com.mio.ai.plan.ResponsePlan;
@@ -117,6 +118,40 @@ class PromptBuilderTest {
 
         assertThat(prompt).contains("미오");
         assertThat(prompt).doesNotContain("[응답 계약]");
+    }
+
+    @Test
+    @DisplayName("서버가 첫 문장을 보낸 턴은 감정 인정을 반복하지 말라고 지시한다")
+    void safe_prefix_turn_tells_the_model_not_to_repeat_the_acknowledgement() {
+        ResponsePlan plan = new ResponsePlan(ResponseAct.EMOTION_CHECK,
+                GenerationFreedom.CONSTRAINED, 1, 3, ResponsePlan.BASE_FORBIDDEN);
+
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE,
+                InterventionHints.empty(), null, "mio", null, plan, true);
+
+        // 지시하지 않으면 사용자는 같은 인정을 두 번 읽는다 — 눈에 보이는 제품 퇴행이다.
+        assertThat(prompt).contains("[이미 전달됨]");
+        assertThat(prompt).contains("다시 쓰지 말고");
+    }
+
+    @Test
+    @DisplayName("서버 문구 자체는 프롬프트에 넣지 않는다")
+    void the_server_copy_itself_never_reaches_the_prompt() {
+        ResponsePlan plan = new ResponsePlan(ResponseAct.EMOTION_CHECK,
+                GenerationFreedom.CONSTRAINED, 1, 3, ResponsePlan.BASE_FORBIDDEN);
+
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE,
+                InterventionHints.empty(), null, "mio", null, plan, true);
+
+        // 문구를 넣으면 모델이 그대로 따라 쓰는 것이 가장 흔한 반복 실패가 된다.
+        new SafePrefixCatalog().reviewedCopy().values()
+                .forEach(copy -> assertThat(prompt).doesNotContain(copy));
+    }
+
+    @Test
+    @DisplayName("prefix 를 보내지 않은 턴에는 그 지시가 없다")
+    void turns_without_a_prefix_do_not_get_the_instruction() {
+        assertThat(promptFor(ResponseAct.EMOTION_CHECK)).doesNotContain("[이미 전달됨]");
     }
 
     private String promptFor(ResponseAct act) {

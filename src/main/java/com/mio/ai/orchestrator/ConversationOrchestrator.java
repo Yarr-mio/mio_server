@@ -37,6 +37,7 @@ import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.delivery.ApprovedUnitBuffer;
 import com.mio.ai.delivery.HoldbackDelivery;
+import com.mio.ai.delivery.SafePrefixCatalog;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponseContractValidator;
@@ -109,6 +110,7 @@ public class ConversationOrchestrator {
     private final SafetyProfileBuilder safetyProfileBuilder;
     private final InputJudge inputJudge;
     private final ResponsePlanner responsePlanner;
+    private final SafePrefixCatalog safePrefixCatalog;
     private final ResponseContractValidator responseContractValidator;
     private final CbtMetadataClassifier cbtMetadataClassifier;
     private final OutputPreFilter outputPreFilter;
@@ -291,6 +293,15 @@ public class ConversationOrchestrator {
             // 6b. 응답 계약 확정 (이슈 #303). 결정론적이며 LLM 을 호출하지 않는다.
             // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
             decision = decision.withResponsePlan(responsePlanner.plan(decision));
+
+            // 6c. 검토된 safe prefix 선택 (P0-4, 로드맵 §5.6). 서버가 사전에 검토한 고정 문구라
+            // 모델 출력과 같은 검사 경로를 타지 않는다 — 안전한 이유가 "검사를 통과해서"가
+            // 아니라 "모델이 쓰지 않아서"다. 붙는 턴은 계약의 문장 상한을 하나 줄인다.
+            String safePrefix = safePrefixCatalog.select(decision).orElse(null);
+            if (safePrefix != null) {
+                decision = decision.withResponsePlan(
+                        decision.responsePlan().reservingSentences(SafePrefixCatalog.RESERVED_SENTENCES));
+            }
             ResponsePlan responsePlan = decision.responsePlan();
 
             // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
@@ -317,6 +328,9 @@ public class ConversationOrchestrator {
             // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
             // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
             AtomicLong firstSubstantiveTokenMs = new AtomicLong(-1);
+            // 사용자가 무언가를 보기까지 (P0-4). safe prefix 가 나간 턴에서만 위 값과 갈라진다 —
+            // prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠이므로 두 값은 같아야 한다.
+            AtomicLong firstRenderedTokenMs = new AtomicLong(-1);
             int heldBackChars = 0;
             OutputJudgeResult judgeActionResult = null;
             // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
@@ -359,11 +373,19 @@ public class ConversationOrchestrator {
                 recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
 
             } else if (decision.action() == DecisionAction.GENERATE) {
+                // 검토된 첫 문장을 생성보다 먼저 보낸다 (P0-4). 여기가 가장 이른 지점이다 —
+                // 프롬프트 조립·LLM 호출 앞에 두어야 승인 단위를 기다리는 시간이 실제로 메워진다.
+                // 전송에 실패해도 턴은 계속된다. 다만 나가지 않은 문장을 저장하지 않도록
+                // 전달 여부를 따로 들고 간다.
+                boolean safePrefixDelivered = deliverSafePrefix(
+                        safePrefix, emitter, outboundMsgId, firstRenderedTokenMs, startMs);
+
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
-                        session.getCharacterId(), checkpointSummary, responsePlan);
+                        session.getCharacterId(), checkpointSummary, responsePlan, safePrefixDelivered);
+                String deliveredPrefix = safePrefixDelivered ? safePrefix : null;
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
@@ -565,8 +587,14 @@ public class ConversationOrchestrator {
                             } else if (stopSendingDeltas.get()) {
                                 // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
                                 // not trailing tokens that arrived after the early stop
-                                String reviewedContent = capturedSnapshotRef.get() != null
-                                        ? capturedSnapshotRef.get() : assistantContent;
+                                //
+                                // delta.replace 는 메시지 전체를 갈아끼운다. 서버가 먼저 보낸
+                                // 문장도 이 메시지의 일부이므로 함께 실어야 화면에서 사라지지
+                                // 않는다. 판정이 교체한 응답(위 분기)과는 다르다 — 그쪽은
+                                // 앞선 텍스트를 남기지 않는 것이 목적이다.
+                                String reviewedContent = withSafePrefix(deliveredPrefix,
+                                        capturedSnapshotRef.get() != null
+                                                ? capturedSnapshotRef.get() : assistantContent);
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, reviewedContent);
@@ -574,12 +602,16 @@ public class ConversationOrchestrator {
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
+                                assistantContent = withSafePrefix(deliveredPrefix, assistantContent);
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             }
                         }
                     } else {
+                        // 서버가 먼저 보낸 문장도 이 턴의 응답이다. 저장하지 않으면 재생·요약·
+                        // 워킹 메모리가 사용자가 실제로 읽은 것과 달라진다.
+                        assistantContent = withSafePrefix(deliveredPrefix, assistantContent);
                         sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
@@ -628,12 +660,14 @@ public class ConversationOrchestrator {
 
             // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
+            long firstRenderedMs = resolveFirstRenderedMs(firstRenderedTokenMs, firstSubstantiveTokenMs);
             aiTurnMetrics.recordCompleted(
                     decision,
                     contractResult,
                     totalMs,
                     llmTtftMs,
                     firstSubstantiveTokenMs.get(),
+                    firstRenderedMs,
                     heldBackChars,
                     resolveFinishedReason(finishedReasonRef));
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
@@ -641,7 +675,8 @@ public class ConversationOrchestrator {
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs.get(), heldBackChars, liveMemoryResult);
+                    firstSubstantiveTokenMs.get(), firstRenderedMs,
+                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult);
 
             emitter.complete();
 
@@ -724,6 +759,55 @@ public class ConversationOrchestrator {
         }
         messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
+    }
+
+    /**
+     * 검토된 첫 문장을 생성 전에 보낸다 (P0-4, 로드맵 §5.6).
+     *
+     * <p>실패는 삼킨다. prefix 는 지연 개선 수단이지 응답의 필수 부분이 아니므로, 여기서
+     * 예외를 올리면 원래 성공했을 턴이 prefix 때문에 실패한다. 전송하지 못한 문장을 응답에
+     * 넣지 않도록 {@code false} 를 돌려준다.
+     *
+     * @return 실제로 전달됐는지
+     */
+    private boolean deliverSafePrefix(String safePrefix, SseEmitter emitter, String outboundMsgId,
+                                      AtomicLong firstRenderedTokenMs, long pipelineStartedAtMs) {
+        if (safePrefix == null || safePrefix.isBlank()) {
+            return false;
+        }
+        try {
+            sendEvent(emitter, new SseEventDto.DeltaEvent(safePrefix, outboundMsgId));
+            firstRenderedTokenMs.compareAndSet(
+                    -1, Math.max(0, System.currentTimeMillis() - pipelineStartedAtMs));
+            return true;
+        } catch (Exception e) {
+            log.warn("Safe prefix not delivered — continuing without it: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /** 서버가 먼저 보낸 문장을 응답 본문 앞에 잇는다. prefix 가 없으면 원문 그대로다. */
+    private String withSafePrefix(String deliveredPrefix, String content) {
+        if (deliveredPrefix == null || deliveredPrefix.isBlank()) {
+            return content;
+        }
+        if (content == null || content.isBlank()) {
+            return deliveredPrefix;
+        }
+        return deliveredPrefix + " " + content;
+    }
+
+    /**
+     * 사용자가 무언가를 보기까지 걸린 시간.
+     *
+     * <p>safe prefix 가 나간 턴은 그 전송 시각이고, 없으면 첫 승인 콘텐츠 시각과 같다. 둘을
+     * 하나로 재면 서버가 먼저 보내는 문구만으로 수치가 좋아져 "지연 개선"과 "지연 은폐"를
+     * 구분할 수 없다 (이슈 #306, 14번 리뷰 지적 E).
+     */
+    private long resolveFirstRenderedMs(AtomicLong firstRenderedTokenMs,
+                                        AtomicLong firstSubstantiveTokenMs) {
+        long rendered = firstRenderedTokenMs.get();
+        return rendered >= 0 ? rendered : firstSubstantiveTokenMs.get();
     }
 
     /** 실제 SSE 전송이 성공한 첫 비어 있지 않은 콘텐츠만 사용자 체감 지연으로 기록한다. */

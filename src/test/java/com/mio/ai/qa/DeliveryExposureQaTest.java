@@ -2,11 +2,11 @@ package com.mio.ai.qa;
 
 import com.mio.ai.delivery.ApprovedUnitBuffer;
 import com.mio.ai.delivery.HoldbackDelivery;
+import com.mio.ai.delivery.SafePrefixCatalog;
 import com.mio.ai.judge.OutputPreFilter;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.moderation.ModerationStatus;
-import com.mio.ai.plan.ResponseAct;
 import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.plan.ResponsePlanner;
 import com.mio.ai.policy.DecisionAction;
@@ -39,10 +39,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 계산한다 — 첫 검사가 200자 시점이므로, 그 전에 도착한 문자는 전부 검사 없이 전달됐다.
  *
  * <p>지연은 <b>가상 시계</b>로 잰다. 실제 시계로 재면 CI 부하에 따라 값이 흔들려 회귀와
- * 잡음을 구분할 수 없다. 시계는 가정이지만 측정 대상인 {@link HoldbackDelivery} 는 실제
- * 구현이다 — 하네스가 흉내 내는 것은 시간뿐이다.
+ * 잡음을 구분할 수 없다. 시계는 가정이지만 측정 대상인 {@link HoldbackDelivery}·
+ * {@link SafePrefixCatalog} 는 실제 구현이다 — 하네스가 흉내 내는 것은 시간뿐이다.
  */
-@DisplayName("[QA] 전달 노출·첫 화면 지연 — 승인 단위 holdback")
+@DisplayName("[QA] 전달 노출·첫 화면 지연 — 승인 단위 holdback + safe prefix")
 class DeliveryExposureQaTest {
 
     /** 이전 구현의 사후 검사 간격. 비교 기준으로만 쓴다. */
@@ -67,13 +67,11 @@ class DeliveryExposureQaTest {
      */
     private static final long ASSUMED_TTFT_MS = 600;
 
-
     /** 서버 문구 전송에 드는 시간. 메모리에 있는 문자열 하나를 SSE 로 쓰는 비용이다. */
-    /** safe prefix 대상 응답 행위 — 로드맵 §5.6 이 예로 든 자유도가 낮은 행위. */
-    private static final java.util.Set<ResponseAct> PREFIX_ELIGIBLE_ACTS =
-            java.util.Set.of(ResponseAct.EMOTION_CHECK, ResponseAct.CLARIFY_CONTEXT);
+    private static final long PREFIX_SEND_MS = 0;
 
     private final OutputPreFilter outputPreFilter = new OutputPreFilter();
+    private final SafePrefixCatalog safePrefixCatalog = new SafePrefixCatalog();
     private final ResponsePlanner responsePlanner = new ResponsePlanner();
 
     /**
@@ -122,8 +120,12 @@ class DeliveryExposureQaTest {
     );
 
     /** 한 시나리오의 측정 결과. */
-    private record Measurement(boolean prefixEligible, long renderedMs, long substantiveMs,
+    private record Measurement(String prefix, long renderedMs, long substantiveMs,
                                String deliveredContent, int exposedChars, int firstUnitChars) {
+
+        boolean prefixed() {
+            return prefix != null;
+        }
 
         /** 첫 화면과 첫 실질 콘텐츠의 차이. 아무것도 전달되지 않았으면 잴 수 없다. */
         long deltaMs() {
@@ -154,6 +156,31 @@ class DeliveryExposureQaTest {
                 .allMatch(chars -> chars == 0);
     }
 
+    /**
+     * 서버가 먼저 보내는 문장은 <b>모델 출력이 아니다.</b>
+     *
+     * <p>이 구분이 무너지면 P0-4 는 "검사 전에 내보내도 되는 예외"를 만든 작업이 된다. 위
+     * 노출 0 보장은 전달된 텍스트를 다시 검사해서 재므로, prefix 를 모델 경로로 흘려보내면
+     * 그 테스트가 아니라 이 테스트가 먼저 깨지도록 둔다.
+     */
+    @Test
+    @DisplayName("먼저 전달되는 문장은 서버가 검토한 고정 문구뿐이다")
+    void onlyServerAuthoredCopyIsDeliveredBeforeVerification() throws Exception {
+        for (Scenario scenario : SCENARIOS) {
+            Measurement m = measure(scenario);
+            if (!m.prefixed()) {
+                continue;
+            }
+            assertThat(safePrefixCatalog.reviewedCopy().values())
+                    .as("%s — 검토 목록에 없는 문장이 먼저 나갔다", scenario.name())
+                    .contains(m.prefix());
+            assertThat(String.join("", scenario.chunks()))
+                    .as("%s — prefix 가 모델 출력에서 왔다면 서버 문구라고 말할 수 없다",
+                            scenario.name())
+                    .doesNotContain(m.prefix());
+        }
+    }
+
     @Test
     @DisplayName("safe prefix 가 붙은 턴은 첫 화면 지연이 첫 실질 토큰보다 앞선다")
     void safePrefixMakesRenderedAndSubstantiveLatencyDiverge() throws Exception {
@@ -162,15 +189,15 @@ class DeliveryExposureQaTest {
         printLatencyReport(measured);
 
         List<String> prefixed = measured.entrySet().stream()
-                .filter(entry -> entry.getValue().prefixEligible())
+                .filter(entry -> entry.getValue().prefixed())
                 .map(Map.Entry::getKey)
                 .toList();
         List<String> plain = measured.entrySet().stream()
-                .filter(entry -> !entry.getValue().prefixEligible())
+                .filter(entry -> !entry.getValue().prefixed())
                 .map(Map.Entry::getKey)
                 .toList();
 
-        assertThat(prefixed).as("prefix 대상 시나리오가 하나도 없다 — 계획 규칙이 바뀐 것이다").isNotEmpty();
+        assertThat(prefixed).as("prefix 가 붙는 시나리오가 하나도 없다 — 배선이 끊겼다").isNotEmpty();
         assertThat(plain).as("대조군이 없으면 갈라짐이 배선 때문인지 알 수 없다").isNotEmpty();
 
         for (String name : prefixed) {
@@ -227,8 +254,7 @@ class DeliveryExposureQaTest {
      */
     private Measurement measure(Scenario scenario) throws Exception {
         PolicyDecision decision = decisionFor(scenario);
-        boolean prefixEligible = PREFIX_ELIGIBLE_ACTS.contains(decision.responsePlan().responseAct())
-                && decision.deliveryMode() == DeliveryMode.CAUTIOUS_SPECULATIVE;
+        String prefix = safePrefixCatalog.select(decision).orElse(null);
 
         AtomicLong clockMs = new AtomicLong(0);
         List<String> sent = new ArrayList<>();
@@ -238,8 +264,8 @@ class DeliveryExposureQaTest {
                 sent::add,
                 clockMs::get);
 
-        // 아직 서버가 먼저 보내는 문장이 없다. 사용자가 처음 보는 것은 첫 승인 단위이므로
-        // 첫 화면 지연과 첫 실질 토큰 지연은 같은 값이다 — 그것이 이 커밋이 재현하는 상태다.
+        long renderedMs = prefix != null ? PREFIX_SEND_MS : -1;
+
         // 생성은 prefix 와 무관하게 진행된다 — 서버가 먼저 보내는 것은 전달이지 생성이 아니다.
         clockMs.set(ASSUMED_TTFT_MS);
         String generated = String.join("", scenario.chunks());
@@ -256,8 +282,8 @@ class DeliveryExposureQaTest {
         int exposed = outputPreFilter.check(delivered).passed() ? 0 : delivered.length();
 
         return new Measurement(
-                prefixEligible,
-                substantiveMs,
+                prefix,
+                renderedMs >= 0 ? renderedMs : substantiveMs,
                 substantiveMs,
                 delivered,
                 exposed,
@@ -327,13 +353,13 @@ class DeliveryExposureQaTest {
                 .formatted("시나리오", "prefix", "첫 화면", "첫 실질 토큰", "개선"));
         measured.forEach((name, m) -> out.append("  %-24s %7s %7dms %9dms %7s%n".formatted(
                 name,
-                m.prefixEligible() ? "O" : "-",
+                m.prefixed() ? "O" : "-",
                 m.renderedMs(),
                 m.substantiveMs(),
                 m.deltaMs() < 0 ? "미전달" : m.deltaMs() + "ms")));
         out.append("\n  가상 시계 기준. 첫 생성 토큰 %dms + 초당 %.0f자를 가정했고, 승인 단위 판정은\n"
                 .formatted(ASSUMED_TTFT_MS, ASSUMED_CHARS_PER_SECOND));
-        out.append("  실제 HoldbackDelivery·OutputPreFilter 가 수행한다.\n");
+        out.append("  실제 HoldbackDelivery·OutputPreFilter·SafePrefixCatalog 가 수행한다.\n");
         out.append("  \"미전달\"은 승인된 모델 콘텐츠가 하나도 없었던 턴이다 — 그 턴에서 사용자가\n");
         out.append("  본 것은 서버 문구뿐이고, 나머지는 교체 경로가 처리한다.\n");
         out.append("  실제 값은 운영 trace 의 first_rendered_token_ms / first_substantive_token_ms\n");

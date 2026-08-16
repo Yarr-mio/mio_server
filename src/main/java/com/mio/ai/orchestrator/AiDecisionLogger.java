@@ -64,6 +64,8 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
+            long firstRenderedTokenMs,
+            boolean safePrefixApplied,
             int heldBackChars,
             MemoryContextResult memoryContextResult) {
 
@@ -74,7 +76,8 @@ public class AiDecisionLogger {
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, heldBackChars, memoryContextResult);
+                    firstSubstantiveTokenMs, firstRenderedTokenMs, safePrefixApplied,
+                    heldBackChars, memoryContextResult);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -126,7 +129,7 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
                 preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
                 memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
-                ResponseContractResult.notApplicable(), -1, 0, null);
+                ResponseContractResult.notApplicable(), -1, -1, false, 0, null);
     }
 
     /** Phase 1 호환 오버로드 */
@@ -145,7 +148,7 @@ public class AiDecisionLogger {
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
                 "default", false, false, false, decision.crisisTrigger(), null,
-                ResponseContractResult.notApplicable(), -1, 0, null);
+                ResponseContractResult.notApplicable(), -1, -1, false, 0, null);
     }
 
     private Map<String, Object> buildTrace(
@@ -166,6 +169,8 @@ public class AiDecisionLogger {
             LlmUsage llmUsage,
             ResponseContractResult contractResult,
             long firstSubstantiveTokenMs,
+            long firstRenderedTokenMs,
+            boolean safePrefixApplied,
             int heldBackChars,
             MemoryContextResult memoryContextResult) {
 
@@ -232,13 +237,16 @@ public class AiDecisionLogger {
         //   llm_ttft_ms                — 첫 생성 토큰
         //   first_substantive_token_ms — 승인되어 실제로 전달된 첫 콘텐츠
         //   first_rendered_token_ms    — 사용자가 무언가를 보기까지
-        // 검토된 safe prefix 를 서버가 먼저 보내는 기능이 없는 동안 뒤의 두 값은 같다.
-        // 필드를 미리 두어 그 기능이 들어올 때 값이 갈라지는 것을 볼 수 있게 한다.
+        // 검토된 safe prefix 가 나간 턴에서만 뒤의 두 값이 갈라진다 (P0-4). prefix 가 없는
+        // 턴에서 값이 갈라지면 배선이 틀렸다는 뜻이다 — 사용자가 먼저 볼 것이 없기 때문이다.
         trace.put("llm_ttft_ms", ttftMs >= 0 ? ttftMs : null);
         trace.put("first_substantive_token_ms",
                 firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
         trace.put("first_rendered_token_ms",
-                firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
+                firstRenderedTokenMs >= 0 ? firstRenderedTokenMs : null);
+        // 이 턴에 서버가 검토된 첫 문장을 먼저 보냈는지. 두 지연 값의 차이를 해석하려면
+        // 차이의 원인이 함께 있어야 한다.
+        trace.put("safe_prefix_applied", safePrefixApplied);
         // 생성됐지만 위반으로 전달되지 않은 문자 수. 전달 정책의 비용과 효과를 함께 보여준다.
         trace.put("delivery_held_back_chars", heldBackChars);
         trace.put("llm_usage_resolved", llmUsage != null ? llmUsage.resolved() : null);
