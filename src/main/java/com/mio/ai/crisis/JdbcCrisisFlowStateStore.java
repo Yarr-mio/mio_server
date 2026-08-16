@@ -54,6 +54,14 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
         return byStage;
     }
 
+    /**
+     * 새 위기 플로우를 연다. <b>이미 활성인 플로우는 건드리지 않는다.</b>
+     *
+     * <p>이전에는 조건 없는 upsert 라, 같은 세션에 대해 두 요청이 동시에 "활성 상태 없음"을
+     * 보고 각자 진입하면 뒤늦은 쪽이 상태를 CURRENT_INTENT 로 되돌렸다. 계획·수단까지 이미
+     * 확인한 triage 가 조용히 처음으로 돌아가고, 그 사이 받아둔 답이 사라진다. 종결된
+     * 플로우(completed/handoff)를 다시 여는 것은 정상이므로 그때만 갱신한다.
+     */
     @Override
     @Transactional
     public void begin(UUID sessionId, UUID userId, int severity) {
@@ -80,6 +88,7 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                     started_at = now(),
                     updated_at = now(),
                     terminal_at = NULL
+                WHERE crisis_flow_states.status <> 'active'
                 """,
                 sessionId, userId, severity);
     }

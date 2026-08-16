@@ -106,4 +106,39 @@ class CrisisFlowStateStoreIntegrationTest {
         assertThat(store.find(sessionId)).isEmpty();
         assertThat(store.hasCrisisEvent(sessionId)).isTrue();
     }
+
+    @Test
+    @DisplayName("진행 중인 triage 는 begin 을 다시 불러도 처음으로 되돌아가지 않는다")
+    void beginDoesNotResetAnActiveFlow() {
+        store.begin(sessionId, userId, 2);
+        store.advance(sessionId, CrisisFlowStage.CURRENT_INTENT, CrisisAnswer.YES,
+                CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE);
+
+        // 동시 진입·재시도로 begin 이 한 번 더 불릴 수 있다. 그때 상태를 리셋하면 이미 받아둔
+        // 현재성 답변이 사라지고 같은 질문을 다시 하게 된다.
+        store.begin(sessionId, userId, 3);
+
+        CrisisFlowSnapshot snapshot = store.find(sessionId).orElseThrow();
+        assertThat(snapshot.stage()).isEqualTo(CrisisFlowStage.PLAN);
+        assertThat(snapshot.severity()).isEqualTo(2);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT current_intent FROM crisis_flow_states WHERE session_id = ?",
+                String.class, sessionId))
+                .isEqualTo("yes");
+    }
+
+    @Test
+    @DisplayName("종결된 플로우는 begin 으로 다시 열 수 있다")
+    void beginReopensTerminatedFlow() {
+        store.begin(sessionId, userId, 1);
+        store.advance(sessionId, CrisisFlowStage.CURRENT_INTENT, CrisisAnswer.UNKNOWN,
+                CrisisFlowStage.HANDOFF, CrisisFlowStatus.HANDOFF);
+
+        store.begin(sessionId, userId, 3);
+
+        CrisisFlowSnapshot snapshot = store.find(sessionId).orElseThrow();
+        assertThat(snapshot.stage()).isEqualTo(CrisisFlowStage.CURRENT_INTENT);
+        assertThat(snapshot.status()).isEqualTo(CrisisFlowStatus.ACTIVE);
+        assertThat(snapshot.severity()).isEqualTo(3);
+    }
 }
