@@ -46,7 +46,12 @@ import java.util.Optional;
  *
  * <p>동시에 이것은 <b>셀 B 의 안전 수치가 같다고 해서 모델들이 똑같이 안전한 것은 아니다</b>는
  * 뜻이기도 하다. 셀 B 는 그 질문을 물을 수 없다. 판정 모델을 바꾸는 실험은 셀 D 의 몫이고,
- * 생성 모델이 출력 단계에서 만드는 위험은 금기 위반·계약 위반·OutputJudge 거부로만 잡힌다.
+ * 생성 모델이 출력 단계에서 만드는 위험은 금기 위반·계약 위반·OutputJudge 거부·CBT 개입 금지
+ * 준수율(분류기 판정)로만 잡힌다.
+ *
+ * <p><b>플래너 계획 일치율은 이 탈락 계산에 들어가지 않는다.</b> 결정론 플래너의 출력이라 셀 B
+ * 에서 구조적으로 상수이고, 상수를 문턱에 대는 것은 하한이 아니라 장식이다 (§0-2 의 논지를
+ * 그대로 적용한 것이다).
  */
 final class CandidateElimination {
 
@@ -113,8 +118,14 @@ final class CandidateElimination {
          *
          * <p>{@link #NOT_ASSESSABLE} 과 다르다. 저쪽은 "값은 유효한데 한 축(단가)을 모른다" 이고,
          * 이쪽은 "측정 자체가 성립하지 않았다" 다. 대부분의 턴이 출력 토큰 상한에서 잘렸다면
-         * 그 후보의 수용률·CBT 적합률은 모델의 품질이 아니라 예산의 결과이고, 그것을 조용히
+         * 그 후보의 <b>수용률</b>은 모델의 품질이 아니라 예산의 결과이고, 그것을 조용히
          * 채점하면 아무 말도 못 한 모델이 점수를 얻는다.
+         *
+         * <p>예전 주석은 여기에 "CBT 적합률" 을 같이 적어 두 지표가 같은 성질인 것처럼 읽히게
+         * 했다. 사실이 아니다. 그 값(지금의 <b>플래너 계획 일치율</b>)은 절단과 무관하게 항상
+         * 같은 값이 나온다 — 결정론 플래너의 출력이라 생성이 잘렸는지 여부가 입력에 없기
+         * 때문이다. 절단이 실제로 망가뜨리는 품질 축은 수용률과 CBT 개입 금지 준수율(분류기가
+         * 전달 본문을 읽는 값)이다.
          */
         NOT_EVALUABLE
     }
@@ -178,9 +189,10 @@ final class CandidateElimination {
     static Verdict evaluate(Thresholds thresholds, CellVariant candidate,
                             CellMetrics.Population baseline, CellMetrics.Population cand,
                             boolean latencyMeasured) {
-        // 재지 못한 실행은 다른 무엇을 보기 전에 막는다. 절단률이 높은 후보의 수용률·CBT
-        // 적합률은 모델의 품질이 아니라 토큰 예산의 결과라, 순위에 올리는 순간 표가 거짓말을
-        // 시작한다 — 1단계 실행에서 실제로 일어난 일이다.
+        // 재지 못한 실행은 다른 무엇을 보기 전에 막는다. 절단률이 높은 후보의 수용률과 CBT
+        // 개입 금지 준수율(분류기가 전달 본문을 읽는 값)은 모델의 품질이 아니라 토큰 예산의
+        // 결과라, 순위에 올리는 순간 표가 거짓말을 시작한다 — 1단계 실행에서 실제로 일어난
+        // 일이다. 플래너 계획 일치율은 여기 해당하지 않는다 — 절단 여부가 그 값의 입력에 없다.
         Check truncation = truncation(cand, thresholds.maxGenerationTruncationRatePercent());
         if (!truncation.passed()) {
             return new Verdict(candidate, Outcome.NOT_EVALUABLE, List.of(truncation),

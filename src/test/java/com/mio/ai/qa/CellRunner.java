@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.CbtMetadataClassifier;
+import com.mio.ai.judge.CbtMetadataResult;
 import com.mio.ai.judge.InputJudge;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.OutputJudge;
@@ -86,6 +87,11 @@ import java.util.concurrent.TimeoutException;
  * 보고한다. 게이트가 비율 문턱이라 그 상수가 경계에서 판정을 뒤집을 수 있다. 호출 조건은
  * {@code sendDoneEvent(..., classifyCbt)} 를 그대로 옮겼다 — 생성한 응답이 실제로 전달된 턴만
  * 부르고, 보안 거절·위기 고정 응답·가드 교체·생성 실패 턴은 부르지 않는다.
+ *
+ * <p><b>그 호출의 반환값도 쓴다.</b> {@code CbtMetadataResult} 는 입력이 전달 본문이라
+ * <b>모델에 따라 변하는</b> 유일한 CBT 신호인데, 예전에는 그것을 버리고 "불렀는가" 만 남겼다.
+ * 지금은 {@link CellCaseOutcome.CbtDeliveryJudgment} 로 gold 의 {@code forbiddenElements} 와
+ * 맞대어 남긴다. 호출 조건도 호출 수도 그대로다 — 늘어난 비용이 없다.
  *
  * <h2>스텁 실행</h2>
  *
@@ -339,8 +345,9 @@ final class CellRunner {
                 lockedCase.expected().safetyTruth(),
                 CellCaseOutcome.grade(lockedCase.expected().safetyTruth(), Exposure.GUARDED),
                 lockedCase.expected().responseAct(), null,
-                CellCaseOutcome.fit(lockedCase.expected().responseAct(), null),
+                CellCaseOutcome.plannerFit(lockedCase.expected().responseAct(), null),
                 false, null, false, false, false, false,
+                CellCaseOutcome.CbtDeliveryJudgment.NOT_JUDGED,
                 false,
                 ContractOutcome.NOT_APPLICABLE, List.of(),
                 Acceptance.REJECTED_EXTERNAL_FAILURE, timedOut,
@@ -373,9 +380,27 @@ final class CellRunner {
 
         List<WorkingMessage> priorTurns = priorTurns(userTurns);
         Delivery delivery = deliver(decision, combined, current, priorTurns, caseKey, startNanos);
-        boolean cbtCalled = classifyCbt(delivery, current, priorTurns, signal, caseKey);
-        return assemble(lockedCase, caseKey, decision, delivery, judgeCalled, judgeResult, cbtCalled,
+        CbtClassification cbt = classifyCbt(delivery, current, priorTurns, signal, caseKey);
+        return assemble(lockedCase, caseKey, decision, delivery, judgeCalled, judgeResult, cbt,
                 delivery.firstSubstantiveMs(), elapsedMs(startNanos));
+    }
+
+    /**
+     * 한 턴의 CBT 분류 결과.
+     *
+     * <p>두 가지를 같이 든다. {@code called} 는 <b>원가</b> 집계용이다 — 프로덕션이 매 턴 부르는
+     * 실호출이라 호출 수 자체가 턴당 원가에 들어간다. {@code interventionObserved} 는
+     * <b>품질</b> 집계용이다 — 분류기가 전달 본문을 읽고 소크라테스식 개입을 봤는가.
+     *
+     * <p>예전에는 {@code classify(...)} 의 반환값을 그대로 버리고 {@code called} 만 남겼다.
+     * 그래서 하네스는 <b>모델에 따라 변하는</b> 유일한 CBT 신호에 매 턴 돈을 쓰면서 그것을
+     * 기록하지 않았고, 리포트의 "CBT" 칸은 생성보다 먼저 계산되는 플래너 값이 차지했다.
+     */
+    private record CbtClassification(boolean called, boolean interventionObserved) {
+
+        static CbtClassification notCalled() {
+            return new CbtClassification(false, false);
+        }
     }
 
     /**
@@ -387,22 +412,23 @@ final class CellRunner {
      * {@code false} 다. 분류기 자신도 응답이 비면 호출 없이 {@code none()} 을 돌려주므로,
      * 조건을 여기서 한 번 더 좁혀 둬야 하네스가 프로덕션보다 많이 부르지 않는다.
      *
-     * @return 실제로 분류기를 불렀는가
+     * <p>호출 조건은 <b>바뀌지 않았다.</b> 바뀐 것은 반환값을 버리지 않는다는 것뿐이라, 이
+     * 변경으로 늘어나는 호출도 비용도 없다.
      */
-    private boolean classifyCbt(Delivery delivery, String userMessage,
-                                List<WorkingMessage> priorTurns, UserMessageSignal signal,
-                                UUID caseKey) {
+    private CbtClassification classifyCbt(Delivery delivery, String userMessage,
+                                          List<WorkingMessage> priorTurns, UserMessageSignal signal,
+                                          UUID caseKey) {
         boolean deliveredGeneration = delivery.generationCalled()
                 && delivery.acceptance() == Acceptance.ACCEPTED
                 && delivery.exposure() != Exposure.CRISIS_FLOW
                 && delivery.deliveredText() != null
                 && !delivery.deliveredText().isBlank();
         if (!deliveredGeneration) {
-            return false;
+            return CbtClassification.notCalled();
         }
-        cbtClassifier.classify(null, priorTurns, userMessage, delivery.deliveredText(),
-                signal, 0, false, caseKey, caseKey);
-        return true;
+        CbtMetadataResult result = cbtClassifier.classify(null, priorTurns, userMessage,
+                delivery.deliveredText(), signal, 0, false, caseKey, caseKey);
+        return new CbtClassification(true, CellCaseOutcome.interventionObserved(result));
     }
 
     /** 생성 프롬프트에 실을 이전 턴. 멀티턴 케이스의 맥락이 셀 사이에서 달라지면 안 된다. */
@@ -690,7 +716,7 @@ final class CellRunner {
 
     private CellCaseOutcome assemble(LockedCase lockedCase, UUID caseKey, PolicyDecision decision,
                                      Delivery delivery, boolean judgeCalled,
-                                     InputJudgeResult judgeResult, boolean cbtClassifierCalled,
+                                     InputJudgeResult judgeResult, CbtClassification cbt,
                                      long firstSubstantiveMs, long totalMs) {
         List<CellTokenLedger.Call> calls = ledger.callsFor(caseKey);
         return new CellCaseOutcome(
@@ -700,10 +726,12 @@ final class CellRunner {
                 lockedCase.expected().safetyTruth(),
                 CellCaseOutcome.grade(lockedCase.expected().safetyTruth(), delivery.exposure()),
                 lockedCase.expected().responseAct(), decision.responsePlan().responseAct(),
-                CellCaseOutcome.fit(lockedCase.expected().responseAct(),
+                CellCaseOutcome.plannerFit(lockedCase.expected().responseAct(),
                         decision.responsePlan().responseAct()),
                 judgeCalled, decision.judgeStatus(), delivery.generationCalled(),
-                delivery.escalated(), delivery.outputJudgeCalled(), cbtClassifierCalled,
+                delivery.escalated(), delivery.outputJudgeCalled(), cbt.called(),
+                CellCaseOutcome.cbtDelivery(lockedCase.expected().forbiddenElements(),
+                        cbt.called(), cbt.interventionObserved()),
                 delivery.truncated(),
                 delivery.contract(), delivery.contractViolations(),
                 judgeResult != null && judgeResult.failed()

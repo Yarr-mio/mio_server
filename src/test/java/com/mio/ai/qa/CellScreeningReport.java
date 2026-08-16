@@ -26,7 +26,7 @@ import java.util.Optional;
  * <h2>단가를 모르는 후보</h2>
  *
  * <p>후보의 단가를 핀하지 않았으면 원가 칸은 <b>미상</b>이다. 그렇다고 그 후보의 실행이 쓸모
- * 없어지지는 않는다 — 수용률·CBT 적합률·안전 등급·p50/p95 는 단가와 무관하게 그대로 나온다.
+ * 없어지지는 않는다 — 수용률·CBT 개입 금지 준수율·안전 등급·p50/p95 는 단가와 무관하게 그대로 나온다.
  * 그래서 이 표는 품질·지연 열을 항상 채우고, 원가 열만 미상으로 남긴 뒤 "비용 기준 결론을
  * 내려면 어느 후보의 단가를 먼저 핀해야 하는지" 를 마지막에 이름으로 적는다.
  */
@@ -51,7 +51,9 @@ final class CellScreeningReport {
                     + "(SafetyL1 + InputJudge)는 전 변형 고정이라, 미탐·HARD 하향·위기 오탐은 "
                     + "구조적으로 기준선과 같은 값이 나온다. 같은 숫자를 '모든 모델이 똑같이 "
                     + "안전하다' 로 읽으면 안 된다 — 셀 B 가 대답할 수 있는 것은 생성 품질·계약 "
-                    + "준수·금기 위반·지연·원가다.";
+                    + "준수·금기 위반·CBT 개입 금지 준수(분류기 판정)·지연·원가다. "
+                    + "플래너 계획 일치율도 같은 이유로 후보를 변별하지 않는다 — ResponsePlanner 는 "
+                    + "결정론이고 생성보다 먼저 돌아서 생성 본문을 입력으로 받지 않는다.";
 
     private CellScreeningReport() {
     }
@@ -120,19 +122,26 @@ final class CellScreeningReport {
     }
 
     private static void appendSummaryTable(StringBuilder out, List<Row> rows) {
+        // 요약 표에는 <b>생성 모델이 만드는 값</b>만 넣는다. 예전 "CBT적합" 열은 결정론
+        // 플래너의 값이라 후보마다 같은 숫자가 찍혔고, 그 자리에 있다는 이유만으로 생성 품질로
+        // 읽혔다. 그 열은 CBT 개입 금지 준수율(분류기 판정)로 바꾸고, 플래너 값은 상세 블록의
+        // '탐지·계획' 줄로 옮겼다.
         out.append("\n  %-20s %6s %9s %9s %5s %5s %5s %8s %8s %14s%n".formatted(
-                "변형", "케이스", "수용률", "CBT적합", "미탐", "위기FP", "계약", "p95", "첫토큰p95",
+                "변형", "케이스", "수용률", "CBT준수", "미탐", "위기FP", "계약", "p95", "첫토큰p95",
                 "수용응답당 원가"));
         rows.forEach(row -> {
             CellMetrics.Population p = row.population();
             out.append("  %-20s %6d %9s %9s %5d %5d %5d %8d %8d %14s%n".formatted(
                     row.variant().label(), p.size(),
-                    percentOf(p.acceptanceRate()), percentOf(p.cbtFitRate()),
+                    percentOf(p.acceptanceRate()), percentOf(p.cbtInterventionComplianceRate()),
                     p.falseNegatives(), p.crisisFalsePositives(), p.contractViolated(),
                     row.latencyMeasured() ? p.p95LatencyMs() : -1,
                     row.latencyMeasured() ? p.p95FirstSubstantiveMs() : -1,
                     CellPricingBook.format(p.costPerAcceptedResponse())));
         });
+        out.append("    ↑ CBT준수 = %s. %s%n"
+                .formatted(CellMetrics.CBT_INTERVENTION_COMPLIANCE,
+                        CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
     }
 
     /** 축을 전부 펼친다. 표에서 잘린 값 때문에 사람이 다시 원본 리포트를 뒤지지 않게 한다. */
@@ -145,9 +154,16 @@ final class CellScreeningReport {
                     .formatted(p.falseNegatives(), p.crisisFalsePositives(),
                             p.guardFalsePositives(), p.hardCrisisConfirmed(), p.hardCrisisTruths(),
                             p.hardCrisisDowngraded()));
-            out.append("      품질     수용률 %s · CBT 적합 %s (채점가능 %d) · 계약 위반 %d/%d · 금기 위반 %d%n"
-                    .formatted(percentOf(p.acceptanceRate()), percentOf(p.cbtFitRate()),
-                            p.cbtScoreable(), p.contractViolated(), p.contractApplicable(),
+            // 문자열 두 개를 + 로 잇고 .formatted 를 붙이면 뒤쪽 리터럴에만 적용된다 —
+            // 1단계 리포트 전체가 그 상태로 아카이브에 남은 적이 있다. 괄호로 먼저 잇는다.
+            out.append(("      탐지·계획 플래너 계획 일치율 %s (채점가능 %d) ← 생성 모델과 무관, "
+                    + "후보끼리 같은 값이 나오는 것이 정상이다%n")
+                    .formatted(percentOf(p.plannerCoverageRate()), p.plannerScoreable()));
+            out.append(("      품질     수용률 %s · CBT 개입 금지 준수 %s (채점가능 %d, 분류기 판정) "
+                    + "· 계약 위반 %d/%d · 금기 위반 %d%n")
+                    .formatted(percentOf(p.acceptanceRate()),
+                            percentOf(p.cbtInterventionComplianceRate()),
+                            p.cbtDeliveryJudged(), p.contractViolated(), p.contractApplicable(),
                             p.contraindicationViolations()));
             out.append("      전달     빈 응답 %d건 · 생성 절단 %d/%d턴 (%.1f%%)%s%n"
                     .formatted(p.emptyResponses(), p.truncatedGenerations(), p.generationCalls(),
@@ -184,7 +200,7 @@ final class CellScreeningReport {
         CandidateElimination.Thresholds thresholds = CandidateElimination.thresholds(stage);
         out.append("\n  [탈락 계산 — 사전 등록 %s (%s)]\n"
                 .formatted(thresholds.version(), thresholds.registeredOn()));
-        out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v1.json)은 따로이고 더 엄격하다. **\n");
+        out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v2.json)은 따로이고 더 엄격하다. **\n");
         out.append("  ** 통과가 '안전하다' 는 뜻이 아니다 — 표본 실행은 어떤 안전 주장도 지지하지 않는다. **\n");
         out.append("  ** %s **\n".formatted(CELL_B_CANNOT_DISCRIMINATE));
         rows.stream().filter(row -> !row.isBaseline()).forEach(row -> {

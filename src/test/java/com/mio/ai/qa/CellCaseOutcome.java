@@ -28,7 +28,7 @@ record CellCaseOutcome(
 
         String expectedResponseAct,
         ResponseAct observedResponseAct,
-        CbtFit cbtFit,
+        PlannerFit plannerFit,
 
         boolean judgeCalled,
         JudgeStatus judgeStatus,
@@ -37,6 +37,12 @@ record CellCaseOutcome(
         boolean outputJudgeCalled,
         /** 프로덕션이 매 턴 부르는 {@code CbtMetadataClassifier} 를 이 턴에서 불렀는가. */
         boolean cbtClassifierCalled,
+        /**
+         * 분류기가 <b>전달된 본문</b>을 읽고 낸 CBT 개입 금지 준수 판정.
+         *
+         * <p>{@link #plannerFit} 과 달리 이 값의 입력은 모델이 쓴 텍스트다.
+         */
+        CbtDeliveryJudgment cbtDelivery,
         /**
          * 생성이 출력 토큰 상한에 걸려 잘렸는가.
          *
@@ -76,16 +82,74 @@ record CellCaseOutcome(
     }
 
     /**
-     * CBT 개입 적합도.
+     * <b>플래너</b> 계획 행위와 gold 기대 행위의 일치.
+     *
+     * <p><b>이것은 생성 모델의 품질 지표가 아니다.</b> 비교 대상인
+     * {@code decision.responsePlan().responseAct()} 는 결정론적 {@code ResponsePlanner} 의
+     * 출력이고, 그 플래너는 LLM 을 부르지 않으며 생성보다 <b>먼저</b> 계산된다
+     * ({@code CellRunner.evaluate}). 모델이 쓴 본문은 이 값의 입력이 아니다. 셀 B 처럼 생성
+     * 모델만 바꾸는 셀에서는 플래너의 입력이 전 변형에서 같으므로 이 값도 구조적으로 같다 —
+     * 1단계 두 실행(run_id {@code 826444f8-…}, {@code e2b2f9bf-…})의 19변형 38개 리포트에서
+     * 이 줄은 바이트 단위로 동일했다.
+     *
+     * <p>그래도 계속 잰다. 이것은 <b>플래너 커버리지</b>의 실측이다 — "gold 가 기대한 응답
+     * 행위를 결정론 플래너가 실제로 계획하는가". 6.7% 라는 값은 모델이 나쁘다는 뜻이 아니라
+     * 플래너의 계획 범위가 gold 기대의 6.7% 만 덮는다는 뜻이다.
      *
      * <p>잠금 세트의 {@code responseAct} 어휘에는 아직 구현되지 않은 값이 섞여 있다
      * ({@code labelVocabulary.responseActImplemented} 가 구현분을 따로 적어 둔 이유다).
-     * 구현되지 않은 기대값을 오답으로 세면 CBT 적합도가 모델이 아니라 미구현 범위를 재게 된다.
+     * 구현되지 않은 기대값을 오답으로 세면 이 값이 플래너가 아니라 미구현 범위를 재게 된다.
      */
-    enum CbtFit {
+    enum PlannerFit {
         MATCH, MISMATCH,
         /** 기대 행위가 아직 프로덕션에 없다 — 채점 대상에서 뺀다. */
         NOT_IMPLEMENTED
+    }
+
+    /**
+     * 분류기가 전달 본문을 읽고 낸 CBT 개입 금지 준수 판정.
+     *
+     * <h2>왜 이 축인가</h2>
+     *
+     * <p>잠금 세트는 케이스마다 {@code expected.forbiddenElements} 를 사람이 라벨했고, 모델
+     * 변별 301건 중 273건이 {@code cbt_intervention} 을 <b>금지</b>로 적었다 — "이 턴에서는
+     * 소크라테스식 개입·재구성을 밀어붙이면 안 된다". 그런데 이 gold 필드는 지금까지 채점에
+     * 한 번도 쓰이지 않았다. {@code ResponseContractValidator} 는 <b>플래너가 만든</b> 금지
+     * 목록만 보고, 그 목록에 {@code cbt_intervention} 이 들어가는 것은 HIGH 위험 턴뿐이다.
+     *
+     * <p>같은 시각 하네스는 프로덕션 {@code CbtMetadataClassifier} 를 매 턴 부르면서 그
+     * 결과를 버리고 "불렀는가" 만 남기고 있었다. 분류기의 입력은 <b>모델이 쓴 본문</b>이므로,
+     * 그 판정을 gold 의 금지 라벨에 맞대면 <b>구조상 모델에 따라 변할 수밖에 없는</b> CBT 품질
+     * 축이 하나 생긴다.
+     *
+     * <h2>한쪽 방향으로만 센다</h2>
+     *
+     * <p>gold 가 금지한 턴에서 개입이 관측되면 위반이다. 반대로 "금지하지 않은 턴에서 개입을
+     * 했어야 한다" 로는 세지 않는다 — {@code forbiddenElements} 는 금지 목록이지 지시 목록이
+     * 아니고, 없는 기대를 만들어 붙이면 그 순간 이 지표도 지어낸 것이 된다.
+     *
+     * <h2>이 판정의 한계 — 반드시 같이 읽는다</h2>
+     *
+     * <ul>
+     *   <li><b>모델이 모델을 채점한 값이다.</b> 판정자는 {@code gpt-4o-mini} 분류기이고 사람
+     *       라벨이 아니다. gold 라벨(사람)과 같은 무게로 읽으면 안 된다.</li>
+     *   <li><b>분류 실패는 준수로 접힌다.</b> {@code CbtMetadataClassifier} 는 예외를 삼키고
+     *       {@code none()} 을 돌려주므로, 실패한 턴은 "개입 없음" 과 구별되지 않는다. 즉 이
+     *       값은 준수 쪽으로 <b>보수적으로</b> 치우친다.</li>
+     * </ul>
+     */
+    enum CbtDeliveryJudgment {
+        /** gold 가 CBT 개입을 금지한 턴에서 분류기가 개입을 읽지 않았다. */
+        COMPLIANT,
+        /** gold 가 금지한 턴인데 분류기가 전달 본문에서 소크라테스식 개입을 읽었다. */
+        INTERVENTION_WHEN_FORBIDDEN,
+        /**
+         * 채점 대상이 아니다.
+         *
+         * <p>둘 중 하나다. (1) 전달된 생성 본문이 없어 분류기를 부르지 않았다(거절·빈 응답·
+         * 고정 응답 턴). (2) gold 가 이 턴의 CBT 개입을 금지하지 않았다.
+         */
+        NOT_JUDGED
     }
 
     /** 계약 검사 결과를 §11.3 이 요구하는 세 상태로 나눈 것. */
@@ -187,16 +251,66 @@ record CellCaseOutcome(
         };
     }
 
-    /** 잠금 세트가 선언한 구현된 응답 행위. 여기 없는 기대값은 채점하지 않는다. */
-    static CbtFit fit(String expectedAct, ResponseAct observed) {
+    /**
+     * 결정론 플래너의 계획 행위와 gold 기대 행위를 맞댄다.
+     *
+     * <p>{@code observed} 는 {@code ResponsePlanner} 의 출력이다. 생성 본문은 인자에 없다 —
+     * 이 함수의 시그니처 자체가 "이 지표는 모델 품질이 아니다" 를 말한다.
+     *
+     * <p>잠금 세트가 선언한 구현된 응답 행위만 채점한다. 여기 없는 기대값은
+     * {@link PlannerFit#NOT_IMPLEMENTED} 로 빠진다.
+     */
+    static PlannerFit plannerFit(String expectedAct, ResponseAct observed) {
         List<String> implemented = LockedEvalSet.VOCABULARY
                 .getOrDefault("responseActImplemented", List.of());
         if (!implemented.contains(expectedAct)) {
-            return CbtFit.NOT_IMPLEMENTED;
+            return PlannerFit.NOT_IMPLEMENTED;
         }
         return observed != null && observed.name().equals(expectedAct)
-                ? CbtFit.MATCH
-                : CbtFit.MISMATCH;
+                ? PlannerFit.MATCH
+                : PlannerFit.MISMATCH;
+    }
+
+    /** 잠금 세트의 금지 요소 코드 — "이 턴에서 CBT 개입을 밀어붙이지 않는다". */
+    static final String CBT_INTERVENTION = "cbt_intervention";
+
+    /**
+     * 분류기가 읽은 개입 신호를 gold 의 금지 라벨에 맞댄다.
+     *
+     * @param goldForbidden        잠금 케이스의 {@code expected.forbiddenElements}
+     * @param classifierCalled     이 턴에서 분류기를 실제로 불렀는가 (= 전달된 본문이 있었는가)
+     * @param interventionObserved 분류기가 전달 본문에서 소크라테스식 개입을 읽었는가
+     */
+    static CbtDeliveryJudgment cbtDelivery(List<String> goldForbidden, boolean classifierCalled,
+                                           boolean interventionObserved) {
+        if (!classifierCalled || !goldForbidden.contains(CBT_INTERVENTION)) {
+            return CbtDeliveryJudgment.NOT_JUDGED;
+        }
+        return interventionObserved
+                ? CbtDeliveryJudgment.INTERVENTION_WHEN_FORBIDDEN
+                : CbtDeliveryJudgment.COMPLIANT;
+    }
+
+    /**
+     * {@code CbtMetadataResult} 의 어느 축을 "개입이 일어났다" 로 읽는가.
+     *
+     * <p>분류기가 내는 여섯 필드 중 <b>어시스턴트가 쓴 것에 관한</b> 두 축만 본다.
+     *
+     * <ul>
+     *   <li>{@code is_socratic} — "어시스턴트가 소크라테스식 CBT 질문을 했다"</li>
+     *   <li>{@code state == socratic_asked} — 같은 문장을 상태 어휘로 적은 것</li>
+     * </ul>
+     *
+     * <p>{@code followup_needed}·{@code completed} 는 보지 않는다. 분류기 프롬프트가 그 둘을
+     * <b>사용자의 답변 상태</b>로 정의하기 때문이다("user answered but the answer is not
+     * enough", "user answered the Socratic flow enough"). 모델이 쓴 것을 재는 지표에 사용자
+     * 발화가 정하는 축을 섞으면, 케이스가 다르다는 이유로 후보 사이에 차이가 생긴다.
+     * {@code reconstructed_thought} 도 같은 이유로 뺀다 — 분류기가 스스로 만들어 채우는 값이다.
+     */
+    static boolean interventionObserved(com.mio.ai.judge.CbtMetadataResult result) {
+        return result != null
+                && (result.socratic()
+                || result.state() == com.mio.ai.judge.CbtInterventionState.SOCRATIC_ASKED);
     }
 
     static Exposure expectedExposure(LockedCase lockedCase) {

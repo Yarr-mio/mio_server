@@ -111,6 +111,11 @@ final class CellReport {
             out.append("    (해당 없음)\n");
             return;
         }
+        // ── 탐지·계획 계층 ──
+        // 여기 값들은 입력 판정과 결정론 플래너가 만든다. 셀 B 처럼 생성 모델만 바꾸는 셀에서는
+        // 후보를 변별하지 않으므로, 생성 품질 칸과 <b>줄 자체를 나눠</b> 찍는다. 예전에는
+        // "CBT 개입 적합률" 이 계약 위반율·수용률 사이에 끼어 있어 생성 품질처럼 읽혔다.
+        out.append("    ── 탐지·계획 계층 (입력 판정·결정론 플래너가 만드는 값) ──\n");
         out.append("    등급 분포        ");
         for (SafetyGrade grade : SafetyGrade.values()) {
             out.append("%s=%d ".formatted(grade, population.grades().get(grade)));
@@ -123,11 +128,20 @@ final class CellReport {
                 .formatted(population.hardCrisisDowngraded()));
         out.append("    위기 오탐        %d건 / 가드 오탐 %d건%n"
                 .formatted(population.crisisFalsePositives(), population.guardFalsePositives()));
-        out.append("    CBT 개입 적합률  %s  (채점 가능 %d건)%n".formatted(
-                population.cbtFitRate().display(), population.cbtScoreable()));
+        out.append("    플래너 계획 일치율 %s  (채점 가능 %d건)%n".formatted(
+                population.plannerCoverageRate().display(), population.plannerScoreable()));
+        out.append("      ↑ %s%n".formatted(CellMetrics.PLANNER_COVERAGE_NOTE));
+
+        // ── 생성 계층 ──
+        out.append("    ── 생성 계층 (생성 모델이 쓴 본문이 만드는 값) ──\n");
         out.append("    계약 위반율      %s  (금기 위반 %d건)%n".formatted(
                 population.contractViolationRate().display(),
                 population.contraindicationViolations()));
+        out.append("    %s %s  (채점 가능 %d건)%n".formatted(
+                CellMetrics.CBT_INTERVENTION_COMPLIANCE,
+                population.cbtInterventionComplianceRate().display(),
+                population.cbtDeliveryJudged()));
+        out.append("      ↑ %s%n".formatted(CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
         out.append("    공감·도움도      %s%n".formatted(CellMetrics.EMPATHY_NOT_MEASURED));
         out.append("    수용률           %s%n".formatted(population.acceptanceRate().display()));
         appendAcceptance(out, population);
@@ -259,6 +273,14 @@ final class CellReport {
         extra.put("external_failure_calls", String.valueOf(metrics.externalFailureCalls()));
         extra.put("usage_missing_calls", String.valueOf(metrics.usageMissingCalls()));
         extra.put("empathy_helpfulness", CellMetrics.EMPATHY_NOT_MEASURED);
+        // 두 CBT 축을 manifest 에서도 이름으로 갈라 둔다. 아카이브를 나중에 읽는 도구가
+        // "CBT" 라는 이름 하나만 보고 플래너 값을 모델 품질로 집계하지 않게 한다.
+        extra.put("planner_coverage", "%s — %s".formatted(
+                metrics.modelDiscriminating().plannerCoverageRate().display(),
+                CellMetrics.PLANNER_COVERAGE_NOTE));
+        extra.put("cbt_intervention_compliance", "%s — %s".formatted(
+                metrics.modelDiscriminating().cbtInterventionComplianceRate().display(),
+                CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
         extra.put("failure_case_ids", String.join(" ", metrics.failureCaseIds(result.outcomes())));
         extra.put("elapsed", "%dm %ds".formatted(
                 metrics.elapsed().toMinutes(), metrics.elapsed().toSecondsPart()));
