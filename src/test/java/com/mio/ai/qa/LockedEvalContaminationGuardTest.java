@@ -214,20 +214,33 @@ class LockedEvalContaminationGuardTest {
                 .isEmpty();
     }
 
+    /**
+     * 편향 축의 최소대립쌍은 <b>설계상</b> 서로 근사 중복이다 — 표지 토큰 하나만 다르게 쓰는
+     * 것이 그 축의 측정 방법 자체다. 그래서 같은 {@code pairKey} 끼리는 이 검사에서 뺀다.
+     * 대신 그 짝이 진짜 최소대립쌍인지는 {@code LockedEvalSetIntegrityTest} 가 본문 골격을
+     * 비교해 따로 강제한다 — 여기서 빼 준 만큼 저기서 더 조인다.
+     */
     @Test
-    @DisplayName("잠금 세트 안에서도 서로 근사 중복이 아니다 — 같은 문장을 여러 번 세지 않는다")
+    @DisplayName("잠금 세트 안에서도 서로 근사 중복이 아니다 — 편향 최소대립쌍만 예외다")
     void noNearDuplicateWithinLockedSet() {
-        record Item(String id, String text, String normalized) {}
+        record Item(String id, String pairKey, String text, String normalized) {}
 
         List<Item> items = new ArrayList<>();
         LockedEvalSet.CASES.forEach(c -> c.userTurns().forEach(
-                t -> items.add(new Item(c.id(), t.text(), LockedEvalSet.normalize(t.text())))));
+                t -> items.add(new Item(c.id(), c.pairKey(), t.text(),
+                        LockedEvalSet.normalize(t.text())))));
 
         List<String> offenders = new ArrayList<>();
         double worst = 0.0;
+        int exempted = 0;
         for (int i = 0; i < items.size(); i++) {
             for (int j = i + 1; j < items.size(); j++) {
                 if (items.get(i).id().equals(items.get(j).id())) {
+                    continue;
+                }
+                if (!items.get(i).pairKey().isEmpty()
+                        && items.get(i).pairKey().equals(items.get(j).pairKey())) {
+                    exempted++;
                     continue;
                 }
                 double similarity = LockedEvalSet.similarity(
@@ -240,8 +253,8 @@ class LockedEvalContaminationGuardTest {
             }
         }
 
-        System.out.printf("[locked-guard] 세트 내부 최대 유사도 %.3f (임계 %.2f)%n",
-                worst, NEAR_DUPLICATE_THRESHOLD);
+        System.out.printf("[locked-guard] 세트 내부 최대 유사도 %.3f (임계 %.2f, 최소대립쌍 제외 %d쌍)%n",
+                worst, NEAR_DUPLICATE_THRESHOLD, exempted);
         assertThat(offenders)
                 .as("세트 내부 근사 중복:%n  %s", String.join("\n  ", offenders))
                 .isEmpty();

@@ -36,12 +36,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("[QA] 잠금 평가셋 무결성")
 class LockedEvalSetIntegrityTest {
 
-    /** 로드맵 §6.4 가 정한 P0 잠금 gold 규모. */
+    /**
+     * 로드맵 §6.4 가 정한 P0 잠금 gold 규모.
+     *
+     * <p>상한을 300 에서 400 으로 올렸다. 하위 그룹 8% 상한과 "하위 그룹 n 이 너무 작다" 는
+     * 지적은 총계를 고정한 채로는 동시에 만족할 수 없다 — 총계가 300 이면 어떤 그룹도 24 를
+     * 넘을 수 없다. 그룹을 잘게 유지하면서 n 을 키우려면 총계를 늘리는 수밖에 없고, 그래서
+     * 상한을 올린다. 하한은 그대로 둔다.
+     */
     private static final int MIN_CASES = 200;
-    private static final int MAX_CASES = 300;
+    private static final int MAX_CASES = 400;
 
     /** 어느 하위 그룹도 이 비율을 넘지 않는다. */
     private static final double MAX_SUBGROUP_SHARE = 8.0;
+
+    /** 축 하나가 이 수 미만이면 축 단위 비교도 할 수 없다. */
+    private static final int MIN_AXIS_SIZE = 15;
 
     private final Map<String, String> manifest = LockedEvalManifest.scalars();
 
@@ -70,7 +80,7 @@ class LockedEvalSetIntegrityTest {
     }
 
     @Test
-    @DisplayName("케이스 수가 매니페스트·로드맵 목표 범위와 맞는다 (200~300건)")
+    @DisplayName("케이스 수가 매니페스트·로드맵 목표 범위와 맞는다 (200~400건)")
     void caseCountIsLockedAndWithinTarget() {
         assertThat(LockedEvalSet.CASES).hasSize(Integer.parseInt(manifest.get("case_count")));
         assertThat(LockedEvalSet.CASES.size())
@@ -129,16 +139,18 @@ class LockedEvalSetIntegrityTest {
     }
 
     @Test
-    @DisplayName("네 평가 축이 모두 채워져 있다 — 안전만 있는 세트가 아니다")
+    @DisplayName("다섯 평가 축이 모두 채워져 있다 — 안전만 있는 세트가 아니다")
     void everyAxisIsPopulated() {
         Map<String, Long> byAxis = new TreeMap<>();
         LockedEvalSet.CASES.forEach(c -> byAxis.merge(c.axis(), 1L, Long::sum));
 
         assertThat(byAxis.keySet())
-                .containsExactlyInAnyOrder("SAFETY", "CBT_FIT", "RESPONSE_QUALITY", "BIAS");
+                .as("SECURITY 축이 없으면 방법 요청·지시 주입·탈옥 라우팅을 비교할 수 없다(이슈 #260)")
+                .containsExactlyInAnyOrder(
+                        "SAFETY", "CBT_FIT", "RESPONSE_QUALITY", "BIAS", "SECURITY");
         byAxis.forEach((axis, count) -> assertThat(count)
                 .as("축 %s 의 케이스 수", axis)
-                .isGreaterThanOrEqualTo(30));
+                .isGreaterThanOrEqualTo(MIN_AXIS_SIZE));
     }
 
     @Test
@@ -223,6 +235,47 @@ class LockedEvalSetIntegrityTest {
                 .isEmpty();
     }
 
+    /**
+     * 라벨 일치만 검사하면 "같은 상황인가" 는 아무도 보지 않는다. 이전 편향 짝은 고3-부모 갈등
+     * 과 며느리 명절 노동처럼 상황 자체가 달랐고, 그런 짝에서 판정이 갈려도 그것이 편향인지
+     * 상황 차이인지 구분할 수 없었다. 그래서 <b>본문의 최소성</b>을 기계로 강제한다.
+     */
+    @Test
+    @DisplayName("편향 짝은 표지 토큰 하나만 다른 최소대립쌍이다 — 상황이 다르면 편향을 잴 수 없다")
+    void biasPairsAreTrueMinimalPairs() {
+        Map<String, List<LockedCase>> pairs = biasPairs();
+        assertThat(pairs).as("편향 짝이 하나도 없다").isNotEmpty();
+
+        List<String> violations = new ArrayList<>();
+        pairs.forEach((key, variants) -> {
+            List<String> skeletons = new ArrayList<>();
+            for (LockedCase c : variants) {
+                if (c.variantToken().isEmpty()) {
+                    violations.add(c.id() + " variantToken 이 비어 있다 — 무엇을 바꾼 짝인지 알 수 없다");
+                    continue;
+                }
+                String joined = c.turns().stream().map(t -> t.role() + ":" + t.text())
+                        .reduce("", (a, b) -> a + "" + b);
+                if (!joined.contains(c.variantToken())) {
+                    violations.add(c.id() + " 본문에 variantToken 이 없다: " + c.variantToken());
+                    continue;
+                }
+                skeletons.add(joined.replace(c.variantToken(), " "));
+            }
+            if (skeletons.size() == variants.size() && new java.util.HashSet<>(skeletons).size() > 1) {
+                violations.add(key + " 변형들이 표지 토큰 외에도 다르다 — 최소대립쌍이 아니다");
+            }
+            long distinctTokens = variants.stream().map(LockedCase::variantToken).distinct().count();
+            if (distinctTokens != variants.size()) {
+                violations.add(key + " 표지 토큰이 중복된다");
+            }
+        });
+
+        assertThat(violations)
+                .as("최소대립쌍 위반:%n  %s", String.join("\n  ", violations))
+                .isEmpty();
+    }
+
     // ── 프로덕션 계약과의 정합 ──────────────────────────────────────
 
     /**
@@ -279,6 +332,44 @@ class LockedEvalSetIntegrityTest {
         assertThat(inconsistent)
                 .as("행위별 금지 요소 불일치:%n  %s", String.join("\n  ", inconsistent))
                 .isEmpty();
+    }
+
+    /**
+     * 세 라벨이 완전히 결정적으로 대응하면 축이 세 개가 아니라 하나다. 노출 축이 독립 정보를
+     * 주는 지점은 <b>사용자 본인은 위험하지 않은데도 무가드로 흘려보내면 안 되는 턴</b>이다 —
+     * 제3자 위험 노출, 반추가 붙은 인용, 타인 가해 요청, 보안 거절이 그렇다.
+     *
+     * <p>반대로 {@code HARD_CRISIS → CRISIS_FLOW} 는 데이터의 성질이 아니라 §5.5 불변식이므로
+     * 여기서 깨뜨리라고 요구하지 않는다. 요구하면 정책을 어기는 케이스를 만들게 된다.
+     */
+    @Test
+    @DisplayName("판정 라벨이 노출·행위를 결정하지 않는다 — 세 축이 한 축으로 붕괴하지 않았다")
+    void labelsAreNotCollinear() {
+        List<LockedCase> clear = LockedEvalSet.CASES.stream()
+                .filter(c -> "CLEAR".equals(c.expected().safetyTruth()))
+                .toList();
+        List<LockedCase> guardedClear = clear.stream()
+                .filter(c -> !"UNGUARDED".equals(c.expected().exposure()))
+                .toList();
+
+        System.out.printf("[locked-set] CLEAR %d건 중 비무가드 %d건, 노출 종류 %s%n",
+                clear.size(), guardedClear.size(),
+                guardedClear.stream().map(c -> c.expected().exposure()).distinct().sorted().toList());
+
+        assertThat(guardedClear)
+                .as("CLEAR 가 전부 UNGUARDED 면 노출 축은 판정 축의 복사본이고 지표는 이중 계산된다")
+                .hasSizeGreaterThanOrEqualTo(12);
+        assertThat(guardedClear.stream().map(c -> c.expected().exposure()).distinct().toList())
+                .as("비무가드 CLEAR 가 한 종류뿐이면 노출 축의 값 공간이 사실상 둘이다")
+                .hasSizeGreaterThanOrEqualTo(2);
+
+        List<String> riskActs = LockedEvalSet.CASES.stream()
+                .filter(c -> "RISK".equals(c.expected().safetyTruth()))
+                .map(c -> c.expected().responseAct())
+                .distinct().sorted().toList();
+        assertThat(riskActs)
+                .as("RISK 의 기대 행위가 한 종류뿐이면 행위 축도 판정 축에 종속된다: %s", riskActs)
+                .hasSizeGreaterThanOrEqualTo(3);
     }
 
     // ── 데이터 권리와 라벨링 현황 ───────────────────────────────────
@@ -403,6 +494,14 @@ class LockedEvalSetIntegrityTest {
     }
 
     // ── 보조 ────────────────────────────────────────────────────────
+
+    private Map<String, List<LockedCase>> biasPairs() {
+        Map<String, List<LockedCase>> pairs = new LinkedHashMap<>();
+        LockedEvalSet.CASES.stream()
+                .filter(c -> !c.pairKey().isEmpty())
+                .forEach(c -> pairs.computeIfAbsent(c.pairKey(), k -> new ArrayList<>()).add(c));
+        return pairs;
+    }
 
     private Map<String, Long> countBySubgroup() {
         Map<String, Long> counts = new LinkedHashMap<>();
