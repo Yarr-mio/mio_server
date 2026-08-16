@@ -5,6 +5,8 @@ import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
+import com.mio.ai.crisis.CrisisTodoDecision;
+import com.mio.ai.crisis.CrisisTodoSafetyGate;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
@@ -103,6 +105,7 @@ public class SessionConsolidator {
     private final SummaryStatusWriter summaryStatusWriter;
     private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
+    private final CrisisTodoSafetyGate crisisTodoSafetyGate;
     private final SummaryStageMetrics stageMetrics;
     private final MemoryConsentChecker memoryConsentChecker;
     private final MeterRegistry meterRegistry;
@@ -229,6 +232,23 @@ public class SessionConsolidator {
             log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                     event.sessionId(), e);
             componentStatusWriter.markUserRenderFailed(event.sessionId(), "USER_RENDER_FAILED");
+        }
+
+        // 위기 세션의 행동 과제는 생성하지 않는다. 핵심 요약과 메모리 보강은 이미 끝났으므로
+        // 차단하더라도 요약은 DONE으로 노출하고, 차단 상태/사유는 별도 테이블에 남긴다.
+        //
+        // 세션 수준 상태는 위(#426 컴포넌트 상태 모델)에서 핵심 요약 커밋 직후 이미 DONE 으로
+        // 공개했다. 여기서 markDone 을 한 번 더 부르면 같은 세션이 두 번 완료로 계상돼
+        // 요약 readiness 지표가 위기 세션 수만큼 부풀려진다 — 종결해야 할 것은 Todo
+        // 컴포넌트 하나뿐이므로 정상 경로의 "생성 0건" 과 같은 skipped 로 닫는다.
+        CrisisTodoDecision todoDecision = crisisTodoSafetyGate.evaluate(
+                enrichInput.userId(), enrichInput.sessionId());
+        if (todoDecision.suppressTodo()) {
+            log.info("SessionConsolidator: Todo suppressed by crisis safety gate sessionId={} reason={}",
+                    event.sessionId(), todoDecision.reason());
+            componentStatusWriter.markTodoSkipped(event.sessionId());
+            stageMetrics.start(SummaryStageMetrics.TODO_GENERATION).stop("skipped");
+            return;
         }
 
         // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).

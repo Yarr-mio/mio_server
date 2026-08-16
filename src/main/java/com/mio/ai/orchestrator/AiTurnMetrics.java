@@ -97,6 +97,15 @@ public class AiTurnMetrics {
         meterRegistry.counter(TURN_OUTCOMES, "outcome", "replayed").increment();
     }
 
+    /** 일반 정책을 우회한 활성 위기 상태 머신 턴을 별도 전달 모드로 기록한다. */
+    public void recordFixedCrisis(long totalPipelineMs, boolean delivered) {
+        recordTurnDuration(totalPipelineMs, "crisis_flow", "crisis_flow");
+        meterRegistry.counter(TURN_OUTCOMES, "outcome", "crisis_flow").increment();
+        meterRegistry.counter(
+                "mio.crisis.fixed.delivery",
+                "outcome", delivered ? "delivered" : "failed").increment();
+    }
+
     private void recordTurnDuration(long millis, String outcome, String deliveryMode) {
         latencyTimer(
                 TURN_DURATION,

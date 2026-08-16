@@ -2,6 +2,8 @@ package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
+import com.mio.ai.crisis.CrisisTodoDecision;
+import com.mio.ai.crisis.CrisisTodoSafetyGate;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.LlmUsage;
@@ -41,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyShort;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -63,6 +66,7 @@ class SessionConsolidatorTest {
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
+    private CrisisTodoSafetyGate crisisTodoSafetyGate;
     private MemoryConsentChecker memoryConsentChecker;
     private ObjectProvider<SessionConsolidator> self;
     private SimpleMeterRegistry meterRegistry;
@@ -93,6 +97,9 @@ class SessionConsolidatorTest {
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
+        crisisTodoSafetyGate = mock(CrisisTodoSafetyGate.class);
+        when(crisisTodoSafetyGate.evaluate(any(), any()))
+                .thenReturn(new CrisisTodoDecision(false, "no_crisis_evidence"));
         memoryConsentChecker = mock(MemoryConsentChecker.class);
         // 기본은 동의 유지 — 게이트 테스트에서만 철회로 뒤집는다.
         when(memoryConsentChecker.isRetentionAllowed(any())).thenReturn(true);
@@ -126,6 +133,7 @@ class SessionConsolidatorTest {
                 summaryStatusWriter,
                 componentStatusWriter,
                 crisisEpisodePromoter,
+                crisisTodoSafetyGate,
                 new SummaryStageMetrics(meterRegistry),
                 memoryConsentChecker,
                 meterRegistry,
@@ -332,6 +340,35 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter, never()).markFailed(sessionId);
         verify(componentStatusWriter).markTodoFailed(sessionId, "TODO_GENERATION_FAILED");
         assertThat(timerCount("todo_generation", "failed")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("위기 세션은 Todo만 차단하고 이미 생성한 핵심 요약은 노출한다")
+    void onSessionEnded_crisisSessionSuppressesTodoButKeepsSummary() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "위기 세션 요약", "crisis");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 0)).thenReturn(input);
+        when(crisisTodoSafetyGate.evaluate(userId, sessionId))
+                .thenReturn(new CrisisTodoDecision(true, "crisis_event"));
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
+
+        verify(proxy).consolidate(sessionId, userId, "mio", 0);
+        verify(proxy).enrichMemory(input);
+        verify(crisisTodoSafetyGate).evaluate(userId, sessionId);
+        verifyNoInteractions(todoRecommendationService);
+        // 세션 수준 DONE 은 핵심 요약 커밋 직후 한 번만 — 위기 차단이 완료를 중복 계상하면
+        // 요약 readiness 지표가 위기 세션 수만큼 부풀려진다.
+        verify(summaryStatusWriter, times(1)).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+        // 차단된 것은 Todo 컴포넌트 하나뿐이므로 정상 경로의 "생성 0건" 과 같게 종결한다.
+        verify(componentStatusWriter).markTodoSkipped(sessionId);
+        assertThat(timerCount("todo_generation", "skipped")).isEqualTo(1);
     }
 
     @Test

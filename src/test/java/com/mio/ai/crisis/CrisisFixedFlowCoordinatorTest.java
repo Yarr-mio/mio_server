@@ -1,0 +1,204 @@
+package com.mio.ai.crisis;
+
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+
+import java.util.Optional;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class CrisisFixedFlowCoordinatorTest {
+
+    private CrisisFlowStateStore store;
+    private SimpleMeterRegistry meterRegistry;
+    private CrisisFixedFlowCoordinator coordinator;
+    private UUID sessionId;
+    private UUID userId;
+
+    @BeforeEach
+    void setUp() {
+        store = mock(CrisisFlowStateStore.class);
+        meterRegistry = new SimpleMeterRegistry();
+        coordinator = new CrisisFixedFlowCoordinator(
+                store, new CrisisAnswerParser(), new CrisisFlowStateMachine(), meterRegistry);
+        sessionId = UUID.randomUUID();
+        userId = UUID.randomUUID();
+    }
+
+    @Test
+    @DisplayName("활성 위기 상태는 정책·생성 전에 고정 전이로 라우팅한다")
+    void activeStateRoutesThroughFixedTransition() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.CURRENT_INTENT, CrisisFlowStatus.ACTIVE, 2)));
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "네");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.stage()).isEqualTo(CrisisFlowStage.PLAN);
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.ACTIVE);
+        assertThat(route.fixedResponse()).contains("계획").contains("109");
+        // 후속 턴은 플로우를 연 판정의 severity 를 그대로 잇는다 — 하드코딩 3 금지.
+        assertThat(route.severity()).isEqualTo(2);
+        verify(store).advance(
+                sessionId, CrisisFlowStage.CURRENT_INTENT, CrisisAnswer.YES,
+                CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE);
+    }
+
+    @Test
+    @DisplayName("모호한 답변은 고정 handoff로 저장하고 일반 경로로 복귀하지 않는다")
+    void unknownAnswerPersistsHandoff() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 3)));
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "잘 모르겠어요");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.HANDOFF);
+        assertThat(route.reason()).isEqualTo("ambiguous_answer");
+        verify(store).advance(
+                sessionId, CrisisFlowStage.MEANS, CrisisAnswer.UNKNOWN,
+                CrisisFlowStage.HANDOFF, CrisisFlowStatus.HANDOFF);
+    }
+
+    @Test
+    @DisplayName("상태 조회 실패는 일반 생성이 아니라 보수적 고정 handoff를 반환한다")
+    void storageReadFailureFailsClosed() {
+        when(store.find(sessionId)).thenThrow(new IllegalStateException("db unavailable"));
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "오늘은 괜찮아요");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.HANDOFF);
+        assertThat(route.reason()).isEqualTo("storage_failure");
+        assertThat(route.fixedResponse()).contains("109", "112");
+        verify(store, never()).advance(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("전이 저장 실패도 이미 계산한 질문을 보내지 않고 보수적 handoff로 대체한다")
+    void transitionWriteFailureFailsClosed() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.PLAN, CrisisFlowStatus.ACTIVE, 3)));
+        org.mockito.Mockito.doThrow(new IllegalStateException("write failed"))
+                .when(store).advance(any(), any(), any(), any(), any());
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "네");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.HANDOFF);
+        assertThat(route.reason()).isEqualTo("storage_failure");
+    }
+
+    @Test
+    @DisplayName("상태 행이 유실됐어도 위기 이벤트가 있으면 고정 handoff로 복구한다")
+    void missingStateWithCrisisEvidenceFailsClosed() {
+        when(store.find(sessionId)).thenReturn(Optional.empty());
+        when(store.hasCrisisEvent(sessionId)).thenReturn(true);
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "다른 얘기할래");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.reason()).isEqualTo("missing_state");
+        assertThat(route.fixedResponse()).contains("일반 대화를 이어가지 않고");
+        // missing_state handoff 는 정상 라우팅과 구분되는 별도 outcome 으로 집계된다.
+        assertThat(meterRegistry.find("mio.crisis.fixed.flow")
+                .tags("stage", "unknown", "outcome", "missing_state")
+                .counter().count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("위기 증거가 없는 세션만 일반 정책 경로로 보낸다")
+    void noCrisisStateOrEvidenceDoesNotRoute() {
+        when(store.find(sessionId)).thenReturn(Optional.empty());
+        when(store.hasCrisisEvent(sessionId)).thenReturn(false);
+
+        CrisisFixedRoute route = coordinator.route(sessionId, userId, "오늘은 괜찮아요");
+
+        assertThat(route.routed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("terminal 상태는 다음 일반 턴을 가로채지 않는다")
+    void terminalStateDoesNotRoute() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.COMPLETED, CrisisFlowStatus.COMPLETED, 3)));
+
+        assertThat(coordinator.route(sessionId, userId, "연락했어요").routed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("새 위기 진입 상태 저장 실패는 metric에 남기되 호출부가 고정 응답을 계속 보낼 수 있다")
+    void beginFailureIsReportedWithoutThrowing() {
+        org.mockito.Mockito.doThrow(new IllegalStateException("insert failed"))
+                .when(store).begin(sessionId, userId, 3);
+
+        assertThat(coordinator.begin(sessionId, userId, 3)).isFalse();
+        assertThat(meterRegistry.find("mio.crisis.fixed.flow")
+                .tags("stage", "current_intent", "outcome", "storage_failure")
+                .counter().count()).isEqualTo(1);
+        // 상태 행 저장 실패 전용 카운터. crisis_events 기록 실패와 겹치면 다음 턴 라우팅
+        // 근거가 모두 사라지는 복합 장애라, 일반 storage_failure 와 따로 알람을 건다.
+        assertThat(meterRegistry.find("mio.crisis.flow.begin.failure")
+                .counter().count()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("상태의 소유자가 아닌 사용자의 발화는 전이 없이 handoff로만 응답한다")
+    void identityMismatchHandsOffWithoutAdvancing() {
+        UUID otherUserId = UUID.randomUUID();
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 2)));
+
+        CrisisFixedRoute route = coordinator.route(sessionId, otherUserId, "네");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.HANDOFF);
+        assertThat(route.reason()).isEqualTo("identity_mismatch");
+        assertThat(route.fixedResponse()).contains("109");
+        // 원 소유자의 triage 는 그대로 둔다 — 남의 답으로 상태를 전진시키면 그 사람의
+        // 위험도 판정이 오염되고, 되돌릴 방법도 없다.
+        assertThat(route.severity()).isEqualTo(2);
+        verify(store, never()).advance(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 triage 조회는 활성일 때만 true 를 준다")
+    void hasActiveFlowReportsActiveOnly() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 2)));
+        assertThat(coordinator.hasActiveFlow(sessionId)).isTrue();
+
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.HANDOFF, CrisisFlowStatus.HANDOFF, 2)));
+        assertThat(coordinator.hasActiveFlow(sessionId)).isFalse();
+
+        when(store.find(sessionId)).thenReturn(Optional.empty());
+        assertThat(coordinator.hasActiveFlow(sessionId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("활성 triage 조회가 실패하면 활성으로 간주해 핫라인 경로를 연다")
+    void hasActiveFlowFailsClosed() {
+        when(store.find(sessionId)).thenThrow(new IllegalStateException("db down"));
+
+        assertThat(coordinator.hasActiveFlow(sessionId)).isTrue();
+        assertThat(meterRegistry.find("mio.crisis.fixed.flow")
+                .tags("stage", "probe", "outcome", "storage_failure")
+                .counter().count()).isEqualTo(1);
+    }
+}
