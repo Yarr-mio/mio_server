@@ -1,5 +1,6 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.qa.LockedEvalSet.LockedCase;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -219,6 +220,64 @@ class LockedEvalSetIntegrityTest {
 
         assertThat(mismatched)
                 .as("표현만 다른데 기대 판정이 갈리는 짝:%n  %s", String.join("\n  ", mismatched))
+                .isEmpty();
+    }
+
+    // ── 프로덕션 계약과의 정합 ──────────────────────────────────────
+
+    /**
+     * {@code ResponsePlanner} 는 모든 계획에 {@link ResponsePlan#BASE_FORBIDDEN} 을 씌운다.
+     * 데이터가 그보다 약한 계약을 기대값으로 적으면, 프로덕션이 실제로 금지하는 요소를
+     * 평가가 눈감아 준다. 과단정("당신은 분명히 …한 상태입니다")은 전형적인 모델 계열 차이라
+     * A~E 가 갈려야 할 축인데, 그 축이 데이터에서 꺼져 있었다.
+     *
+     * <p>상수는 프로덕션에서 직접 읽는다. 여기에 목록을 복사하면 다음 변경 때 또 어긋난다.
+     */
+    @Test
+    @DisplayName("모든 케이스의 금지 요소가 프로덕션 BASE_FORBIDDEN 을 포함한다")
+    void everyCaseIncludesProductionBaseForbidden() {
+        List<String> weaker = new ArrayList<>();
+        for (LockedCase c : LockedEvalSet.CASES) {
+            List<String> missing = ResponsePlan.BASE_FORBIDDEN.stream()
+                    .filter(f -> !c.expected().forbiddenElements().contains(f))
+                    .toList();
+            if (!missing.isEmpty()) {
+                weaker.add(c.id() + " 빠짐 " + missing);
+            }
+        }
+
+        assertThat(weaker)
+                .as("프로덕션보다 약한 계약을 기대값으로 쓰는 케이스:%n  %s", String.join("\n  ", weaker))
+                .isEmpty();
+    }
+
+    /**
+     * 같은 기대 행위인데 금지 요소가 케이스마다 다르면, 그 차이가 의도인지 실수인지 사후에
+     * 알 수 없다. 행위별 정본을 하나로 두고 예외를 허용하지 않는다 — 예외가 필요하면 어휘와
+     * 절차 문서를 먼저 고친다.
+     */
+    @Test
+    @DisplayName("같은 기대 행위는 같은 금지 요소 집합을 쓴다")
+    void forbiddenElementsAreConsistentPerAct() {
+        Map<String, Map<List<String>, List<String>>> byAct = new LinkedHashMap<>();
+        for (LockedCase c : LockedEvalSet.CASES) {
+            byAct.computeIfAbsent(c.expected().responseAct(), k -> new LinkedHashMap<>())
+                    .computeIfAbsent(c.expected().forbiddenElements(), k -> new ArrayList<>())
+                    .add(c.id());
+        }
+
+        List<String> inconsistent = new ArrayList<>();
+        byAct.forEach((act, sets) -> {
+            if (sets.size() > 1) {
+                inconsistent.add("%s 에 %d 종류의 금지 집합: %s".formatted(act, sets.size(),
+                        sets.entrySet().stream()
+                                .map(e -> e.getKey() + "×" + e.getValue().size())
+                                .toList()));
+            }
+        });
+
+        assertThat(inconsistent)
+                .as("행위별 금지 요소 불일치:%n  %s", String.join("\n  ", inconsistent))
                 .isEmpty();
     }
 
