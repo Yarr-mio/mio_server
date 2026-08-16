@@ -63,7 +63,7 @@ class SessionConsolidatorTest {
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
-    private com.mio.ai.repository.UserMemoryPreferenceRepository memoryPreferenceRepository;
+    private MemoryConsentChecker memoryConsentChecker;
     private ObjectProvider<SessionConsolidator> self;
     private SimpleMeterRegistry meterRegistry;
     private SessionSummaryRepository sessionSummaryRepository;
@@ -93,7 +93,9 @@ class SessionConsolidatorTest {
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
-        memoryPreferenceRepository = mock(com.mio.ai.repository.UserMemoryPreferenceRepository.class);
+        memoryConsentChecker = mock(MemoryConsentChecker.class);
+        // 기본은 동의 유지 — 게이트 테스트에서만 철회로 뒤집는다.
+        when(memoryConsentChecker.isRetentionAllowed(any())).thenReturn(true);
         meterRegistry = new SimpleMeterRegistry();
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
@@ -125,7 +127,8 @@ class SessionConsolidatorTest {
                 componentStatusWriter,
                 crisisEpisodePromoter,
                 new SummaryStageMetrics(meterRegistry),
-                memoryPreferenceRepository,
+                memoryConsentChecker,
+                meterRegistry,
                 selfProvider
         );
     }
@@ -182,11 +185,7 @@ class SessionConsolidatorTest {
         SessionConsolidator consolidator = newConsolidator();
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
-        when(memoryPreferenceRepository.findByUserId(userId)).thenReturn(Optional.of(
-                com.mio.ai.domain.UserMemoryPreference.builder()
-                        .userId(userId)
-                        .memoryRetentionAgreed(false)
-                        .build()));
+        when(memoryConsentChecker.isRetentionAllowed(userId)).thenReturn(false);
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
 
@@ -198,6 +197,9 @@ class SessionConsolidatorTest {
         verifyNoInteractions(crisisEpisodePromoter);
         verifyNoInteractions(todoRecommendationService);
         verifyNoInteractions(componentStatusWriter);
+        // 동의 기인 스킵은 실제 실패와 구분되는 전용 카운터로 남는다
+        assertThat(meterRegistry.counter("mio.summary.consent.skip", "stage", "gate").count())
+                .isEqualTo(1.0);
     }
 
     @Test

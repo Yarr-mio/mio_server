@@ -16,5 +16,7 @@ CREATE TABLE user_memory_corrections (
 
 CREATE INDEX idx_user_memory_corrections_user
     ON user_memory_corrections(user_id, created_at DESC);
+-- findByUserIdAndMemoryIdInOrderByCreatedAtDesc (memory_id IN + user_id 필터) 를 서빙한다.
+-- 신규 빈 테이블이라 CONCURRENTLY 불필요 (V73 과 달리 잠금 위험 없음).
 CREATE INDEX idx_user_memory_corrections_memory
-    ON user_memory_corrections(memory_id, created_at DESC);
+    ON user_memory_corrections(memory_id, user_id, created_at DESC);

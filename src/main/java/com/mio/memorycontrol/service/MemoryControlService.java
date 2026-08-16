@@ -92,16 +92,29 @@ public class MemoryControlService {
     public MemoryListResponse listMemories(UUID userId, int page, int size) {
         validatePaging(page, size);
 
-        Long total = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) " + LIST_BODY, Long.class, userId, userId, userId);
+        // UNION 을 두 번 돌리지 않는다 — 총 건수는 페이지 쿼리의 윈도우 집계로 함께 읽는다.
+        long[] totalHolder = {0};
         List<MemoryItemResponse> rows = jdbcTemplate.query(
-                "SELECT * " + LIST_BODY + " ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
-                this::mapRow, userId, userId, userId, size, (long) page * size);
+                "SELECT *, COUNT(*) OVER () AS total_count " + LIST_BODY
+                        + " ORDER BY created_at DESC, id LIMIT ? OFFSET ?",
+                (rs, rowNum) -> {
+                    totalHolder[0] = rs.getLong("total_count");
+                    return mapRow(rs, rowNum);
+                },
+                userId, userId, userId, size, (long) page * size);
+        // 범위 밖 페이지는 행이 없어 윈도우 값을 못 읽는다 — 그때만 카운트를 따로 조회한다.
+        long total = rows.isEmpty() ? countMemories(userId) : totalHolder[0];
 
         List<MemoryItemResponse> items = attachCorrections(userId, rows);
         auditLogService.record(userId, "memory_view", "memory_list", userId.toString(),
                 Map.of("page", page, "size", size, "returned", items.size()));
-        return new MemoryListResponse(items, page, size, total == null ? 0 : total);
+        return new MemoryListResponse(items, page, size, total);
+    }
+
+    private long countMemories(UUID userId) {
+        Long total = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) " + LIST_BODY, Long.class, userId, userId, userId);
+        return total == null ? 0 : total;
     }
 
     private void validatePaging(int page, int size) {
@@ -245,7 +258,8 @@ public class MemoryControlService {
      */
     @Transactional
     public MemoryConsentWithdrawResponse withdrawConsent(UUID userId) {
-        jdbcTemplate.update(
+        // RETURNING 으로 최초 철회 시각을 upsert 와 한 문장에서 읽는다 (별도 SELECT 불필요).
+        OffsetDateTime withdrawnAt = jdbcTemplate.queryForObject(
                 """
                 INSERT INTO user_memory_preferences (user_id, memory_retention_agreed, memory_consent_withdrawn_at)
                 VALUES (?, false, ?)
@@ -255,10 +269,13 @@ public class MemoryControlService {
                         COALESCE(user_memory_preferences.memory_consent_withdrawn_at,
                                  EXCLUDED.memory_consent_withdrawn_at),
                     updated_at = now()
+                RETURNING memory_consent_withdrawn_at
                 """,
-                userId, OffsetDateTime.now(ZoneOffset.UTC));
+                OffsetDateTime.class, userId, OffsetDateTime.now(ZoneOffset.UTC));
 
-        requireWritableStatus(STATUS_DISABLED);
+        // 아래 UPDATE 의 'disabled' 리터럴은 WRITABLE_STATUSES 화이트리스트에 포함된
+        // 컴파일 타임 상수라 별도 런타임 검증이 무의미하다 (transitionStatus 와 달리
+        // 호출자 입력이 섞이지 않는 경로).
         long disabled = 0;
         disabled += jdbcTemplate.update(
                 "UPDATE session_summaries SET memory_status = ? WHERE user_id = ? AND memory_status = ?",
@@ -270,9 +287,6 @@ public class MemoryControlService {
                 "UPDATE user_beliefs SET status = ? WHERE user_id = ? AND status = ?",
                 STATUS_DISABLED, userId, STATUS_ACTIVE);
 
-        OffsetDateTime withdrawnAt = jdbcTemplate.queryForObject(
-                "SELECT memory_consent_withdrawn_at FROM user_memory_preferences WHERE user_id = ?",
-                OffsetDateTime.class, userId);
         auditLogService.record(userId, "memory_consent_withdraw", "memory_consent", userId.toString(),
                 Map.of("disabled_count", disabled));
         return new MemoryConsentWithdrawResponse(withdrawnAt, disabled);

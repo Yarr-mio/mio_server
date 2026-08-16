@@ -146,6 +146,98 @@ class MemoryControlIntegrationTest {
         assertThat(second.items()).hasSize(1);
         assertThat(first.totalElements()).isEqualTo(3);
         assertThat(second.totalElements()).isEqualTo(3);
+
+        // 범위 밖 페이지도 총 건수를 잃지 않는다 (COUNT(*) OVER() 폴백 경로)
+        MemoryListResponse beyond = memoryControlService.listMemories(userId, 5, 2);
+        assertThat(beyond.items()).isEmpty();
+        assertThat(beyond.totalElements()).isEqualTo(3);
+    }
+
+    @Test
+    @DisplayName("created_at 동률 행은 id 타이브레이커로 페이지 간 중복·누락 없이 나뉜다")
+    void listMemories_tieBreaksByIdAcrossPages() {
+        // 기존 3건과 겹치지 않는 정확히 같은 시각의 에피소드 4건
+        for (int i = 0; i < 4; i++) {
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO thoughts
+                        (id, user_id, session_id, thought_text_ciphertext, thought_text_dek_id,
+                         distortion_code, confidence, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 0.5, TIMESTAMPTZ '2026-08-10 12:00:00+00')
+                    """,
+                    UUID.randomUUID(), userId, sessionId, encrypt("동시각 사고 " + i),
+                    messageEncryptor.dekId(), DISTORTION_CODE);
+        }
+
+        java.util.List<UUID> collected = new ArrayList<>();
+        for (int page = 0; page < 4; page++) {
+            memoryControlService.listMemories(userId, page, 2).items()
+                    .forEach(item -> collected.add(item.id()));
+        }
+
+        assertThat(collected).hasSize(7);
+        assertThat(collected).doesNotHaveDuplicates();
+    }
+
+    @Test
+    @DisplayName("페이지 인자 경계를 벗어나면 거부한다 (page<0, size=0, size>100)")
+    void listMemories_rejectsOutOfRangePaging() {
+        for (int[] paging : new int[][]{{-1, 20}, {0, 0}, {0, 101}}) {
+            assertThatThrownBy(() -> memoryControlService.listMemories(userId, paging[0], paging[1]))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting(e -> ((BusinessException) e).getErrorCode())
+                    .isEqualTo(ErrorCode.INVALID_INPUT);
+        }
+    }
+
+    @Test
+    @DisplayName("복호화에 실패한 항목은 본문만 비운 채 목록에 남는다")
+    void listMemories_keepsRowWithNullContentOnDecryptFailure() {
+        UUID corruptId = UUID.randomUUID();
+        jdbcTemplate.update(
+                """
+                INSERT INTO thoughts
+                    (id, user_id, session_id, thought_text_ciphertext, thought_text_dek_id,
+                     distortion_code, confidence)
+                VALUES (?, ?, ?, ?, ?, ?, 0.5)
+                """,
+                corruptId, userId, sessionId, new byte[]{1, 2, 3}, messageEncryptor.dekId(),
+                DISTORTION_CODE);
+
+        MemoryListResponse response = memoryControlService.listMemories(userId, 0, 20);
+
+        MemoryItemResponse corrupt = response.items().stream()
+                .filter(item -> item.id().equals(corruptId))
+                .findFirst().orElseThrow();
+        assertThat(corrupt.content()).isNull();
+        assertThat(corrupt.status()).isEqualTo("active");
+        assertThat(response.totalElements()).isEqualTo(4);
+    }
+
+    @Test
+    @DisplayName("비활성 기억이 벡터 상위 후보를 채워도 over-fetch 로 활성 기억을 회수한다")
+    void vectorRetrieval_overFetchesPastDisabledCandidates() {
+        // 활성 요약 1건(기존) + 비활성 요약 5건 — 전부 동일 임베딩이라 KNN 순위가 무의미하게 섞인다
+        for (int i = 0; i < 5; i++) {
+            UUID extraSession = UUID.randomUUID();
+            jdbcTemplate.update(
+                    "INSERT INTO sessions (id, user_id, character_id, status, ended_at) VALUES (?, ?, 'mio', 'ended', now())",
+                    extraSession, userId);
+            jdbcTemplate.update(
+                    """
+                    INSERT INTO session_summaries
+                        (id, user_id, session_id, character_id, summary_text, embedding_status,
+                         episode_emb, memory_status)
+                    VALUES (?, ?, ?, 'mio', ?, 'done',
+                            array_fill(0.1::real, ARRAY[1536])::vector, 'disabled')
+                    """,
+                    UUID.randomUUID(), userId, extraSession, "비활성 요약 " + i);
+        }
+
+        var retrieved = vectorRetriever.retrieveEpisodes(userId, uniformEmbedding(), 3);
+
+        assertThat(retrieved).hasSize(1);
+        assertThat(retrieved.getFirst().content()).isEqualTo(SUMMARY_TEXT);
     }
 
     // ── 정정 ─────────────────────────────────────────────────────

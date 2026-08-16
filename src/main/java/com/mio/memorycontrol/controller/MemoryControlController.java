@@ -6,6 +6,7 @@ import com.mio.memorycontrol.dto.MemoryConsentWithdrawResponse;
 import com.mio.memorycontrol.dto.MemoryListResponse;
 import com.mio.memorycontrol.dto.MemoryUpdateRequest;
 import com.mio.memorycontrol.dto.MemoryUpdateResponse;
+import com.mio.memorycontrol.service.MemoryControlRateLimiter;
 import com.mio.memorycontrol.service.MemoryControlService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -32,14 +33,17 @@ import java.util.UUID;
 public class MemoryControlController {
 
     private final MemoryControlService memoryControlService;
+    private final MemoryControlRateLimiter rateLimiter;
 
     @GetMapping("/v1/users/me/memories")
     public ResponseEntity<ApiResponse<MemoryListResponse>> listMemories(
             Principal principal,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
+        UUID userId = PrincipalUtils.resolveUserId(principal);
+        rateLimiter.checkList(userId);
         return ResponseEntity.ok(ApiResponse.ok(
-                memoryControlService.listMemories(PrincipalUtils.resolveUserId(principal), page, size)));
+                memoryControlService.listMemories(userId, page, size)));
     }
 
     @PatchMapping("/v1/users/me/memories/{memoryId}")
@@ -47,13 +51,17 @@ public class MemoryControlController {
             @PathVariable UUID memoryId,
             @Valid @RequestBody MemoryUpdateRequest request,
             Principal principal) {
+        UUID userId = PrincipalUtils.resolveUserId(principal);
+        rateLimiter.checkUpdate(userId);
         return ResponseEntity.ok(ApiResponse.ok(
-                memoryControlService.updateMemory(PrincipalUtils.resolveUserId(principal), memoryId, request)));
+                memoryControlService.updateMemory(userId, memoryId, request)));
     }
 
     @PostMapping("/v1/users/me/memory-consent/withdraw")
     public ResponseEntity<ApiResponse<MemoryConsentWithdrawResponse>> withdrawConsent(Principal principal) {
+        UUID userId = PrincipalUtils.resolveUserId(principal);
+        rateLimiter.checkWithdraw(userId);
         return ResponseEntity.ok(ApiResponse.ok(
-                memoryControlService.withdrawConsent(PrincipalUtils.resolveUserId(principal))));
+                memoryControlService.withdrawConsent(userId)));
     }
 }

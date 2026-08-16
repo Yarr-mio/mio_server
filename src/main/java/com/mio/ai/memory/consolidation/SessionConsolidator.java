@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
-import com.mio.ai.domain.UserMemoryPreference;
-import com.mio.ai.repository.UserMemoryPreferenceRepository;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
@@ -23,6 +21,7 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -105,7 +104,8 @@ public class SessionConsolidator {
     private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
     private final SummaryStageMetrics stageMetrics;
-    private final UserMemoryPreferenceRepository memoryPreferenceRepository;
+    private final MemoryConsentChecker memoryConsentChecker;
+    private final MeterRegistry meterRegistry;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -134,11 +134,13 @@ public class SessionConsolidator {
         // 컴포넌트 상태 모델(#426)의 skipped 는 session_summaries 행에 붙는 파생 작업
         // 상태라서 여기서는 쓸 수 없다 — 동의 철회는 요약 행 자체를 만들지 않는다.
         // 세션 수준 SummaryStatus 에는 skipped 가 없고, failed 는 "요약이 오지 않는다" 는
-        // 기존 terminal(메시지 0건 세션과 동일) 이므로 그대로 쓴다.
-        if (!isMemoryRetentionAllowed(event.userId())) {
+        // 기존 terminal(메시지 0건 세션과 동일) 이므로 그대로 쓴다. 대신 동의 기인 스킵을
+        // 실제 실패와 구분할 수 있게 별도 카운터로 남긴다 — 없으면 failed 비율 분석이
+        // 철회 사용자 수에 오염된다.
+        if (!memoryConsentChecker.isRetentionAllowed(event.userId())) {
             log.info("SessionConsolidator: memory consent withdrawn, skipping consolidation sessionId={}",
                     event.sessionId());
-            summaryStatusWriter.markFailed(event.sessionId());
+            markConsentSkip(event.sessionId(), "gate");
             return;
         }
 
@@ -256,17 +258,15 @@ public class SessionConsolidator {
         todo.stop("done");
     }
 
-    /** 선호 행이 없는 사용자는 기본 동의 상태다 (user_memory_preferences 기본값과 동일). */
-    private boolean isMemoryRetentionAllowed(UUID userId) {
-        try {
-            return memoryPreferenceRepository.findByUserId(userId)
-                    .map(UserMemoryPreference::isMemoryRetentionAgreed)
-                    .orElse(true);
-        } catch (Exception e) {
-            // 조회 실패 시 적재하지 않는다 — 철회한 사용자의 기억을 만드는 쪽이 더 나쁜 실패다.
-            log.error("SessionConsolidator: consent lookup failed, skipping consolidation userId={}", userId, e);
-            return false;
-        }
+    /**
+     * 동의 기인 스킵을 종결한다: failed 확정 + 전용 카운터.
+     *
+     * <p>카운터(mio.summary.consent.skip)가 없으면 summary_status=failed 비율 분석이
+     * 철회 사용자 수에 오염된다 — 운영은 실패율에서 이 값을 빼고 본다.
+     */
+    private void markConsentSkip(UUID sessionId, String stage) {
+        meterRegistry.counter("mio.summary.consent.skip", "stage", stage).increment();
+        summaryStatusWriter.markFailed(sessionId);
     }
 
     /**
@@ -341,6 +341,18 @@ public class SessionConsolidator {
                         .toList());
         boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
                 || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
+
+        // 동의 재확인 (이슈 #453 리뷰, TOCTOU). onSessionEnded 진입 게이트 통과 후 이 지점까지
+        // 수 초의 LLM 호출이 끼어든다 — 그 사이 사용자가 동의를 철회하면, 철회의 일괄
+        // 비활성화(UPDATE ... WHERE memory_status='active')는 아직 커밋되지 않은 이 행을
+        // 보지 못하고, 이 행은 active 로 커밋되어 영구히 회수 가능해진다. 영속화 직전에
+        // 같은 트랜잭션 안에서 다시 확인하고, 철회됐으면 아무것도 저장하지 않는다.
+        if (!memoryConsentChecker.isRetentionAllowed(userId)) {
+            log.info("SessionConsolidator: consent withdrawn during consolidation, aborting persist sessionId={}",
+                    sessionId);
+            meterRegistry.counter("mio.summary.consent.skip", "stage", "persist_recheck").increment();
+            return null;
+        }
 
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType(),

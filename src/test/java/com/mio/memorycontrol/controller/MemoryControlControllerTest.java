@@ -7,6 +7,7 @@ import com.mio.memorycontrol.dto.MemoryConsentWithdrawResponse;
 import com.mio.memorycontrol.dto.MemoryItemResponse;
 import com.mio.memorycontrol.dto.MemoryListResponse;
 import com.mio.memorycontrol.dto.MemoryUpdateResponse;
+import com.mio.memorycontrol.service.MemoryControlRateLimiter;
 import com.mio.memorycontrol.service.MemoryControlService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class MemoryControlControllerTest {
 
     @Autowired private MockMvc mockMvc;
     @MockBean private MemoryControlService memoryControlService;
+    @MockBean private MemoryControlRateLimiter rateLimiter;
 
     private final UUID userId = UUID.randomUUID();
     private final Principal principal = userId::toString;
@@ -97,6 +99,20 @@ class MemoryControlControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"action\": \"\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("호출 한도를 넘으면 서비스에 닿기 전에 429와 Retry-After 로 차단한다")
+    void listMemories_rateLimited_returns429BeforeService() throws Exception {
+        org.mockito.Mockito.doThrow(new com.mio.common.error.RateLimitExceededException(37))
+                .when(rateLimiter).checkList(userId);
+
+        mockMvc.perform(get("/v1/users/me/memories").principal(principal))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
+                        .header().string("Retry-After", "37"));
+
+        org.mockito.Mockito.verifyNoInteractions(memoryControlService);
     }
 
     @Test

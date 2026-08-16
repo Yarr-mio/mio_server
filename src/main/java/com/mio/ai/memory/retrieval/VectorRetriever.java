@@ -21,6 +21,15 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class VectorRetriever {
 
+    /**
+     * KNN over-fetch 배수 (이슈 #453 리뷰).
+     *
+     * <p>{@code memory_status} 필터는 ivfflat KNN 이 고른 후보에 사후 적용된다. 비활성
+     * 기억이 많은 사용자는 상위 k 후보가 필터에서 대부분 걸러져 회수량이 k 에 못 미칠 수
+     * 있다 — 후보를 k×4 로 넉넉히 뽑은 뒤 필터하고 k 로 자른다.
+     */
+    private static final int KNN_OVERFETCH_FACTOR = 4;
+
     private final JdbcTemplate jdbcTemplate;
 
     public List<RetrievedItem> retrieveEpisodes(UUID userId, float[] queryEmbedding, int k) {
@@ -29,15 +38,21 @@ public class VectorRetriever {
         String vectorLiteral = toVectorLiteral(queryEmbedding);
         return jdbcTemplate.query(
                 """
-                SELECT id::text,
-                       summary_text AS content,
-                       1 - (episode_emb <=> ?::vector) AS score
-                FROM session_summaries
-                WHERE user_id = ?
-                  AND episode_emb IS NOT NULL
-                  AND embedding_status = 'done'
-                  AND memory_status = 'active'
-                ORDER BY episode_emb <=> ?::vector
+                SELECT id, content, score
+                FROM (
+                    SELECT id::text AS id,
+                           summary_text AS content,
+                           1 - (episode_emb <=> ?::vector) AS score,
+                           memory_status
+                    FROM session_summaries
+                    WHERE user_id = ?
+                      AND episode_emb IS NOT NULL
+                      AND embedding_status = 'done'
+                    ORDER BY episode_emb <=> ?::vector
+                    LIMIT ?
+                ) candidates
+                WHERE memory_status = 'active'
+                ORDER BY score DESC
                 LIMIT ?
                 """,
                 (rs, rowNum) -> new RetrievedItem(
@@ -48,7 +63,7 @@ public class VectorRetriever {
                         rs.getDouble("score"),
                         rowNum + 1
                 ),
-                vectorLiteral, userId, vectorLiteral, k
+                vectorLiteral, userId, vectorLiteral, k * KNN_OVERFETCH_FACTOR, k
         );
     }
 
