@@ -13,8 +13,10 @@ import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.delivery.SafePrefixCatalog;
 import com.mio.ai.plan.ResponseAct;
+import com.mio.session.domain.MessageTurn;
 import com.mio.session.service.SessionMessagePersistenceService;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -27,6 +29,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -101,6 +105,27 @@ class ConversationOrchestratorContractIntegrationTest {
             """;
 
     /**
+     * 룰이 위험 후보로 올렸지만 Judge 가 내린 턴을 만드는 판정 (이슈 #298).
+     *
+     * <p>{@code CLARIFY_CONTEXT} 계약이 붙고 룰 승격 때문에 전달은 {@code CAUTIOUS_SPECULATIVE}
+     * 가 된다 — prefix 를 받는 두 번째 행위다.
+     */
+    private static final String LOW_RISK_VERDICT = """
+            {
+              "security": {"level": "CLEAN", "attack_types": [], "require_output_security_guard": false},
+              "risk": {
+                "risk_level": "LOW",
+                "risk_types": [],
+                "crisis_attribution": "NONE",
+                "recommended_generation_mode": "NORMAL",
+                "recommended_delivery": "SPECULATIVE",
+                "require_output_safety_guard": false
+              },
+              "confidence": 0.8
+            }
+            """;
+
+    /**
      * SafetyL1 의 위험 키워드를 건드려 룰이 Judge 를 부르게 하는 발화.
      *
      * <p><b>{@code SafetyL1.RISK_KEYWORDS} 의 "사라지고싶다" 에 의존한다.</b> 그 목록은 튜닝
@@ -134,6 +159,12 @@ class ConversationOrchestratorContractIntegrationTest {
 
     @AfterEach
     void tearDown() {
+        // 위기로 끝난 턴은 sessions 를 참조하는 행을 남긴다. 정리하지 않으면 위기 승격
+        // 테스트가 검증에 성공하고도 teardown 에서 FK 위반으로 실패한다.
+        jdbcTemplate.update("DELETE FROM crisis_flow_transitions WHERE session_id = ?", sessionId);
+        jdbcTemplate.update("DELETE FROM crisis_flow_states WHERE session_id = ?", sessionId);
+        jdbcTemplate.update("DELETE FROM crisis_todo_safety_states WHERE session_id = ?", sessionId);
+        jdbcTemplate.update("DELETE FROM crisis_events WHERE session_id = ?", sessionId);
         jdbcTemplate.update("DELETE FROM sessions WHERE id = ?", sessionId);
         jdbcTemplate.update("DELETE FROM users WHERE id = ?", userId);
     }
@@ -307,6 +338,144 @@ class ConversationOrchestratorContractIntegrationTest {
                 .isEqualTo(trace.path("first_substantive_token_ms").asLong());
     }
 
+    @Test
+    @DisplayName("prefix 전송이 실패하면 문장 예산을 깎지 않는다")
+    void failedPrefixDeliveryKeepsTheOriginalSentenceBudget() {
+        streamReplies("지금 어떤 감정이 가장 크게 느껴지나요?");
+        String prefix = new SafePrefixCatalog().reviewedCopy().get(ResponseAct.EMOTION_CHECK);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new PrefixRejectingEmitter(prefix), null);
+
+        // 나가지 않은 문장을 예산에서 빼면 사용자는 보상 없이 한 문장 짧은 응답을 받는다.
+        // 프롬프트 지시와 계약 상한은 언제나 같은 조건을 봐야 한다.
+        String systemPrompt = capturedSystemPrompt();
+        assertThat(systemPrompt).doesNotContain("[이미 전달됨]");
+        assertThat(systemPrompt)
+                .as("전달되지 않은 prefix 는 문장 예산을 깎지 않는다")
+                .contains("전체 4문장");
+    }
+
+    @Test
+    @DisplayName("prefix 가 전달된 턴만 문장 예산을 하나 줄인다")
+    void deliveredPrefixReducesTheSentenceBudget() {
+        streamReplies("지금 어떤 감정이 가장 크게 느껴지나요?");
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new RecordingEmitter(), null);
+
+        String systemPrompt = capturedSystemPrompt();
+        assertThat(systemPrompt).contains("[이미 전달됨]");
+        assertThat(systemPrompt)
+                .as("사용자가 읽는 총 문장 수는 원래 계약 안에 있어야 한다")
+                .contains("전체 3문장");
+    }
+
+    /** prefix 문구만 전송에 실패하는 emitter — 연결이 끊긴 순간을 재현한다. */
+    private static final class PrefixRejectingEmitter extends SseEmitter {
+        private final String rejected;
+
+        private PrefixRejectingEmitter(String rejected) {
+            super(30_000L);
+            this.rejected = rejected;
+        }
+
+        @Override
+        public void send(SseEventBuilder builder) throws IOException {
+            StringBuilder frame = new StringBuilder();
+            builder.build().forEach(part -> frame.append(String.valueOf(part.getData())));
+            if (frame.indexOf(rejected) >= 0) {
+                throw new IOException("connection closed");
+            }
+        }
+    }
+
+    private String capturedSystemPrompt() {
+        ArgumentCaptor<LlmRequest> request = ArgumentCaptor.forClass(LlmRequest.class);
+        org.mockito.Mockito.verify(llmClient).stream(request.capture(), any());
+        return request.getValue().messages().stream()
+                .filter(message -> "system".equals(message.role()))
+                .map(LlmRequest.Message::content)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("시스템 프롬프트가 없다"));
+    }
+
+    // ── 출력측 위기 승격 (안전 리뷰 HIGH) ──────────────────────────────────────
+    //
+    // CAUTIOUS_SPECULATIVE 의 OutputJudge 는 사전 위험 라벨이 아니라 모델이 실제로 생성한
+    // 텍스트를 보고 판정한다. 그래서 prefix 를 받는 MEDIUM·LOW 턴에서도 CRISIS_FLOW 가
+    // 나올 수 있고, 그때 나가는 것은 delta.replace 가 아니라 crisis 이벤트다. 지우지 않으면
+    // 사용자는 감정 인정 문장 바로 아래에서 핫라인을 본다.
+
+    @Test
+    @DisplayName("조기 중단 후 위기로 승격하면 서버 문구가 핫라인 위에 남지 않는다")
+    void earlyStopCrisisPromotionClearsTheRenderedPrefix() {
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.crisisFlow());
+        // 첫 문장이 사전 필터를 위반해 승인 게이트가 스트림을 멈춘다 — 조기 중단 경로.
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
+
+        assertPrefixClearedBeforeCrisis(emitter, ResponseAct.EMOTION_CHECK);
+    }
+
+    @Test
+    @DisplayName("스트림 종료 후 위기로 승격해도 서버 문구가 핫라인 위에 남지 않는다")
+    void postStreamCrisisPromotionClearsTheRenderedPrefix() {
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.crisisFlow());
+        // 사전 필터는 통과하되 계약(질문 1개)을 위반해 스트림 종료 후 판정으로 넘어간다.
+        streamReplies("그랬군요. 어떤 기분인가요? 언제부터였나요? 지금은 어떠세요?");
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
+
+        assertPrefixClearedBeforeCrisis(emitter, ResponseAct.EMOTION_CHECK);
+    }
+
+    @Test
+    @DisplayName("맥락 확인 턴이 위기로 승격해도 서버 문구가 핫라인 위에 남지 않는다")
+    void clarifyContextCrisisPromotionClearsTheRenderedPrefix() {
+        // 룰이 위험 후보로 올렸지만 Judge 가 LOW 로 내린 턴 — CLARIFY_CONTEXT 계약이 붙는다.
+        when(llmClient.completeJson(any())).thenReturn(LOW_RISK_VERDICT);
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.crisisFlow());
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        RecordingEmitter emitter = new RecordingEmitter();
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
+
+        assertPrefixClearedBeforeCrisis(emitter, ResponseAct.CLARIFY_CONTEXT);
+    }
+
+    /**
+     * 위기 승격 턴의 사용자 화면 상태를 검증한다.
+     *
+     * <p>이벤트가 나갔는지가 아니라 <b>화면에 무엇이 남는지</b>로 판정한다. 지우는 이벤트가
+     * 위기 안내 뒤에 가거나 다른 msg_id 로 나가면 이벤트 목록만으로는 통과해 버린다.
+     */
+    private void assertPrefixClearedBeforeCrisis(RecordingEmitter emitter, ResponseAct act) {
+        String prefix = safePrefixCatalog.reviewedCopy().get(act);
+        List<String> names = emitter.eventNames();
+
+        assertThat(emitter.joined())
+                .as("이 턴은 애초에 prefix 를 받아야 한다 — 아니면 테스트가 아무것도 재현하지 않는다")
+                .contains(prefix);
+        assertThat(names)
+                .as("위기로 끝난 턴이어야 한다")
+                .contains("crisis");
+        assertThat(names.indexOf("delta.replace"))
+                .as("지우는 신호가 위기 안내보다 먼저 나가야 한다 — 순서는 clear → crisis → done")
+                .isBetween(0, names.indexOf("crisis"));
+        assertThat(names.get(names.size() - 1)).isEqualTo("done");
+        assertThat(emitter.renderedMessage())
+                .as("핫라인 위에 서버 문구가 남으면 안 된다")
+                .doesNotContain(prefix)
+                .isEmpty();
+    }
+
     /**
      * 전송된 SSE 이벤트를 그대로 모으는 emitter.
      *
@@ -314,7 +483,8 @@ class ConversationOrchestratorContractIntegrationTest {
      * 여기서 가로채는 수밖에 없다. {@code super.send} 는 부르지 않는다 — 부를 대상이 없다.
      */
     private static final class RecordingEmitter extends SseEmitter {
-        private final List<String> parts = new java.util.ArrayList<>();
+        /** 전송 호출 하나가 원소 하나다. 순서를 봐야 하므로 호출을 합치지 않는다. */
+        private final List<String> events = new java.util.ArrayList<>();
 
         private RecordingEmitter() {
             super(30_000L);
@@ -322,35 +492,80 @@ class ConversationOrchestratorContractIntegrationTest {
 
         @Override
         public void send(SseEventBuilder builder) {
-            builder.build().forEach(part -> parts.add(String.valueOf(part.getData())));
+            StringBuilder frame = new StringBuilder();
+            builder.build().forEach(part -> frame.append(String.valueOf(part.getData())));
+            events.add(frame.toString());
         }
 
         private String joined() {
-            return String.join("", parts);
+            return String.join("", events);
+        }
+
+        /** 전송된 이벤트 이름을 순서대로. SSE 프레임의 {@code event:<name>} 줄에서 뽑는다. */
+        private List<String> eventNames() {
+            List<String> names = new java.util.ArrayList<>();
+            for (String event : events) {
+                String name = nameOf(event);
+                if (name != null) {
+                    names.add(name);
+                }
+            }
+            return names;
+        }
+
+        /**
+         * 사용자 화면에 남는 텍스트.
+         *
+         * <p>{@code delta} 는 이어 붙이고 {@code delta.replace} 는 전부 갈아끼운다 — 그것이
+         * 이 PR 이 기대는 "메시지 전체 교체" 의미다. 위기 안내 위에 서버 문구가 남는지는
+         * 이벤트 목록이 아니라 <b>이 화면 상태</b>로 판정해야 한다.
+         */
+        private String renderedMessage() {
+            StringBuilder screen = new StringBuilder();
+            for (String event : events) {
+                String name = nameOf(event);
+                if ("delta".equals(name)) {
+                    screen.append(jsonField(event, "chunk"));
+                } else if ("delta.replace".equals(name)) {
+                    screen.setLength(0);
+                    screen.append(jsonField(event, "safe_response"));
+                }
+            }
+            return screen.toString();
+        }
+
+        private String nameOf(String event) {
+            for (String line : event.split("\n")) {
+                if (line.startsWith("event:")) {
+                    return line.substring("event:".length()).trim();
+                }
+            }
+            return null;
+        }
+
+        private String jsonField(String event, String field) {
+            String needle = "\"" + field + "\":\"";
+            int start = event.indexOf(needle);
+            if (start < 0) {
+                return "";
+            }
+            start += needle.length();
+            int end = event.indexOf('"', start);
+            return end < 0 ? "" : event.substring(start, end);
         }
     }
 
     /** 암호화 컬럼이라 서비스 경로로 읽는다. */
     private String storedAssistantContent(String idempotencyKey) {
-        for (int attempt = 0; attempt < 50; attempt++) {
-            String content = messagePersistenceService.findTurn(sessionId, idempotencyKey)
-                    .map(turn -> turn.getAssistantMessageId())
-                    .flatMap(messagePersistenceService::loadAssistantContent)
-                    .orElse(null);
-            if (content != null) {
-                return content;
-            }
-            sleepBriefly();
-        }
-        throw new AssertionError("assistant 메시지가 저장되지 않았다");
-    }
-
-    private void sleepBriefly() {
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        // Awaitility 는 spring-boot-starter-test 가 함께 가져온다. 수동 sleep 루프를 하나 더
+        // 만들지 않는다 — 기존 awaitTrace() 는 이 PR 범위 밖이라 그대로 둔다.
+        return Awaitility.await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(100))
+                .until(() -> messagePersistenceService.findTurn(sessionId, idempotencyKey)
+                        .map(MessageTurn::getAssistantMessageId)
+                        .flatMap(messagePersistenceService::loadAssistantContent)
+                        .orElse(null), java.util.Objects::nonNull);
     }
 
     /** LLM 이 주어진 텍스트를 한 청크로 흘리도록 한다. */

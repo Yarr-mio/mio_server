@@ -99,6 +99,10 @@ public class SafePrefixCatalog {
         }
         // 판정을 받지 못한 턴(Judge 실패·L0 미해결)은 보수 경로다. 위험 등급을 모르는 상태에서
         // 감정 인정 문장을 먼저 확정하지 않는다.
+        //
+        // {@code SKIPPED} 는 막지 않는다 — 판정 미수행은 판정 실패가 아니다. Judge 를 부르지
+        // 않은 턴은 룰 레이어가 부를 이유를 찾지 못한 턴이고, 그 결과 위험 등급은 아래 허용
+        // 목록으로 그대로 확인된다. 실패({@code FAILED})만이 "알 수 없음"이다.
         if (decision.judgeStatus() == JudgeStatus.FAILED
                 || decision.moderationStatus() != ModerationStatus.RESOLVED) {
             return Optional.empty();

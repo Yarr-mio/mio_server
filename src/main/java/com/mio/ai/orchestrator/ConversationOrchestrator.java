@@ -38,6 +38,7 @@ import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.delivery.ApprovedUnitBuffer;
 import com.mio.ai.delivery.HoldbackDelivery;
 import com.mio.ai.delivery.SafePrefixCatalog;
+import com.mio.ai.delivery.SafePrefixDelivery;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponseContractValidator;
@@ -110,7 +111,7 @@ public class ConversationOrchestrator {
     private final SafetyProfileBuilder safetyProfileBuilder;
     private final InputJudge inputJudge;
     private final ResponsePlanner responsePlanner;
-    private final SafePrefixCatalog safePrefixCatalog;
+    private final SafePrefixDelivery safePrefixDelivery;
     private final ResponseContractValidator responseContractValidator;
     private final CbtMetadataClassifier cbtMetadataClassifier;
     private final OutputPreFilter outputPreFilter;
@@ -294,11 +295,21 @@ public class ConversationOrchestrator {
             // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
             decision = decision.withResponsePlan(responsePlanner.plan(decision));
 
-            // 6c. 검토된 safe prefix 선택 (P0-4, 로드맵 §5.6). 서버가 사전에 검토한 고정 문구라
-            // 모델 출력과 같은 검사 경로를 타지 않는다 — 안전한 이유가 "검사를 통과해서"가
-            // 아니라 "모델이 쓰지 않아서"다. 붙는 턴은 계약의 문장 상한을 하나 줄인다.
-            String safePrefix = safePrefixCatalog.select(decision).orElse(null);
-            if (safePrefix != null) {
+            // 사용자가 무언가를 보기까지 (P0-4). 아래 첫 승인 콘텐츠 지연과는 safe prefix 가
+            // 나간 턴에서만 갈라진다 — prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠다.
+            AtomicLong firstRenderedTokenMs = new AtomicLong(-1);
+
+            // 6c. 검토된 safe prefix 를 생성보다 먼저 전달한다 (P0-4, 로드맵 §5.6). 서버가 사전에
+            // 검토한 고정 문구라 모델 출력과 같은 검사 경로를 타지 않는다 — 안전한 이유가
+            // "검사를 통과해서"가 아니라 "모델이 쓰지 않아서"다.
+            //
+            // 문장 상한은 **전달에 성공한 뒤에만** 줄인다. 선택 시점에 줄이면 전송이 실패한 턴
+            // (연결 끊김 등)에서 사용자는 보상 문장 없이 한 문장 짧은 응답을 받는다. 프롬프트
+            // 지시와 계약 상한이 같은 조건을 보도록 이 한 값에서 갈라져 나간다.
+            String deliveredPrefix = safePrefixDelivery.deliverFor(
+                    decision, event -> sendEvent(emitter, event), outboundMsgId,
+                    firstRenderedTokenMs, startMs);
+            if (deliveredPrefix != null) {
                 decision = decision.withResponsePlan(
                         decision.responsePlan().reservingSentences(SafePrefixCatalog.RESERVED_SENTENCES));
             }
@@ -328,9 +339,6 @@ public class ConversationOrchestrator {
             // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
             // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
             AtomicLong firstSubstantiveTokenMs = new AtomicLong(-1);
-            // 사용자가 무언가를 보기까지 (P0-4). safe prefix 가 나간 턴에서만 위 값과 갈라진다 —
-            // prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠이므로 두 값은 같아야 한다.
-            AtomicLong firstRenderedTokenMs = new AtomicLong(-1);
             int heldBackChars = 0;
             OutputJudgeResult judgeActionResult = null;
             // 계약 검사 결과 (이슈 #303). 계획되지 않은 턴은 "통과"가 아니라 "대상 아님"이고,
@@ -373,19 +381,12 @@ public class ConversationOrchestrator {
                 recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
 
             } else if (decision.action() == DecisionAction.GENERATE) {
-                // 검토된 첫 문장을 생성보다 먼저 보낸다 (P0-4). 여기가 가장 이른 지점이다 —
-                // 프롬프트 조립·LLM 호출 앞에 두어야 승인 단위를 기다리는 시간이 실제로 메워진다.
-                // 전송에 실패해도 턴은 계속된다. 다만 나가지 않은 문장을 저장하지 않도록
-                // 전달 여부를 따로 들고 간다.
-                boolean safePrefixDelivered = deliverSafePrefix(
-                        safePrefix, emitter, outboundMsgId, firstRenderedTokenMs, startMs);
-
                 // OutputGuard 실행 여부는 deliveryMode로 제어 (requireOutputGuard 필드는 감사 로그용)
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
-                        session.getCharacterId(), checkpointSummary, responsePlan, safePrefixDelivered);
-                String deliveredPrefix = safePrefixDelivered ? safePrefix : null;
+                        session.getCharacterId(), checkpointSummary, responsePlan,
+                        deliveredPrefix != null);
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
@@ -417,7 +418,7 @@ public class ConversationOrchestrator {
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
                                     finishedReasonRef, crisisSeverityRef, turn, turnPersisted,
-                                    firstSubstantiveTokenMs, startMs);
+                                    firstSubstantiveTokenMs, startMs, deliveredPrefix);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 crisisContextRef.set(true);
@@ -559,6 +560,12 @@ public class ConversationOrchestrator {
                             persistTurnOutcome(turn, turnPersisted, assistantContent, true,
                                     "crisis_flow", preview.severity());
 
+                            // 이미 렌더된 서버 문구를 지우고 위기 안내를 보낸다. 이 분기는 조기
+                            // 중단 경로와 스트림 종료 후 경로가 함께 들어온다 — 둘 다 여기서
+                            // 지워진다.
+                            safePrefixDelivery.clearRendered(
+                                    deliveredPrefix, event -> sendEvent(emitter, event), outboundMsgId);
+
                             CrisisFlowService.CrisisHandleResult crisisResult =
                                     crisisFlowService.handleWithFixedResponse(
                                             l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
@@ -592,7 +599,7 @@ public class ConversationOrchestrator {
                                 // 문장도 이 메시지의 일부이므로 함께 실어야 화면에서 사라지지
                                 // 않는다. 판정이 교체한 응답(위 분기)과는 다르다 — 그쪽은
                                 // 앞선 텍스트를 남기지 않는 것이 목적이다.
-                                String reviewedContent = withSafePrefix(deliveredPrefix,
+                                String reviewedContent = safePrefixDelivery.withPrefix(deliveredPrefix,
                                         capturedSnapshotRef.get() != null
                                                 ? capturedSnapshotRef.get() : assistantContent);
                                 assistantContent = reviewedContent;
@@ -602,7 +609,7 @@ public class ConversationOrchestrator {
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
-                                assistantContent = withSafePrefix(deliveredPrefix, assistantContent);
+                                assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
@@ -611,7 +618,7 @@ public class ConversationOrchestrator {
                     } else {
                         // 서버가 먼저 보낸 문장도 이 턴의 응답이다. 저장하지 않으면 재생·요약·
                         // 워킹 메모리가 사용자가 실제로 읽은 것과 달라진다.
-                        assistantContent = withSafePrefix(deliveredPrefix, assistantContent);
+                        assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
                         sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
@@ -660,7 +667,8 @@ public class ConversationOrchestrator {
 
             // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
-            long firstRenderedMs = resolveFirstRenderedMs(firstRenderedTokenMs, firstSubstantiveTokenMs);
+            long firstRenderedMs = safePrefixDelivery.firstRenderedMs(
+                    firstRenderedTokenMs.get(), firstSubstantiveTokenMs.get());
             aiTurnMetrics.recordCompleted(
                     decision,
                     contractResult,
@@ -759,55 +767,6 @@ public class ConversationOrchestrator {
         }
         messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
-    }
-
-    /**
-     * 검토된 첫 문장을 생성 전에 보낸다 (P0-4, 로드맵 §5.6).
-     *
-     * <p>실패는 삼킨다. prefix 는 지연 개선 수단이지 응답의 필수 부분이 아니므로, 여기서
-     * 예외를 올리면 원래 성공했을 턴이 prefix 때문에 실패한다. 전송하지 못한 문장을 응답에
-     * 넣지 않도록 {@code false} 를 돌려준다.
-     *
-     * @return 실제로 전달됐는지
-     */
-    private boolean deliverSafePrefix(String safePrefix, SseEmitter emitter, String outboundMsgId,
-                                      AtomicLong firstRenderedTokenMs, long pipelineStartedAtMs) {
-        if (safePrefix == null || safePrefix.isBlank()) {
-            return false;
-        }
-        try {
-            sendEvent(emitter, new SseEventDto.DeltaEvent(safePrefix, outboundMsgId));
-            firstRenderedTokenMs.compareAndSet(
-                    -1, Math.max(0, System.currentTimeMillis() - pipelineStartedAtMs));
-            return true;
-        } catch (Exception e) {
-            log.warn("Safe prefix not delivered — continuing without it: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    /** 서버가 먼저 보낸 문장을 응답 본문 앞에 잇는다. prefix 가 없으면 원문 그대로다. */
-    private String withSafePrefix(String deliveredPrefix, String content) {
-        if (deliveredPrefix == null || deliveredPrefix.isBlank()) {
-            return content;
-        }
-        if (content == null || content.isBlank()) {
-            return deliveredPrefix;
-        }
-        return deliveredPrefix + " " + content;
-    }
-
-    /**
-     * 사용자가 무언가를 보기까지 걸린 시간.
-     *
-     * <p>safe prefix 가 나간 턴은 그 전송 시각이고, 없으면 첫 승인 콘텐츠 시각과 같다. 둘을
-     * 하나로 재면 서버가 먼저 보내는 문구만으로 수치가 좋아져 "지연 개선"과 "지연 은폐"를
-     * 구분할 수 없다 (이슈 #306, 14번 리뷰 지적 E).
-     */
-    private long resolveFirstRenderedMs(AtomicLong firstRenderedTokenMs,
-                                        AtomicLong firstSubstantiveTokenMs) {
-        long rendered = firstRenderedTokenMs.get();
-        return rendered >= 0 ? rendered : firstSubstantiveTokenMs.get();
     }
 
     /** 실제 SSE 전송이 성공한 첫 비어 있지 않은 콘텐츠만 사용자 체감 지연으로 기록한다. */
@@ -995,7 +954,8 @@ public class ConversationOrchestrator {
             MessageTurn turn,
             AtomicBoolean turnPersisted,
             AtomicLong firstSubstantiveTokenMs,
-            long pipelineStartedAtMs) throws IOException {
+            long pipelineStartedAtMs,
+            String deliveredPrefix) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -1008,6 +968,12 @@ public class ConversationOrchestrator {
                         session.getId(), user.getId());
                 persistTurnOutcome(turn, turnPersisted, preview.fixedResponse(), true,
                         "crisis_flow", preview.severity());
+
+                // 이 경로의 전달 방식(BUFFER)은 현재 prefix 대상이 아니지만, 위기 안내 앞을
+                // 지우는 책임은 위기를 보내는 모든 지점에 있어야 한다. 대상 조건이 넓어질 때
+                // 이 분기만 조용히 빠지는 것이 정확히 이 리뷰가 잡은 실패 형태다.
+                safePrefixDelivery.clearRendered(
+                        deliveredPrefix, event -> sendEvent(emitter, event), outboundMsgId);
 
                 CrisisFlowService.CrisisHandleResult cr =
                         crisisFlowService.handleWithFixedResponse(

@@ -79,7 +79,13 @@ class DeliveryExposureQaTest {
      *              얻는다 — 행위를 하네스가 직접 지정하면 계획 규칙이 바뀌어도 조용히 통과한다
      */
     private record Scenario(String name, List<String> chunks, GenerationMode mode, RiskLevel risk,
-                            DeliveryMode delivery) {}
+                            DeliveryMode delivery, boolean crisisPromotion) {
+
+        private Scenario(String name, List<String> chunks, GenerationMode mode, RiskLevel risk,
+                         DeliveryMode delivery) {
+            this(name, chunks, mode, risk, delivery, false);
+        }
+    }
 
     /**
      * 합성 스트림.
@@ -116,12 +122,24 @@ class DeliveryExposureQaTest {
                     GenerationMode.NORMAL, RiskLevel.CLEAR_LOW, DeliveryMode.CAUTIOUS_SPECULATIVE),
             new Scenario("HIGH 위험 응답", List.of(
                     "많이 힘드셨겠어요. ", "지금 안전한 곳에 계신가요?"),
-                    GenerationMode.GUARDED, RiskLevel.HIGH, DeliveryMode.BUFFER)
+                    GenerationMode.GUARDED, RiskLevel.HIGH, DeliveryMode.BUFFER),
+            // prefix 를 받는 턴에서 출력측 위기 승격이 뒤따르는 경우 (안전 리뷰 HIGH).
+            // OutputJudge 는 사전 위험 라벨이 아니라 생성된 텍스트를 보고 판정하므로 MEDIUM
+            // 턴에서도 CRISIS_FLOW 가 나온다. 그때 사용자 화면에 서버 문구가 남으면 감정 인정
+            // 문장 바로 아래에 핫라인이 붙는다.
+            new Scenario("prefix 턴이 위기로 승격", List.of(
+                    "그랬군요. ", "많이 힘드셨겠어요. ", "지금은 어떠세요?"),
+                    GenerationMode.SUPPORTIVE, RiskLevel.MEDIUM, DeliveryMode.CAUTIOUS_SPECULATIVE,
+                    true)
     );
+
+    /** 위기 승격 시 서버가 보내는 고정 안내(축약). 실제 문구는 CrisisFlowService 가 만든다. */
+    private static final String CRISIS_FIXED_COPY = "지금 많이 힘드시겠어요. 도움을 받을 수 있는 곳이 있어요.";
 
     /** 한 시나리오의 측정 결과. */
     private record Measurement(String prefix, long renderedMs, long substantiveMs,
-                               String deliveredContent, int exposedChars, int firstUnitChars) {
+                               String deliveredContent, String finalScreen,
+                               int exposedChars, int firstUnitChars) {
 
         boolean prefixed() {
             return prefix != null;
@@ -177,6 +195,33 @@ class DeliveryExposureQaTest {
             assertThat(String.join("", scenario.chunks()))
                     .as("%s — prefix 가 모델 출력에서 왔다면 서버 문구라고 말할 수 없다",
                             scenario.name())
+                    .doesNotContain(m.prefix());
+        }
+    }
+
+    /**
+     * 위기로 승격한 턴에는 서버 문구가 화면에 남지 않는다 (안전 리뷰 HIGH).
+     *
+     * <p>{@code CAUTIOUS_SPECULATIVE} 의 OutputJudge 는 사전 위험 라벨이 아니라 생성된 텍스트를
+     * 보고 판정한다. prefix 를 받는 MEDIUM·LOW 턴에서도 {@code CRISIS_FLOW} 가 나올 수 있고,
+     * 그때 지우지 않으면 감정 인정 문장 <b>바로 아래</b>에 핫라인이 붙는다.
+     */
+    @Test
+    @DisplayName("위기로 승격한 prefix 턴은 최종 화면에 서버 문구를 남기지 않는다")
+    void crisisPromotionLeavesNoServerCopyOnScreen() throws Exception {
+        List<Scenario> promoted = SCENARIOS.stream().filter(Scenario::crisisPromotion).toList();
+
+        assertThat(promoted)
+                .as("prefix 시나리오에 위기 승격 케이스가 없으면 이 실패 모드를 재지 못한다")
+                .isNotEmpty();
+
+        for (Scenario scenario : promoted) {
+            Measurement m = measure(scenario);
+            assertThat(m.prefixed())
+                    .as("%s — 애초에 prefix 를 받는 턴이어야 의미가 있다", scenario.name())
+                    .isTrue();
+            assertThat(m.finalScreen())
+                    .as("%s — 핫라인 위에 서버 문구가 남으면 안 된다", scenario.name())
                     .doesNotContain(m.prefix());
         }
     }
@@ -286,8 +331,31 @@ class DeliveryExposureQaTest {
                 renderedMs >= 0 ? renderedMs : substantiveMs,
                 substantiveMs,
                 delivered,
+                finalScreenOf(scenario, prefix, delivered),
                 exposed,
                 firstUnitLengthOf(scenario));
+    }
+
+    /**
+     * 턴이 끝났을 때 사용자 화면에 남는 텍스트.
+     *
+     * <p>클라이언트 렌더 모델이다 — {@code delta} 는 이어 붙고 {@code delta.replace} 는 전부
+     * 갈아끼운다. 위기로 승격한 턴은 지우는 신호를 먼저 보낸 뒤 crisis 이벤트가 고정 안내를
+     * 싣는다. 그래서 최종 화면에는 서버 문구가 남지 않는다.
+     *
+     * <p><b>이 계산이 오케스트레이터를 검증하지는 않는다.</b> 실제 배선은
+     * {@code ConversationOrchestratorContractIntegrationTest} 가 SSE 순서로 확인한다. 여기서는
+     * prefix 시나리오 집합에 위기 승격 케이스를 포함시켜, 지연 표가 "사용자가 결국 무엇을
+     * 보는가"까지 함께 보여주도록 한다.
+     */
+    private String finalScreenOf(Scenario scenario, String prefix, String delivered) {
+        if (scenario.crisisPromotion()) {
+            return CRISIS_FIXED_COPY;
+        }
+        if (prefix == null) {
+            return delivered;
+        }
+        return delivered.isEmpty() ? prefix : prefix + " " + delivered;
     }
 
     /** 실제 계획 규칙을 태운 정책 결정. 응답 행위를 하네스가 지정하지 않는다. */
@@ -349,19 +417,22 @@ class DeliveryExposureQaTest {
         out.append("\n══════════════════════════════════════════════════════════════\n");
         out.append("  첫 화면 지연 vs 첫 실질 토큰 지연 (P0-4)\n");
         out.append("══════════════════════════════════════════════════════════════\n");
-        out.append("  %-24s %7s %9s %11s %9s%n"
-                .formatted("시나리오", "prefix", "첫 화면", "첫 실질 토큰", "개선"));
-        measured.forEach((name, m) -> out.append("  %-24s %7s %7dms %9dms %7s%n".formatted(
+        out.append("  %-24s %7s %9s %11s %9s %14s%n"
+                .formatted("시나리오", "prefix", "첫 화면", "첫 실질 토큰", "개선", "최종 화면"));
+        measured.forEach((name, m) -> out.append("  %-24s %7s %7dms %9dms %7s %14s%n".formatted(
                 name,
                 m.prefixed() ? "O" : "-",
                 m.renderedMs(),
                 m.substantiveMs(),
-                m.deltaMs() < 0 ? "미전달" : m.deltaMs() + "ms")));
+                m.deltaMs() < 0 ? "미전달" : m.deltaMs() + "ms",
+                m.prefixed() && !m.finalScreen().contains(m.prefix()) ? "prefix 지워짐" : "유지")));
         out.append("\n  가상 시계 기준. 첫 생성 토큰 %dms + 초당 %.0f자를 가정했고, 승인 단위 판정은\n"
                 .formatted(ASSUMED_TTFT_MS, ASSUMED_CHARS_PER_SECOND));
         out.append("  실제 HoldbackDelivery·OutputPreFilter·SafePrefixCatalog 가 수행한다.\n");
         out.append("  \"미전달\"은 승인된 모델 콘텐츠가 하나도 없었던 턴이다 — 그 턴에서 사용자가\n");
         out.append("  본 것은 서버 문구뿐이고, 나머지는 교체 경로가 처리한다.\n");
+        out.append("  \"prefix 지워짐\"은 위기로 승격해 화면 전체가 고정 안내로 교체된 턴이다 —\n");
+        out.append("  핫라인 위에 감정 인정 문장이 남지 않아야 한다.\n");
         out.append("  실제 값은 운영 trace 의 first_rendered_token_ms / first_substantive_token_ms\n");
         out.append("  로 대체돼야 한다.\n");
         out.append("══════════════════════════════════════════════════════════════\n");
