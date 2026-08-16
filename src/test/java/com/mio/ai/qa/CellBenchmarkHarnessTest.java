@@ -32,6 +32,9 @@ class CellBenchmarkHarnessTest {
     /** 스텁 실행이라 값 자체는 의미가 없다. 구조만 본다 — 그래서 표본을 작게 잡는다. */
     private static final int SAMPLE = 60;
 
+    /** 이 테스트 클래스 전체가 한 "실행" 인 것처럼 도장을 하나 쓴다. */
+    private static final RunIdentity IDENTITY = RunIdentity.stamp("2026-08-16");
+
     private final CellRunner.Result result = runStub(BenchmarkCell.A, sample());
     private final CellMetrics metrics = CellMetrics.of(result);
 
@@ -41,11 +44,17 @@ class CellBenchmarkHarnessTest {
     }
 
     private static CellRunner.Result runStub(BenchmarkCell cell, List<LockedCase> cases) {
+        return runStub(CellVariant.of(cell),
+                CellModelRegistry.resolveForEstimate(cell, Map.of()), cases, IDENTITY);
+    }
+
+    private static CellRunner.Result runStub(CellVariant variant, CellModelRegistry registry,
+                                             List<LockedCase> cases, RunIdentity identity) {
         try {
-            return CellRunner.stubbed(cell, CellModelRegistry.resolveForEstimate(cell, Map.of()))
-                    .run(cases, cases.size() < LockedEvalSet.CASES.size());
+            return CellRunner.stubbed(variant, registry)
+                    .run(cases, cases.size() < LockedEvalSet.CASES.size(), identity);
         } catch (Exception e) {
-            throw new IllegalStateException("스텁 실행 실패", e);
+            throw new IllegalStateException("스텁 실행 실패: " + variant.label(), e);
         }
     }
 
@@ -223,6 +232,443 @@ class CellBenchmarkHarnessTest {
                 .contains("PENDING_SHADOW_CANARY");
     }
 
+    // ── 교차 실행 비교 차단 ─────────────────────────────────────────
+
+    @Test
+    @DisplayName("다른 실행의 결과와는 비교하지 않는다 — 관례가 아니라 evaluate() 가 막는다")
+    void verdictRefusesResultsFromAnotherRun() {
+        CellRunner.Result otherRun = runStub(CellVariant.of(BenchmarkCell.A),
+                CellModelRegistry.resolveForEstimate(BenchmarkCell.A, Map.of()), sample(),
+                RunIdentity.stamp("2026-08-16"));
+
+        CellGoNoGo.Result verdict = CellGoNoGo.evaluate(result, metrics, otherRun,
+                CellMetrics.of(otherRun));
+
+        assertThat(verdict.verdict()).isEqualTo(CellGoNoGo.Verdict.NOT_EVALUABLE);
+        assertThat(verdict.reason())
+                .as("스텁 사유보다 먼저 걸려야 한다 — 교차 실행은 다른 조건을 만족해도 판정이 될 수 없다")
+                .contains("서로 다른 실행");
+    }
+
+    @Test
+    @DisplayName("실행 도장 없는 결과는 만들어지지 않는다 — 가드를 우회할 값이 존재하지 않는다")
+    void resultCannotExistWithoutRunIdentity() {
+        assertThatThrownBy(() -> new CellRunner.Result(CellVariant.of(BenchmarkCell.A),
+                result.registry(), result.outcomes(), result.ledger(), result.elapsed(),
+                true, 1, true, null, java.util.Optional.empty(), true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("실행 도장이 없다");
+    }
+
+    @Test
+    @DisplayName("도장은 세트 버전·내용 해시·정책·프롬프트·단가 기준일을 전부 들고 다닌다")
+    void runIdentityCarriesEveryVersionThatChangesMeaning() {
+        RunIdentity identity = RunIdentity.stamp("2026-08-16");
+
+        assertThat(identity.datasetVersion()).isEqualTo(LockedEvalSet.VERSION);
+        assertThat(identity.lockedSetSha256()).isEqualTo(LockedEvalSet.fileSha256());
+        assertThat(identity.promptVersion()).isEqualTo(EvalRunManifest.UNVERSIONED);
+        assertThat(identity.pricingAsOf()).isEqualTo("2026-08-16");
+        assertThat(identity.mismatchAgainst(identity)).isNull();
+        assertThat(identity.mismatchAgainst(null)).contains("실행 도장이 없다");
+        assertThat(new RunIdentity(identity.runId(), identity.datasetVersion(),
+                identity.lockedSetSha256(), identity.policyVersion(), identity.promptVersion(),
+                "2026-01-01").mismatchAgainst(identity))
+                .as("같은 실행이라도 단가 기준일이 갈리면 원가 비교가 성립하지 않는다")
+                .contains("단가 기준일");
+    }
+
+    @Test
+    @DisplayName("실행 도장이 아카이브 manifest 에 남아 나중에 읽는 도구도 같은 검사를 할 수 있다")
+    void manifestCarriesRunIdentity() {
+        Map<String, String> metadata = CellReport.manifest(result, metrics).toMetadata();
+
+        assertThat(metadata).containsEntry("run_id", result.identity().runId().toString());
+        assertThat(metadata.get("run_identity_note")).contains("run_id");
+    }
+
+    // ── 셀 C: offline reference judge ───────────────────────────────
+
+    @Test
+    @DisplayName("셀 C 는 offline reference 채점 결과를 실제로 낸다 — 선언만 있고 미구현이 아니다")
+    void cellCProducesReferenceReview() {
+        CellRunner.Result cellC = runStub(BenchmarkCell.C, sample());
+
+        assertThat(cellC.referenceReview())
+                .as("REFERENCE_JUDGE 역할을 선언한 셀은 채점 pass 를 돌려야 한다")
+                .isPresent();
+        CellReferenceReview review = cellC.referenceReview().orElseThrow();
+        assertThat(review.calls())
+                .as("채점 호출이 0 이면 reference judge 경로가 죽은 것이다")
+                .isPositive();
+        assertThat(review.scored() + review.failed())
+                .isEqualTo(LockedEvalSet.modelDiscriminatingCases().stream()
+                        .filter(c -> sample().contains(c)).toList().size());
+        assertThat(CellReport.render(cellC, CellMetrics.of(cellC)))
+                .contains("offline reference judge")
+                .contains(CellReferenceReview.SEPARATION_NOTE);
+    }
+
+    @Test
+    @DisplayName("셀 C 의 offline 채점은 온라인 원장·원가·지연에 섞이지 않는다")
+    void referenceReviewNeverEntersOnlineCost() {
+        CellRunner.Result cellC = runStub(BenchmarkCell.C, sample());
+        CellReferenceReview review = cellC.referenceReview().orElseThrow();
+
+        assertThat(cellC.ledger().calls())
+                .as("온라인 원장에 offline 태그 호출이 있으면 셀 C 의 전제가 깨진다")
+                .noneMatch(call -> CellModelRole.OFFLINE_COMPONENT.equals(call.component()));
+        assertThat(review.promptTokens())
+                .as("offline pass 는 자기 토큰을 자기 원장에만 쌓는다")
+                .isPositive();
+        assertThat(cellC.ledger().promptTokens())
+                .as("온라인 토큰 합계에 offline 토큰이 더해지면 안 된다")
+                .isNotEqualTo(cellC.ledger().promptTokens() + review.promptTokens());
+        assertThat(CellModelRole.REFERENCE_JUDGE.isOnline())
+                .as("온라인 역할이 되는 순간 componentToModel 을 통해 운영 경로로 들어간다")
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("A==C 는 구성의 동일성을 단언하고, 수치 차이는 신호로만 낸다")
+    void cellCMatchesBaselineComposition() {
+        CellRunner.Result cellA = runStub(BenchmarkCell.A, sample());
+        CellRunner.Result cellC = runStub(BenchmarkCell.C, sample());
+
+        CellParity.Result parity = CellParity.check(cellA, CellMetrics.of(cellA), cellC,
+                CellMetrics.of(cellC));
+
+        assertThat(parity.violations()).isEmpty();
+        assertThat(parity.held()).isTrue();
+        assertThat(cellC.registry().componentToModel())
+                .as("온라인 역할별 모델이 A 와 같아야 셀 C 다")
+                .isEqualTo(cellA.registry().componentToModel());
+        assertThat(parity.render())
+                .as("단언하지 않는 것을 단언한다고 적지 않는다")
+                .contains("수치(원가·p95) 동일성은 단언하지 않는다");
+    }
+
+    @Test
+    @DisplayName("reference judge 모델을 온라인 역할에도 배정하면 동일성 검사가 잡는다")
+    void parityCatchesReferenceModelLeakingOnline() {
+        CellRunner.Result cellA = runStub(BenchmarkCell.A, sample());
+        CellModelRegistry contaminated = CellModelRegistry.resolve(BenchmarkCell.C, Map.of(
+                CellModelRegistry.MODEL_PROPERTY_PREFIX + "reference_judge", "frontier-x",
+                CellModelRegistry.MODEL_PROPERTY_PREFIX + "generation", "frontier-x"));
+        CellRunner.Result contaminatedC = runStub(CellVariant.of(BenchmarkCell.C), contaminated,
+                sample(), IDENTITY);
+
+        CellParity.Result parity = CellParity.check(cellA, CellMetrics.of(cellA), contaminatedC,
+                CellMetrics.of(contaminatedC));
+
+        assertThat(parity.held()).isFalse();
+        assertThat(parity.violations().toString()).contains("reference judge 모델이 온라인 역할에도");
+    }
+
+    // ── CBT 분류기 ──────────────────────────────────────────────────
+
+    @Test
+    @DisplayName("프로덕션이 매 턴 부르는 CBT 분류 호출을 하네스도 부른다 — 제외 목록이 아니다")
+    void cbtClassifierIsCalledLikeProduction() {
+        assertThat(result.ledger().calls())
+                .as("CBT_CLASSIFIER 호출이 0 이면 턴당 원가가 프로덕션보다 낮게 나온다")
+                .anyMatch(call -> "CBT_CLASSIFIER".equals(call.component()));
+        assertThat(metrics.modelDiscriminating().cbtClassifierCalls()).isPositive();
+        assertThat(result.outcomes())
+                .as("응답을 전달하지 않은 턴은 프로덕션도 부르지 않는다")
+                .filteredOn(outcome -> !outcome.accepted())
+                .allMatch(outcome -> !outcome.cbtClassifierCalled());
+        assertThat(CellRunner.SCOPE).contains("CbtMetadataClassifier");
+    }
+
+    @Test
+    @DisplayName("CBT 분류 역할은 전 셀에 있다 — 셀마다 다르면 상수가 아니라 변수가 된다")
+    void everyCellDeclaresCbtClassifier() {
+        for (BenchmarkCell cell : BenchmarkCell.values()) {
+            assertThat(cell.onlineRoles())
+                    .as("셀 %s 에 CBT 분류 역할이 없다", cell)
+                    .contains(CellModelRole.CBT_CLASSIFIER);
+        }
+    }
+
+    // ── 케이스 실패 격리 ────────────────────────────────────────────
+
+    @Test
+    @DisplayName("한 케이스가 타임아웃돼도 셀 전체가 중단되지 않고 그 케이스만 실패로 기록된다")
+    void caseTimeoutIsRecordedInsteadOfAbortingTheCell() {
+        List<LockedCase> few = LockedEvalSet.CASES.subList(0, 3);
+        System.setProperty(CellRunner.CASE_TIMEOUT_PROPERTY, "1");
+        try {
+            CellRunner.Result timedOutRun = CellRunner.withClientFactory(
+                            CellVariant.of(BenchmarkCell.A),
+                            CellModelRegistry.resolve(BenchmarkCell.A, Map.of()),
+                            (ledger, pricing) -> new HangingLlmClient())
+                    .run(few, true, IDENTITY);
+
+            assertThat(timedOutRun.outcomes())
+                    .as("유료 실행의 이미 지출한 부분을 통째로 버리지 않는다 — 결과는 전부 돌아온다")
+                    .hasSize(few.size());
+            assertThat(timedOutRun.outcomes()).allMatch(CellCaseOutcome::timedOut);
+            assertThat(timedOutRun.outcomes()).allMatch(outcome ->
+                    outcome.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EXTERNAL_FAILURE);
+            assertThat(timedOutRun.outcomes())
+                    .as("실패가 수용으로 세지면 §11.3 채택 조건 셋째가 깨진다")
+                    .noneMatch(CellCaseOutcome::accepted);
+            assertThat(CellMetrics.of(timedOutRun).modelDiscriminating().timedOutCases()
+                    + CellMetrics.of(timedOutRun).deterministicLayer().timedOutCases())
+                    .isEqualTo(few.size());
+        } catch (Exception e) {
+            throw new IllegalStateException("타임아웃 실행이 예외로 중단됐다 — 그것이 바로 고친 결함이다", e);
+        } finally {
+            System.clearProperty(CellRunner.CASE_TIMEOUT_PROPERTY);
+        }
+    }
+
+    /** 무엇을 물어도 인터럽트 전까지 돌아오지 않는 클라이언트. 타임아웃 경로만 만든다. */
+    private static final class HangingLlmClient implements com.mio.ai.llm.LlmClient {
+
+        @Override
+        public com.mio.ai.llm.LlmStreamResult stream(com.mio.ai.llm.LlmRequest request,
+                                                     java.util.function.Consumer<String> handler) {
+            return hang();
+        }
+
+        @Override
+        public String completeText(com.mio.ai.llm.LlmRequest request) {
+            return hang();
+        }
+
+        @Override
+        public String completeJson(com.mio.ai.llm.LlmRequest request) {
+            return hang();
+        }
+
+        private <T> T hang() {
+            try {
+                Thread.sleep(java.time.Duration.ofMinutes(5).toMillis());
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            throw new IllegalStateException("도달하지 않는다");
+        }
+    }
+
+    // ── batch 품질 모드 ─────────────────────────────────────────────
+
+    @Test
+    @DisplayName("batch 품질 모드는 1단계·생성 품질 셀에서만 허용되고, 나머지는 fail-closed 다")
+    void batchQualityModeIsGatedToStageOneQualityCells() {
+        assertThatThrownBy(() -> BatchQualityMode.requireEligible(BenchmarkStage.SEMIFINAL,
+                List.of(BenchmarkCell.A, BenchmarkCell.B)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("1단계 스크리닝에서만");
+        assertThatThrownBy(() -> BatchQualityMode.requireEligible(BenchmarkStage.FULL,
+                List.of(BenchmarkCell.A)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> BatchQualityMode.requireEligible(BenchmarkStage.SCREEN,
+                List.of(BenchmarkCell.A, BenchmarkCell.D)))
+                .as("셀 D·E 는 호출 수 절감과 하네스 축소가 핵심이라 지연 없이는 가설을 못 본다")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("돌릴 수 없는 셀");
+
+        BatchQualityMode.requireEligible(BenchmarkStage.SCREEN,
+                List.of(BenchmarkCell.A, BenchmarkCell.B));
+        assertThatThrownBy(() -> BatchQualityMode.requireTransport(false))
+                .as("전송 계층이 없는데 동기로 조용히 되돌아가면 batch 청구서를 받은 줄 알게 된다")
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("전송 계층이 아직 없다");
+        assertThat(BatchQualityMode.discounted(new java.math.BigDecimal("2.0")))
+                .isEqualByComparingTo("1.0");
+    }
+
+    @Test
+    @DisplayName("지연을 재지 못한 실행은 0 이 아니라 미측정으로 찍히고, 순위가 그 사실을 말한다")
+    void unmeasuredLatencyIsNeverZeroOrBlank() {
+        CellRunner.Result batchLike;
+        try {
+            batchLike = CellRunner.stubbed(CellVariant.of(BenchmarkCell.A),
+                            CellModelRegistry.resolve(BenchmarkCell.A, Map.of()))
+                    .run(sample(), true, IDENTITY, false);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        CellMetrics batchMetrics = CellMetrics.of(batchLike);
+
+        String report = CellReport.render(batchLike, batchMetrics);
+        assertThat(report).contains(BatchQualityMode.NOT_MEASURED);
+        assertThat(CellReport.manifest(batchLike, batchMetrics).toMetadata())
+                .containsEntry("latency_measured", BatchQualityMode.NOT_MEASURED);
+
+        String screening = CellScreeningReport.render(List.of(
+                        new CellScreeningReport.Row(CellVariant.of(BenchmarkCell.A),
+                                batchMetrics, true, false),
+                        new CellScreeningReport.Row(new CellVariant(BenchmarkCell.B, "cand"),
+                                batchMetrics, true, false)),
+                IDENTITY, List.of("cand"), BenchmarkStage.SCREEN);
+        assertThat(screening)
+                .contains(BatchQualityMode.PARTIAL_RANKING)
+                .contains(BatchQualityMode.NOT_MEASURED);
+
+        // 스텁 판정은 항상 CLEAR_LOW 라 안전 항목이 실제로 깨진다. 여기서 보려는 것은
+        // '지연을 재지 못했을 때의 결론' 이므로 나머지 문턱은 통과하게 열어 둔다.
+        CandidateElimination.Thresholds registered =
+                CandidateElimination.thresholds(BenchmarkStage.SCREEN);
+        CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
+                new CandidateElimination.Thresholds(registered.version(),
+                        registered.registeredOn(), BenchmarkStage.SCREEN,
+                        999, 999, 999, 999, 99.0, 99_000L, 99_000L, 99.0, 6),
+                CellVariant.of(BenchmarkCell.B), batchMetrics.modelDiscriminating(),
+                batchMetrics.modelDiscriminating(), false);
+        assertThat(verdict.outcome())
+                .as("재지 못한 축을 통과로 접으면 지연으로 떨어져야 할 후보가 조용히 올라간다")
+                .isEqualTo(CandidateElimination.Outcome.NOT_ASSESSABLE);
+        assertThat(verdict.reason()).contains("동기 지연 프로브");
+    }
+
+    // ── 후보 스크리닝 ───────────────────────────────────────────────
+
+    @Test
+    @DisplayName("후보 여럿이 한 실행에서 같은 기준선·같은 도장으로 펼쳐진다")
+    void screeningExpandsCandidatesWithinOneRun() {
+        List<String> candidates = List.of("frontier-1", "frontier-2", "frontier-3");
+        List<CellVariant> variants =
+                CellVariant.expand(List.of(BenchmarkCell.A, BenchmarkCell.B), candidates);
+
+        assertThat(variants).extracting(CellVariant::label)
+                .as("기준선 A 는 후보와 무관하므로 한 번만, 셀 B 는 후보 수만큼")
+                .containsExactly("A", "B/frontier-1", "B/frontier-2", "B/frontier-3");
+
+        List<CellRunner.Result> runs = new java.util.ArrayList<>();
+        for (CellVariant variant : variants) {
+            CellModelRegistry registry = CellModelRegistry.resolveForVariant(variant, Map.of(
+                    CellModelRegistry.PRICE_PROPERTY_PREFIX + "frontier-1", "2.0/0.2/12.0"));
+            runs.add(runStub(variant, registry, sample(), IDENTITY));
+        }
+
+        assertThat(runs).extracting(run -> run.identity().runId()).containsOnly(IDENTITY.runId());
+        assertThat(runs.get(1).registry().modelFor(CellModelRole.GENERATION))
+                .isEqualTo("frontier-1");
+        assertThat(runs.get(2).registry().modelFor(CellModelRole.GENERATION))
+                .isEqualTo("frontier-2");
+        assertThat(CellGoNoGo.evaluate(runs.get(0), CellMetrics.of(runs.get(0)),
+                        runs.get(1), CellMetrics.of(runs.get(1))).candidate().label())
+                .as("판정 결과도 어느 후보의 것인지 이름으로 구별돼야 한다")
+                .isEqualTo("B/frontier-1");
+    }
+
+    @Test
+    @DisplayName("단가 미상 후보도 품질·지연 비교는 나오고, 원가만 미상으로 남는다")
+    void screeningKeepsQualityWhenPricesAreUnknown() {
+        List<CellVariant> variants =
+                CellVariant.expand(List.of(BenchmarkCell.A, BenchmarkCell.B),
+                        List.of("priced-1", "unpriced-2"));
+        Map<String, String> pins = Map.of(
+                CellModelRegistry.PRICE_PROPERTY_PREFIX + "priced-1", "2.0/0.2/12.0");
+
+        List<CellRunner.Result> runs = new java.util.ArrayList<>();
+        List<CellScreeningReport.Row> rows = new java.util.ArrayList<>();
+        for (CellVariant variant : variants) {
+            CellRunner.Result run = runStub(variant,
+                    CellModelRegistry.resolveForVariant(variant, pins), sample(), IDENTITY);
+            runs.add(run);
+            rows.add(new CellScreeningReport.Row(variant, CellMetrics.of(run), true));
+        }
+
+        assertThat(CellScreeningReport.unpricedCandidates(runs)).containsExactly("unpriced-2");
+        String report = CellScreeningReport.render(rows, IDENTITY,
+                CellScreeningReport.unpricedCandidates(runs), BenchmarkStage.SCREEN);
+        assertThat(report)
+                .contains(CellScreeningReport.NOT_A_VERDICT)
+                .contains("B/priced-1")
+                .contains("B/unpriced-2")
+                .contains("미상")
+                .contains("단가를 핀해야 하는 후보")
+                .as("표본 실행이 안전 판정처럼 읽히면 안 된다")
+                .contains("안전 판정은 나오지 않는다");
+    }
+
+    @Test
+    @DisplayName("탈락 규칙이 사전 등록 데이터이고, 지연만으로도 후보가 떨어진다")
+    void eliminationRulesArePreRegisteredAndLatencyAloneCanDrop() {
+        CandidateElimination.Thresholds thresholds =
+                CandidateElimination.thresholds(BenchmarkStage.SCREEN);
+
+        assertThat(thresholds.maxHighRiskFalseNegatives()).isZero();
+        assertThat(thresholds.maxHardCrisisDowngrades()).isZero();
+        assertThat(thresholds.maxContraindicationViolations()).isZero();
+        assertThat(thresholds.maxP95LatencyMs()).isPositive();
+        assertThat(thresholds.keepTop()).isPositive();
+        assertThat(CandidateElimination.thresholds(BenchmarkStage.SEMIFINAL).maxP95LatencyMs())
+                .as("단계가 올라가면 문턱이 느슨해지면 안 된다")
+                .isLessThanOrEqualTo(thresholds.maxP95LatencyMs());
+        assertThatThrownBy(() -> CandidateElimination.thresholds(BenchmarkStage.FULL))
+                .as("3단계는 좁히는 단계가 아니라 판정 단계다 — Go/No-Go 가 판정한다")
+                .isInstanceOf(IllegalStateException.class);
+
+        CellRunner.Result baseline = runStub(BenchmarkCell.A, sample());
+        CellMetrics.Population population = CellMetrics.of(baseline).modelDiscriminating();
+        // 안전·품질·비용 문턱은 전부 통과하게 열어 두고 지연 문턱만 만족 불가능하게 만든다.
+        // 스텁 실행의 실측 지연은 0ms 에 가까워 양수 문턱으로는 이 경로를 만들 수 없다.
+        CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
+                new CandidateElimination.Thresholds(thresholds.version(),
+                        thresholds.registeredOn(), BenchmarkStage.SCREEN,
+                        99, 99, 99, 99, 99.0, -1L, -1L, 99.0, 6),
+                CellVariant.of(BenchmarkCell.B), population, population);
+
+        assertThat(verdict.outcome())
+                .as("품질·안전·비용이 전부 통과해도 지연 하나로 떨어질 수 있어야 한다")
+                .isEqualTo(CandidateElimination.Outcome.ELIMINATED);
+        assertThat(verdict.reason()).contains("p95 지연");
+    }
+
+    @Test
+    @DisplayName("파레토는 세 축 모두에서 지는 후보만 지배로 표시하고, 단가 미상은 남긴다")
+    void paretoKeepsUnknownCostCandidates() {
+        ReportableRate high = ReportableRate.of("수용률", 190, 200);
+        ReportableRate low = ReportableRate.of("수용률", 150, 200);
+        var frontier = CandidateElimination.pareto(List.of(
+                new CandidateElimination.Point("cheap-good",
+                        java.util.Optional.of(new java.math.BigDecimal("0.001")), high, 1000),
+                new CandidateElimination.Point("dear-bad",
+                        java.util.Optional.of(new java.math.BigDecimal("0.010")), low, 5000),
+                new CandidateElimination.Point("unpriced",
+                        java.util.Optional.empty(), low, 5000)));
+
+        assertThat(frontier.dominatedBy()).containsEntry("dear-bad", "cheap-good");
+        assertThat(frontier.onFrontier())
+                .as("단가를 모르는 후보를 지배로 접으면 모르는 것을 나쁜 것으로 만든 것이다")
+                .contains("cheap-good", "unpriced")
+                .doesNotContain("dear-bad");
+    }
+
+    @Test
+    @DisplayName("2·3단계는 후보를 자동으로 채우지 않는다 — 사람이 앞 단계 결과를 읽고 고른다")
+    void laterStagesRequireExplicitCandidates() {
+        CellCandidateRoster roster = CellCandidateRoster.load();
+
+        assertThat(BenchmarkStage.SCREEN.candidates(roster, List.of()))
+                .isEqualTo(roster.screeningCandidates());
+        assertThat(BenchmarkStage.SEMIFINAL.candidates(roster, List.of("a", "b")))
+                .containsExactly("a", "b");
+        assertThatThrownBy(() -> BenchmarkStage.SEMIFINAL.candidates(roster, List.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("후보를 명시해야 한다");
+        assertThat(BenchmarkStage.SCREEN.canProduceVerdict()).isFalse();
+        assertThat(BenchmarkStage.FULL.canProduceVerdict()).isTrue();
+        assertThatThrownBy(() -> BenchmarkStage.parse("전량"))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("후보 목록의 오타·빈 항목은 조용히 무시되지 않는다")
+    void candidateListRejectsBlankEntries() {
+        assertThat(CellVariant.parseCandidates("a, b ,a")).containsExactly("a", "b");
+        assertThat(CellVariant.parseCandidates(null)).isEmpty();
+        assertThatThrownBy(() -> CellVariant.parseCandidates("a,,b"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("빈 항목");
+    }
+
     // ── 재현성 ──────────────────────────────────────────────────────
 
     @Test
@@ -259,12 +705,8 @@ class CellBenchmarkHarnessTest {
 
         for (BenchmarkCell cell : List.of(BenchmarkCell.A, BenchmarkCell.D)) {
             CellModelRegistry registry = CellModelRegistry.resolve(cell, pins);
-            CellRunner.Result pilot;
-            try {
-                pilot = CellRunner.stubbed(cell, registry).run(pilotCases, true);
-            } catch (Exception e) {
-                throw new IllegalStateException("파일럿 리허설 실패: " + cell, e);
-            }
+            CellRunner.Result pilot =
+                    runStub(CellVariant.of(cell), registry, pilotCases, IDENTITY);
             CellMetrics pilotMetrics = CellMetrics.of(pilot);
 
             assertThat(pilot.outcomes()).hasSize(pilotCases.size());

@@ -106,6 +106,33 @@ tasks.withType<Test> {
     //     -PcellPrices="<후보 ID>=5.0/2.5/20.0" -PpricingAsOf=2026-08-16
     //
     // 견적은 태그 없이 돌아간다: ./gradlew test --tests "com.mio.ai.qa.CellCostEstimateTest"
+    // 상위 모델 후보를 여럿 지정하면 상위 모델을 쓰는 셀이 후보 수만큼 변형으로 펼쳐진다.
+    // 전부 같은 실행·같은 기준선 A 아래에서 돌기 때문에 후보끼리 비교할 수 있다 —
+    // 실행을 나눠 돌린 결과는 RunIdentity 가 비교를 거부한다.
+    //
+    //   ./gradlew test -PllmTests -Pcells=A,B -PsampleSize=60 \
+    //     -PfrontierCandidates="<후보1>,<후보2>,<후보3>" \
+    //     -PcellPrices="<후보1>=2.0/0.2/12.0" -PpricingAsOf=2026-08-16
+    project.findProperty("frontierCandidates")?.let {
+        systemProperty("mio.eval.frontierCandidates", it.toString())
+    }
+    // 모델 선정 깔때기의 단계. 표본 수와 후보 정책이 단계에 묶여 따라온다.
+    //   -Pstage=screen     1단계 — 명부의 생성 후보 전부, 표본 50건
+    //   -Pstage=semifinal  2단계 — 1단계 생존자, 표본 150건
+    //   -Pstage=full       3단계 — 역할별 결선, 전량 323건 (여기서만 Go/No-Go 가 나온다)
+    project.findProperty("stage")?.let { systemProperty("mio.eval.stage", it.toString()) }
+    // Batch API 품질 전용 모드 (1단계 한정). 지연·전달 지표는 측정되지 않는다.
+    project.findProperty("batchQuality")?.let {
+        systemProperty("mio.eval.batchQuality", it.toString())
+    }
+    // 1단계 생존자용 동기 지연 프로브 표본 수. batch 로 못 잰 p95 를 여기서 잰다.
+    project.findProperty("latencyProbe")?.let {
+        systemProperty("mio.eval.latencyProbe", it.toString())
+    }
+    // 추론 모델(o 계열·pro 계열)의 completion 토큰 배수 가정. 견적에만 쓴다.
+    project.findProperty("reasoningMultiplier")?.let {
+        systemProperty("mio.eval.reasoningMultiplier", it.toString())
+    }
     project.findProperty("cells")?.let { systemProperty("mio.eval.cells", it.toString()) }
     project.findProperty("sampleSize")?.let { systemProperty("mio.eval.sampleSize", it.toString()) }
     project.findProperty("pricingAsOf")?.let { systemProperty("mio.eval.pricingAsOf", it.toString()) }
