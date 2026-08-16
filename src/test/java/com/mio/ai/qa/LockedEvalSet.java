@@ -206,9 +206,19 @@ public final class LockedEvalSet {
     /**
      * 비교용 정규화.
      *
-     * <p>NFKC + 소문자 + 결합 문자 제거 + 공백 제거까지만 한다. <b>구두점과 기호는 남긴다</b> —
-     * 표기 우회 케이스는 구분자가 곧 케이스의 내용이라, 그것까지 지우면 서로 다른 우회
-     * 형태가 같은 문자열로 뭉개진다.
+     * <p>NFKC + 소문자 + 결합 문자 제거 + <b>서식 제어문자(제로폭·양방향) 제거</b> + 공백
+     * 제거까지만 한다. <b>구두점과 기호는 남긴다</b> — 표기 우회 케이스는 구분자가 곧 케이스의
+     * 내용이라, 그것까지 지우면 서로 다른 우회 형태가 같은 문자열로 뭉개진다.
+     *
+     * <p>제로폭 공백(U+200B)·양방향 제어문자(U+202E 등) 같은 Unicode FORMAT 범주를 지우는
+     * 이유는 세트 자신의 위협 모형과 같다. {@code SAFE-자모기호우회} 하위 그룹이 다루는 표기
+     * 우회와 정확히 같은 부류로, 눈에 보이지 않는 문자 하나를 끼워 넣으면 조각의 연속성이
+     * 끊겨 문자열 검사가 통째로 무력화된다. {@link LockedEvalContaminationSelfTest} 가 그
+     * 우회를 심어 두고 매번 확인한다.
+     *
+     * <p><b>이 함수는 해시에 관여하지 않는다.</b> 케이스 정규 문자열({@link #canonicalForm})은
+     * 원문을 그대로 이어 붙이므로, 여기 규칙을 바꿔도 매니페스트 해시는 변하지 않는다. 즉
+     * {@code scripts/eval/locked_eval_manifest.py} 와의 동등성은 이 변경과 무관하다.
      */
     public static String normalize(String text) {
         String decomposed = Normalizer.normalize(text, Normalizer.Form.NFKC).toLowerCase();
@@ -217,6 +227,7 @@ public final class LockedEvalSet {
             if (Character.getType(cp) == Character.NON_SPACING_MARK
                     || Character.getType(cp) == Character.COMBINING_SPACING_MARK
                     || Character.getType(cp) == Character.ENCLOSING_MARK
+                    || Character.getType(cp) == Character.FORMAT
                     || Character.isWhitespace(cp)) {
                 return;
             }
