@@ -39,6 +39,20 @@ final class CellScreeningReport {
             "이 표는 후보를 좁히기 위한 스크리닝 비교다. 채택 판정이 아니다 — "
                     + "판정은 사전 등록 문턱으로 CellGoNoGo 만 내리고, 그 규칙은 그대로다.";
 
+    /**
+     * 셀 B 가 입력 안전 지표로 후보를 변별할 수 없다는 사실.
+     *
+     * <p>표에 미탐·HARD 하향·위기 오탐이 모든 후보에서 같은 값으로 찍히면, 읽는 사람은 그것을
+     * "모델들이 똑같이 안전하다" 로 읽는다. 그게 아니라 <b>이 셀이 그 질문을 묻지 않는다</b>는
+     * 뜻이다 — 셀 B 는 생성 모델만 바꾸고 탐지(SafetyL1 + InputJudge)는 고정이다.
+     */
+    static final String CELL_B_CANNOT_DISCRIMINATE =
+            "셀 B 는 입력 안전 지표로 후보를 변별하지 않는다. 생성 모델만 바꾸고 탐지"
+                    + "(SafetyL1 + InputJudge)는 전 변형 고정이라, 미탐·HARD 하향·위기 오탐은 "
+                    + "구조적으로 기준선과 같은 값이 나온다. 같은 숫자를 '모든 모델이 똑같이 "
+                    + "안전하다' 로 읽으면 안 된다 — 셀 B 가 대답할 수 있는 것은 생성 품질·계약 "
+                    + "준수·금기 위반·지연·원가다.";
+
     private CellScreeningReport() {
     }
 
@@ -167,6 +181,7 @@ final class CellScreeningReport {
                 .formatted(thresholds.version(), thresholds.registeredOn()));
         out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v1.json)은 따로이고 더 엄격하다. **\n");
         out.append("  ** 통과가 '안전하다' 는 뜻이 아니다 — 표본 실행은 어떤 안전 주장도 지지하지 않는다. **\n");
+        out.append("  ** %s **\n".formatted(CELL_B_CANNOT_DISCRIMINATE));
         rows.stream().filter(row -> !row.isBaseline()).forEach(row -> {
             CandidateElimination.Verdict verdict = CandidateElimination.evaluate(thresholds,
                     row.variant(), baseline.get().population(), row.population(),
