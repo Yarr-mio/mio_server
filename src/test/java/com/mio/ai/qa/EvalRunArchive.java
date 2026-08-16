@@ -45,6 +45,19 @@ final class EvalRunArchive {
     }
 
     /**
+     * 출처가 검증된 manifest 로 실행을 기록한다 (로드맵 §10.5 / P0-8).
+     *
+     * <p>A~E 셀 비교와 Go/No-Go 판정에 쓰일 실행은 이 오버로드를 쓴다. {@link EvalRunManifest}
+     * 가 필수 항목 누락을 생성 시점에 막으므로, 여기까지 온 기록은 프롬프트·정책 버전과 실제
+     * model ID, 데이터 split, seed 가 반드시 들어있다.
+     *
+     * @return 기록된 파일 경로
+     */
+    static Path write(String runName, EvalRunManifest manifest, String report) {
+        return write(runName, manifest.toMetadata(), report);
+    }
+
+    /**
      * @param runName  실행 이름. 파일명 접두사로 쓰인다
      * @param metadata 버전·환경 정보. 삽입 순서대로 기록된다
      * @param report   본문 — 각 테스트가 이미 만드는 리포트 문자열을 그대로 넣는다
