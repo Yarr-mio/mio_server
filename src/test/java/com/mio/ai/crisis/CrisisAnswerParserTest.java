@@ -62,4 +62,24 @@ class CrisisAnswerParserTest {
         assertThat(parser.parse("상관없이 그냥 힘들어요")).isEqualTo(CrisisAnswer.UNKNOWN);
         assertThat(parser.parse("어이없는 하루였어요")).isEqualTo(CrisisAnswer.UNKNOWN);
     }
+
+    @Test
+    @DisplayName("실제로 쓰이는 예·아니오 답변은 그대로 확정한다")
+    void ordinaryAnswersStillResolve() {
+        assertThat(parser.parse("있어요")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("있습니다")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("없어요")).isEqualTo(CrisisAnswer.NO);
+        assertThat(parser.parse("아니요")).isEqualTo(CrisisAnswer.NO);
+        assertThat(parser.parse("아닙니다")).isEqualTo(CrisisAnswer.NO);
+        // 답을 피하는 표현은 확정하지 않는다 — UNKNOWN 은 handoff 로 fail-closed 된다.
+        assertThat(parser.parse("몰라요")).isEqualTo(CrisisAnswer.UNKNOWN);
+        assertThat(parser.parse("글쎄요")).isEqualTo(CrisisAnswer.UNKNOWN);
+    }
+
+    @Test
+    @DisplayName("문장 중간의 '아니'는 확정 부정으로 읽지 않는다")
+    void midSentenceNegationParticleIsNotAnAnswer() {
+        // 서두의 "아니"만 부정으로 인정한다. 문장 중간 사용은 답변이 아니라 정정·부연이 많다.
+        assertThat(parser.parse("그건 아니고 그냥 지쳤어요")).isEqualTo(CrisisAnswer.UNKNOWN);
+    }
 }

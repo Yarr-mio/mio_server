@@ -31,9 +31,22 @@ public class CrisisAnswerParser {
     /** 한 음절 인정어. 다른 단어의 일부로 흔히 나타나서(반응·언니네) 서두에서만 인정한다. */
     private static final List<String> YES_PREFIXES = List.of("네", "예", "응");
 
+    /** 문장 어디에 있어도 부정으로 보는 마커. 종결형만 인정한다 (YES 쪽 "있"/"없" 과 같은 이유). */
     private static final List<String> NO_MARKERS = List.of(
             "없어", "없습", "없다", "없음", "없네", "없죠", "없지", "없는데",
-            "아니", "no");
+            "아니요", "아니에요", "아니야", "아닙니다", "아닌데", "no");
+
+    /**
+     * 맨 "아니" 는 서두에서만 인정한다. 문장 중간의 "그건 아니고" 류가 확정 NO 가 되는 것을
+     * 막는다.
+     *
+     * <p><b>남은 구멍</b>: 서두의 "아니" 도 "아니 근데"·"아니 진짜" 처럼 부정이 아닌 담화
+     * 표지로 매우 흔하다. 여기서 더 좁히면 {@code "아니, 이미 정했어"} 가 UNKNOWN 이 아니라
+     * YES 로 확정되는데(준비 완료 진술이 부정 서두를 이김), 그 전이가 옳은지는 임상·제품
+     * 판단이라 이 PR 에서 단독으로 뒤집지 않는다 — 이슈 #460 에서 서술형 답변 정책과 함께
+     * 정한다.
+     */
+    private static final List<String> NO_PREFIXES = List.of("아니");
 
     public CrisisAnswer parse(String raw) {
         if (raw == null || raw.isBlank()) {
@@ -44,7 +57,8 @@ public class CrisisAnswerParser {
                 .replaceAll("[^가-힣a-z]", "");
         boolean yes = containsAny(normalized, YES_MARKERS)
                 || startsWithAny(normalized, YES_PREFIXES);
-        boolean no = containsAny(normalized, NO_MARKERS);
+        boolean no = containsAny(normalized, NO_MARKERS)
+                || startsWithAny(normalized, NO_PREFIXES);
 
         if (yes == no) {
             return CrisisAnswer.UNKNOWN;
