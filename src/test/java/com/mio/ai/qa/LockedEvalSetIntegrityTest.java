@@ -457,9 +457,52 @@ class LockedEvalSetIntegrityTest {
         assertThat(rights.redistribution()).isEqualTo("INTERNAL_ONLY");
 
         Map<String, String> fields = rights.asManifestFields();
-        assertThat(fields).containsKeys("dataset", "data_rights_gate_decision",
+        assertThat(fields).containsKeys("data_rights_gate_decision",
                 "data_rights_model_training", "data_rights_expert_review");
+        assertThat(fields)
+                .as("dataset 은 EvalRunManifest 가 직접 기록하는 예약 항목이다. 여기서 함께 "
+                        + "내보내면 검증된 출처를 덮으려는 시도가 되어 manifest 생성이 막힌다")
+                .doesNotContainKey("dataset");
         assertThat(fields.values()).allSatisfy(v -> assertThat(v).isNotBlank());
+
+        assertThat(rights.asManifestDataRights())
+                .as("데이터의 §6.3 판정이 실행 기록의 닫힌 어휘로 그대로 옮겨져야 한다")
+                .isEqualTo(EvalRunManifest.DataRights.PRIORITY_USE);
+    }
+
+    /**
+     * 잠금 주장은 아카이브 경계에서도 기계로 확인돼야 한다.
+     *
+     * <p>{@link EvalRunManifest} 는 {@code LOCKED_GOLD} 에 {@code NEVER_USED} 가 따라오지
+     * 않으면 생성 자체를 거부한다. 즉 이 테스트가 초록인 동안에는 "이 세트는 튜닝에 쓰지
+     * 않았다" 가 산문이 아니라 실행 기록에 실리는 값이다. 언젠가 이 세트가 튜닝에 노출되면
+     * 노출 이력을 고쳐 적어야 하고, 고치는 순간 잠금 표기가 불가능해진다.
+     */
+    @Test
+    @DisplayName("구성 리포트 manifest 가 locked_gold + 튜닝 미노출을 진술한다")
+    void compositionManifestDeclaresLockedAndUnexposed() {
+        EvalRunManifest manifest = archiveManifest();
+
+        assertThat(manifest.datasetSplit()).isEqualTo(EvalRunManifest.DatasetSplit.LOCKED_GOLD);
+        assertThat(manifest.tuningExposure())
+                .as("잠금 표기의 값은 '튜닝에 노출된 적 없다' 는 사실 하나에서 나온다")
+                .isEqualTo(EvalRunManifest.TuningExposure.NEVER_USED);
+        assertThat(manifest.dataRights()).isEqualTo(EvalRunManifest.DataRights.PRIORITY_USE);
+        assertThat(manifest.datasetVersion()).isEqualTo(LockedEvalSet.VERSION);
+        assertThat(manifest.datasetSize()).isEqualTo(LockedEvalSet.CASES.size());
+
+        Map<String, String> metadata = manifest.toMetadata();
+        assertThat(metadata).containsEntry("dataset_split", "locked_gold");
+        assertThat(metadata.get("tuning_exposure"))
+                .isEqualTo(EvalRunManifest.TuningExposure.NEVER_USED.attestation());
+        assertThat(metadata)
+                .as("모델을 호출하지 않은 실행에 모델·비용 값이 지어내져 실리면 안 된다")
+                .containsEntry("model.conversation", EvalRunManifest.NOT_CALLED)
+                .containsEntry("random_seed", EvalRunManifest.NO_SEED);
+        assertThat(metadata)
+                .as("세트의 자기 진술(권리·라벨링·보고 하한)이 실행 기록에 함께 실린다")
+                .containsKeys("dataset_sha256", "data_rights_expert_review",
+                        "label_agreement_measured", "reporting_min_subgroup_n");
     }
 
     @Test
@@ -539,23 +582,68 @@ class LockedEvalSetIntegrityTest {
         out.append("══════════════════════════════════════════════════════════════\n");
 
         System.out.print(out);
-        EvalRunArchive.write("locked-eval-set-composition", archiveMetadata(), out.toString());
+        EvalRunArchive.write("locked-eval-set-composition", archiveManifest(), out.toString());
 
         assertThat(LockedEvalSet.CASES).isNotEmpty();
     }
 
-    private Map<String, String> archiveMetadata() {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("scope", "잠금 평가셋 구성 검증 (모델 호출 없음)");
-        metadata.put("dataset", LockedEvalSet.VERSION);
-        metadata.put("dataset_size", String.valueOf(LockedEvalSet.CASES.size()));
-        metadata.put("dataset_sha256", LockedEvalSet.fileSha256());
-        metadata.put("label_guide", "docs/eval/locked-eval-set-labeling-procedure.md");
-        metadata.putAll(LockedEvalSet.DATA_RIGHTS.asManifestFields());
-        metadata.putAll(LockedEvalSet.LABELING.asManifestFields());
-        metadata.put("command",
-                "./gradlew test --tests \"com.mio.ai.qa.LockedEvalSetIntegrityTest\"");
-        return metadata;
+    /**
+     * 구성 리포트의 실행 manifest (PR #459 의 {@link EvalRunManifest}).
+     *
+     * <p><b>이 세트가 자기 출처를 처음으로 기계에 대고 진술하는 자리다.</b> 특히
+     * {@code LOCKED_GOLD} 와 {@code NEVER_USED} 의 조합은 장식이 아니다 —
+     * {@link EvalRunManifest} 의 compact 생성자가 잠금 표기에 튜닝 미노출 진술이 따라오지
+     * 않으면 <b>manifest 자체를 만들지 못하게</b> 막는다. 언젠가 이 세트가 튜닝에 쓰이면
+     * 그 사실을 이 자리에 적어야 하고, 적는 순간 잠금 표기가 불가능해진다.
+     *
+     * <p>모델을 한 건도 호출하지 않는 실행이므로 모델과 얽힌 항목은 지어내지 않고 부재
+     * 표식을 쓴다. {@code pricing_as_of} 에 {@code PRICING_DATE_UNRECORDED} 를 쓰지 않은
+     * 이유는, 그 표식이 "단가는 썼는데 기준일이 없다" 는 뜻이라 여기서는 사실과 다르기
+     * 때문이다 — 비용 계산 자체가 없었다.
+     */
+    private EvalRunManifest archiveManifest() {
+        Map<String, String> extra = new LinkedHashMap<>();
+        extra.put("dataset_sha256", LockedEvalSet.fileSha256());
+        extra.put("dataset_cases_model_discriminating",
+                String.valueOf(LockedEvalSet.modelDiscriminatingCases().size()));
+        extra.put("dataset_cases_deterministic_layer",
+                String.valueOf(LockedEvalSet.deterministicLayerCases().size()));
+        extra.putAll(LockedEvalSet.DATA_RIGHTS.asManifestFields());
+        extra.putAll(LockedEvalSet.LABELING.asManifestFields());
+        extra.putAll(LockedEvalSet.REPORTING.asManifestFields());
+
+        return new EvalRunManifest(
+                "잠금 평가셋 구성 검증 (모델 호출 없음)",
+                // A~E 셀 실행이 아니다. BASELINE_CELL("A (현행 운영 기준선)") 을 쓰면 모델
+                // 결과가 하나도 없는 기록이 셀 A 의 기준선처럼 읽힌다.
+                "n/a (셀 실행 아님 — 세트 구성 검증)",
+                LockedEvalSet.VERSION,
+                EvalRunManifest.DatasetSplit.LOCKED_GOLD,
+                LockedEvalSet.CASES.size(),
+                "docs/eval/locked-eval-set-labeling-procedure.md",
+                // 판정을 여기 적지 않고 데이터에서 끌어온다 — 데이터와 기록이 다른 값을
+                // 말하면 권리 게이트가 기록 단계에서 무의미해진다.
+                LockedEvalSet.DATA_RIGHTS.asManifestDataRights(),
+                EvalRunManifest.TuningExposure.NEVER_USED,
+                Map.of("conversation", EvalRunManifest.NOT_CALLED,
+                        "input_judge", EvalRunManifest.NOT_CALLED,
+                        "output_judge", EvalRunManifest.NOT_CALLED),
+                EvalRunManifest.UNVERSIONED,
+                // 정책 경로를 타지 않으므로 정책 버전을 물을 대상이 없다.
+                EvalRunManifest.NOT_CALLED,
+                EvalRunManifest.NOT_CALLED,
+                // 전 케이스를 검사한다 — 표본 추출이 없으므로 시드가 결과를 바꾸지 않는다.
+                EvalRunManifest.NO_SEED,
+                "./gradlew test --tests \"com.mio.ai.qa.LockedEvalSetIntegrityTest\"",
+                Map.of(
+                        "case_count", "%d~%d건".formatted(MIN_CASES, MAX_CASES),
+                        "max_subgroup_share", "<= %.1f%%".formatted(MAX_SUBGROUP_SHARE),
+                        "subgroup_reporting_floor",
+                        "n >= %d (미달 그룹은 비율을 산출하지 않는다)"
+                                .formatted(LockedEvalSet.REPORTING.minSubgroupN()),
+                        "manifest_hash", "파일·케이스별 해시 일치",
+                        "production_contract", "전 케이스가 ResponsePlan.BASE_FORBIDDEN 포함"),
+                extra);
     }
 
     // ── 보조 ────────────────────────────────────────────────────────

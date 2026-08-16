@@ -116,10 +116,31 @@ public final class LockedEvalSet {
                              boolean containsPersonalData, boolean expertReviewed,
                              String expertReviewStatus) {
 
-        /** 실행 manifest 에 실을 평평한 키-값. 삽입 순서를 유지한다. */
+        /**
+         * §6.3 판정을 실행 manifest 의 닫힌 어휘로 옮긴다.
+         *
+         * <p>값을 손으로 적지 않고 데이터에서 끌어온다. 데이터의 판정과 실행 기록의 판정이
+         * 서로 다른 값을 말하면 권리 게이트가 기록 단계에서 무의미해지기 때문이다. 어휘 밖
+         * 값이 들어오면 조용히 넘기지 않고 즉시 실패한다.
+         */
+        public EvalRunManifest.DataRights asManifestDataRights() {
+            try {
+                return EvalRunManifest.DataRights.valueOf(gateDecision);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException(
+                        "데이터의 gateDecision 이 §6.3 판정 어휘 밖이다: " + gateDecision, e);
+            }
+        }
+
+        /**
+         * 실행 manifest 의 {@code extra} 에 실을 평평한 키-값. 삽입 순서를 유지한다.
+         *
+         * <p>{@code dataset} 키는 넣지 않는다. {@link EvalRunManifest} 가 직접 기록하는 예약
+         * 항목이라, 여기서 함께 내보내면 검증된 출처를 덮으려는 시도가 되어 manifest 생성이
+         * 막힌다. 데이터셋 이름은 manifest 가 {@code datasetVersion} 으로 이미 싣는다.
+         */
         public Map<String, String> asManifestFields() {
             Map<String, String> fields = new LinkedHashMap<>();
-            fields.put("dataset", VERSION);
             fields.put("data_rights_source_class", sourceClass);
             fields.put("data_rights_gate_decision", gateDecision);
             fields.put("data_rights_gate_reference", gateReference);
