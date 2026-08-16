@@ -2,6 +2,7 @@ package com.mio.session.dto;
 
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
+import com.mio.session.domain.SummaryComponentStatus;
 import com.mio.session.domain.SummaryStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -9,6 +10,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,6 +40,24 @@ class SessionSummaryResponseTest {
         assertThat(response.summary()).isEqualTo(INTERNAL);
     }
 
+    @Test
+    @DisplayName("핵심·렌더링·Todo·임베딩 상태와 구조화 오류를 각각 노출한다")
+    void exposesIndependentComponentStatuses() {
+        SessionSummary summary = summary(RENDERED);
+        when(summary.getUserRenderStatus()).thenReturn(SummaryComponentStatus.FAILED);
+        when(summary.getTodoStatus()).thenReturn(SummaryComponentStatus.SKIPPED);
+        when(summary.getEmbeddingStatus()).thenReturn("processing");
+        when(summary.getComponentErrors()).thenReturn("{\"user_render\":\"CONTRACT_INVALID\"}");
+
+        var response = SessionSummaryResponse.from(session(), summary, List.of());
+
+        assertThat(response.coreSummaryStatus()).isEqualTo("done");
+        assertThat(response.userRenderStatus()).isEqualTo("failed");
+        assertThat(response.todoStatus()).isEqualTo("skipped");
+        assertThat(response.embeddingStatus()).isEqualTo("processing");
+        assertThat(response.componentErrors()).contains("CONTRACT_INVALID");
+    }
+
     // ── helpers ──────────────────────────────────────────────
 
     private Session session() {
@@ -50,6 +70,11 @@ class SessionSummaryResponseTest {
         SessionSummary summary = mock(SessionSummary.class);
         when(summary.getSummaryText()).thenReturn(INTERNAL);
         when(summary.getUserSummaryText()).thenReturn(userSummaryText);
+        when(summary.getUserRenderStatus()).thenReturn(SummaryComponentStatus.DONE);
+        when(summary.getTodoStatus()).thenReturn(SummaryComponentStatus.DONE);
+        when(summary.getEmbeddingStatus()).thenReturn("done");
+        when(summary.getComponentErrors()).thenReturn("{}");
+        when(summary.getUpdatedAt()).thenReturn(OffsetDateTime.parse("2026-08-15T00:00:00Z"));
         return summary;
     }
 }

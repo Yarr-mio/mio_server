@@ -9,6 +9,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 @Component
@@ -17,6 +18,12 @@ import java.util.UUID;
 public class SummaryStatusWriter {
 
     private final SessionRepository sessionRepository;
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void markProcessingStarted(UUID sessionId) {
+        sessionRepository.markSummaryProcessingStarted(
+                sessionId, OffsetDateTime.now(ZoneOffset.UTC));
+    }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void markDone(UUID sessionId) {
