@@ -11,7 +11,9 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -138,6 +140,29 @@ class LockedEvalContaminationGuardTest {
         assertThat(share)
                 .as("짧은 케이스 쏠림 비율")
                 .isLessThanOrEqualTo(MAX_SHORT_BAND_SHARE);
+    }
+
+    @Test
+    @DisplayName("스캔 확장자 허용목록에 드리프트가 없다 — 새 형식은 사각지대가 아니라 실패가 된다")
+    void scanExtensionAllowlistHasNoDrift() {
+        Map<String, Long> census =
+                new TreeMap<>(LockedEvalContaminationScanner.extensionCensus(repoRoot));
+
+        List<String> unclassified = census.entrySet().stream()
+                .filter(e -> !LockedEvalContaminationScanner.SCAN_EXTENSIONS.contains(e.getKey()))
+                .filter(e -> !LockedEvalContaminationScanner.KNOWN_IGNORABLE_EXTENSIONS
+                        .contains(e.getKey()))
+                .map(e -> "%s (%d개)".formatted(e.getKey(), e.getValue()))
+                .toList();
+
+        System.out.printf("[locked-guard] 스캔 루트 확장자 %d종 %s%n", census.size(), census.keySet());
+
+        assertThat(unclassified)
+                .as("스캔 허용목록에도, 무시해도 되는 목록에도 없는 확장자가 있다. "
+                        + "프롬프트·키워드 텍스트를 담을 수 있으면 SCAN_EXTENSIONS 에, "
+                        + "아니면 KNOWN_IGNORABLE_EXTENSIONS 에 근거와 함께 넣어라:%n  %s",
+                        String.join("\n  ", unclassified))
+                .isEmpty();
     }
 
     // ── dev_gold 분리 ───────────────────────────────────────────────

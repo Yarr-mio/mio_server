@@ -67,10 +67,31 @@ final class LockedEvalContaminationScanner {
             "src/test/java", "src/test/resources",
             "docs", "scripts", "ops", ".github");
 
-    /** 텍스트로 읽을 확장자. 이 밖은 사람이 문장을 옮겨 붙일 대상이 아니다. */
+    /**
+     * 텍스트로 읽을 확장자.
+     *
+     * <p>{@code .xml}(Logback 설정) · {@code .conf}(datasource 스니펫) ·
+     * {@code .factories}(Spring 등록) · {@code .example}(로컬 설정 예시)까지 넣는다. 지금은
+     * 전부 프롬프트 텍스트를 담고 있지 않지만, <b>담을 수 있는 형식</b>이면 스캔한다.
+     * 여기에도 {@link #KNOWN_IGNORABLE_EXTENSIONS} 에도 없는 확장자가 스캔 루트에 나타나면
+     * {@link LockedEvalContaminationGuardTest} 가 실패한다.
+     */
     static final Set<String> SCAN_EXTENSIONS = Set.of(
             ".java", ".yml", ".yaml", ".json", ".md", ".sql", ".txt", ".py", ".sh", ".kts",
-            ".properties");
+            ".properties", ".xml", ".conf", ".factories", ".example");
+
+    /**
+     * 프롬프트·키워드 텍스트를 담을 수 없다고 판단해 스캔하지 않는 확장자.
+     *
+     * <p>바이너리·이미지·잠금 파일처럼 사람이 문장을 옮겨 붙일 대상이 아닌 것만 적는다.
+     * 새 템플릿 형식({@code .hbs} · {@code .ftl} · {@code .csv} 등)을 들여올 때 조용한
+     * 사각지대가 생기는 대신 빌드가 깨지게 만드는 것이 목적이므로, 이 목록에 추가할 때는
+     * "왜 텍스트를 담을 수 없는가" 가 함께 설명돼야 한다.
+     */
+    static final Set<String> KNOWN_IGNORABLE_EXTENSIONS = Set.of(
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".pdf",
+            ".zip", ".gz", ".tar", ".jar", ".class", ".p8", ".p12", ".keystore",
+            ".lock", ".bin", ".woff", ".woff2", ".ttf", ".otf", ".mp3", ".mp4");
 
     /** 잠금 세트 자신은 스캔에서 제외한다. */
     static final String LOCKED_DIR = "src/test/resources/eval/locked";
@@ -315,6 +336,30 @@ final class LockedEvalContaminationScanner {
             }
         }
         return files;
+    }
+
+    /** 스캔 루트에 실제로 존재하는 확장자 전체. 허용목록 드리프트 검사가 쓴다. */
+    static Map<String, Long> extensionCensus(Path root) {
+        Map<String, Long> census = new LinkedHashMap<>();
+        Set<Path> seen = new HashSet<>();
+        for (String scanRoot : SCAN_ROOTS) {
+            Path dir = root.resolve(scanRoot);
+            if (!Files.isDirectory(dir)) {
+                continue;
+            }
+            try (Stream<Path> walk = Files.walk(dir)) {
+                walk.filter(Files::isRegularFile)
+                        .filter(p -> !root.relativize(p).toString().startsWith(LOCKED_DIR))
+                        .forEach(p -> {
+                            if (seen.add(p.toAbsolutePath())) {
+                                census.merge(extensionOf(p), 1L, Long::sum);
+                            }
+                        });
+            } catch (IOException e) {
+                throw new UncheckedIOException("확장자 조사를 하지 못했다: " + dir, e);
+            }
+        }
+        return census;
     }
 
     static String extensionOf(Path path) {
