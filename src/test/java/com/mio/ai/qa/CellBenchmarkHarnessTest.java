@@ -671,7 +671,7 @@ class CellBenchmarkHarnessTest {
                 base.contractApplicable(), base.contractViolated(),
                 base.contraindicationViolations(), base.acceptance(), base.inputJudgeCalls(),
                 base.generationCalls(), base.escalations(), base.outputJudgeCalls(),
-                base.cbtClassifierCalls(), base.timedOutCases(),
+                base.cbtClassifierCalls(), base.truncatedGenerations(), base.timedOutCases(),
                 base.llmCalls(), base.promptTokens(), base.completionTokens(),
                 base.p50LatencyMs(), base.p95LatencyMs(), base.p50FirstSubstantiveMs(),
                 base.p95FirstSubstantiveMs(), base.totalCostUsd(), base.costPerAcceptedResponse());

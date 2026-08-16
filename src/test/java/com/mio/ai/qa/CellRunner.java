@@ -117,10 +117,20 @@ final class CellRunner {
     }
 
     /**
-     * 생성 출력 상한. {@code ConversationOrchestrator.LLM_MAX_COMPLETION_TOKENS} 와 같은 값이다.
-     * 다르게 두면 셀 비용이 프로덕션 비용과 다른 것을 재게 된다.
+     * 생성 출력 상한의 <b>기본값</b>. {@code ConversationOrchestrator.LLM_MAX_COMPLETION_TOKENS}
+     * 와 같은 값이다. 다르게 두면 셀 비용이 프로덕션 비용과 다른 것을 재게 된다.
+     *
+     * <p>후보별로 {@code -DmaxCompletionTokens.<모델 ID>} 로 올릴 수 있다
+     * ({@link CellModelRegistry#maxCompletionTokensFor}). 1단계 실 실행에서 추론 모델은 이
+     * 예산을 내부 추론 토큰에 전부 쓰고 사용자에게 보일 본문을 내지 못했다 — 그 상태로 재면
+     * "추론 모델은 품질이 나쁘다" 가 아니라 "예산 안에서 말을 못 한다" 를 재는 것이라, 모델
+     * 비교로 성립하지 않는다. 그래서 <b>하네스는</b> 예산을 올려 잴 수 있게 열어 둔다.
+     *
+     * <p>다만 예산을 올린 실행의 수치는 프로덕션 수치가 아니다. 프로덕션 상수를 올리는 것은
+     * 원가와 "2~4문장 간결" 계약을 동시에 바꾸는 <b>제품 결정</b>이고, 하네스가 대신 내릴 수
+     * 있는 결정이 아니다 (docs/eval/cell-benchmark.md §0-4).
      */
-    private static final int GENERATION_MAX_COMPLETION_TOKENS = 400;
+    static final int PRODUCTION_MAX_COMPLETION_TOKENS = 400;
 
     /** 기본 캐릭터 페르소나. 셀 사이에서 프롬프트 기반이 달라지면 비교가 무의미해진다. */
     private static final String DEFAULT_CHARACTER_ID =
@@ -331,6 +341,7 @@ final class CellRunner {
                 lockedCase.expected().responseAct(), null,
                 CellCaseOutcome.fit(lockedCase.expected().responseAct(), null),
                 false, null, false, false, false, false,
+                false,
                 ContractOutcome.NOT_APPLICABLE, List.of(),
                 Acceptance.REJECTED_EXTERNAL_FAILURE, timedOut,
                 timedOut ? caseTimeout().toMillis() : 0L, 0L,
@@ -444,9 +455,17 @@ final class CellRunner {
      *                      리포트·아카이브로 새어 나갈 경로가 생긴다
      */
     private record Delivery(Exposure exposure, boolean generationCalled, boolean escalated,
-                            boolean outputJudgeCalled, ContractOutcome contract,
+                            boolean outputJudgeCalled, boolean truncated, ContractOutcome contract,
                             List<String> contractViolations, Acceptance acceptance,
-                            String deliveredText, long firstSubstantiveMs) {}
+                            String deliveredText, long firstSubstantiveMs) {
+
+        /** 모델을 부르지 않은 경로(위기 고정·보안 거절·가드)의 전달 결과. */
+        static Delivery withoutGeneration(Exposure exposure, Acceptance acceptance,
+                                          long firstSubstantiveMs) {
+            return new Delivery(exposure, false, false, false, false,
+                    ContractOutcome.NOT_APPLICABLE, List.of(), acceptance, null, firstSubstantiveMs);
+        }
+    }
 
     /**
      * 정책 결정 이후의 전달 경로.
@@ -458,18 +477,15 @@ final class CellRunner {
     private Delivery deliver(PolicyDecision decision, CombinedSignal combined, String userMessage,
                              List<WorkingMessage> priorTurns, UUID caseKey, long startNanos) {
         if (decision.action() == DecisionAction.CRISIS_FLOW) {
-            return new Delivery(Exposure.CRISIS_FLOW, false, false, false,
-                    ContractOutcome.NOT_APPLICABLE, List.of(), Acceptance.ACCEPTED, null,
+            return Delivery.withoutGeneration(Exposure.CRISIS_FLOW, Acceptance.ACCEPTED,
                     elapsedMs(startNanos));
         }
         if (decision.action() == DecisionAction.SECURITY_REFUSAL) {
-            return new Delivery(Exposure.SECURITY_REFUSAL, false, false, false,
-                    ContractOutcome.NOT_APPLICABLE, List.of(), Acceptance.ACCEPTED, null,
+            return Delivery.withoutGeneration(Exposure.SECURITY_REFUSAL, Acceptance.ACCEPTED,
                     elapsedMs(startNanos));
         }
         if (!decision.allowGeneration()) {
-            return new Delivery(Exposure.GUARDED, false, false, false,
-                    ContractOutcome.NOT_APPLICABLE, List.of(), Acceptance.ACCEPTED, null,
+            return Delivery.withoutGeneration(Exposure.GUARDED, Acceptance.ACCEPTED,
                     elapsedMs(startNanos));
         }
         return generate(decision, combined, userMessage, priorTurns, caseKey, startNanos);
@@ -482,7 +498,7 @@ final class CellRunner {
                 CellModelRole.GENERATION, startNanos);
         long firstSubstantiveMs = generated.firstSubstantiveMs();
         if (generated.failed()) {
-            return new Delivery(exposureOf(decision), true, false, false,
+            return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
                     ContractOutcome.NOT_APPLICABLE, List.of(),
                     Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
         }
@@ -495,10 +511,11 @@ final class CellRunner {
 
         boolean needsSecondLook = !preFilter.passed() || contractOutcome == ContractOutcome.VIOLATED;
         if (!needsSecondLook) {
-            return new Delivery(exposureOf(decision), true, false, false, contractOutcome,
-                    contract.violations(), Acceptance.ACCEPTED, generated.text(), firstSubstantiveMs);
+            return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
+                    contractOutcome, contract.violations(), Acceptance.ACCEPTED, generated.text(),
+                    firstSubstantiveMs);
         }
-        return secondLook(decision, plan, userMessage, priorTurns, caseKey, generated.text(),
+        return secondLook(decision, plan, userMessage, priorTurns, caseKey, generated,
                 preFilter, contract, firstSubstantiveMs, startNanos);
     }
 
@@ -512,25 +529,25 @@ final class CellRunner {
      * <p>어느 경우든 <b>실패는 수용으로 세지 않는다</b> — §11.3 채택 조건 셋째.
      */
     private Delivery secondLook(PolicyDecision decision, ResponsePlan plan, String userMessage,
-                                List<WorkingMessage> priorTurns, UUID caseKey, String generatedText,
+                                List<WorkingMessage> priorTurns, UUID caseKey, Generated generated,
                                 OutputPreFilterResult preFilter, ResponseContractResult contract,
                                 long firstSubstantiveMs, long startNanos) {
         ContractOutcome contractOutcome = outcomeOf(contract);
         if (variant.cell().harness().escalationEnabled()) {
             return escalate(decision, plan, userMessage, priorTurns, caseKey, contract,
-                    firstSubstantiveMs, startNanos);
+                    generated.truncated(), firstSubstantiveMs, startNanos);
         }
         if (!variant.cell().harness().outputJudgeEnabled()) {
             // 중복 Judge 제거 셀 — 결정론적 검사 결과가 최종이다.
-            return new Delivery(exposureOf(decision), true, false, false, contractOutcome,
-                    contract.violations(),
+            return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
+                    contractOutcome, contract.violations(),
                     contractOutcome == ContractOutcome.VIOLATED
                             ? Acceptance.REJECTED_CONTRACT
                             : Acceptance.REJECTED_OUTPUT_JUDGE,
                     null, firstSubstantiveMs);
         }
 
-        OutputJudgeResult judged = outputJudge.judge(generatedText, preFilter, caseKey, caseKey);
+        OutputJudgeResult judged = outputJudge.judge(generated.text(), preFilter, caseKey, caseKey);
         Acceptance acceptance = judged.failed()
                 ? Acceptance.REJECTED_JUDGE_FAILURE
                 : switch (judged.action()) {
@@ -539,55 +556,62 @@ final class CellRunner {
                 };
         return new Delivery(judged.action() == OutputJudgeAction.CRISIS_FLOW
                 ? Exposure.CRISIS_FLOW : exposureOf(decision),
-                true, false, true, contractOutcome, contract.violations(), acceptance,
-                acceptance == Acceptance.ACCEPTED ? generatedText : null, firstSubstantiveMs);
+                true, false, true, generated.truncated(), contractOutcome, contract.violations(),
+                acceptance, acceptance == Acceptance.ACCEPTED ? generated.text() : null,
+                firstSubstantiveMs);
     }
 
     /** 난례를 상위(또는 지정된) 모델로 한 번 다시 생성한다. 회복하지 못하면 수용이 아니다. */
     private Delivery escalate(PolicyDecision decision, ResponsePlan plan, String userMessage,
                               List<WorkingMessage> priorTurns, UUID caseKey,
-                              ResponseContractResult contract, long firstSubstantiveMs,
-                              long startNanos) {
+                              ResponseContractResult contract, boolean firstPassTruncated,
+                              long firstSubstantiveMs, long startNanos) {
         CellModelRole role = registry.has(CellModelRole.ESCALATION)
                 ? CellModelRole.ESCALATION
                 : CellModelRole.GENERATION;
         Generated retry = callGeneration(decision, plan, userMessage, priorTurns, caseKey, role,
                 startNanos);
+        boolean truncated = firstPassTruncated || retry.truncated();
         if (retry.failed()) {
-            return new Delivery(exposureOf(decision), true, true, false, outcomeOf(contract),
-                    contract.violations(), Acceptance.REJECTED_EXTERNAL_FAILURE, null,
-                    firstSubstantiveMs);
+            return new Delivery(exposureOf(decision), true, true, false, truncated,
+                    outcomeOf(contract), contract.violations(),
+                    Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
         }
         ResponseContractResult retryContract = contractValidator.validate(plan, retry.text());
         ContractOutcome retryOutcome = outcomeOf(retryContract);
         boolean recovered = outputPreFilter.check(retry.text()).passed()
                 && retryOutcome != ContractOutcome.VIOLATED;
-        return new Delivery(exposureOf(decision), true, true, false, retryOutcome,
+        return new Delivery(exposureOf(decision), true, true, false, truncated, retryOutcome,
                 retryContract.violations(),
                 recovered ? Acceptance.ACCEPTED : Acceptance.REJECTED_CONTRACT,
                 recovered ? retry.text() : null, firstSubstantiveMs);
     }
 
-    private record Generated(String text, long firstSubstantiveMs, boolean failed) {}
+    /**
+     * @param truncated 출력 토큰 상한에 걸려 잘렸는가. 프로덕션 {@code OpenAiLlmClient} 가
+     *                  {@code finish_reason=length} 를 보고 이미 재는 값을 그대로 받는다
+     */
+    private record Generated(String text, long firstSubstantiveMs, boolean failed,
+                             boolean truncated) {}
 
     private Generated callGeneration(PolicyDecision decision, ResponsePlan plan, String userMessage,
                                      List<WorkingMessage> priorTurns, UUID caseKey,
                                      CellModelRole role, long startNanos) {
         String systemPrompt = promptBuilder.buildSystemPrompt(decision.generationMode(),
                 decision.interventionHints(), null, DEFAULT_CHARACTER_ID, null, plan);
-        LlmRequest request = LlmRequest.of(registry.modelFor(role), systemPrompt,
-                        priorTurns, userMessage)
-                .withMaxCompletionTokens(GENERATION_MAX_COMPLETION_TOKENS)
+        String model = registry.modelFor(role);
+        LlmRequest request = LlmRequest.of(model, systemPrompt, priorTurns, userMessage)
+                .withMaxCompletionTokens(registry.maxCompletionTokensFor(model))
                 .withAttribution(role.component(), caseKey, caseKey);
         StringBuilder content = new StringBuilder();
         long beforeCallMs = elapsedMs(startNanos);
         try {
             LlmStreamResult result = llmClient.stream(request, content::append);
             return new Generated(content.toString(),
-                    beforeCallMs + Math.max(result.ttftMs(), 0), false);
+                    beforeCallMs + Math.max(result.ttftMs(), 0), false, result.truncated());
         } catch (RuntimeException e) {
             // 외부 장애는 품질 실패와 다르게 센다 — 섞으면 모델 비교가 네트워크 비교가 된다.
-            return new Generated("", elapsedMs(startNanos), true);
+            return new Generated("", elapsedMs(startNanos), true, false);
         }
     }
 
@@ -646,6 +670,7 @@ final class CellRunner {
                         decision.responsePlan().responseAct()),
                 judgeCalled, decision.judgeStatus(), delivery.generationCalled(),
                 delivery.escalated(), delivery.outputJudgeCalled(), cbtClassifierCalled,
+                delivery.truncated(),
                 delivery.contract(), delivery.contractViolations(),
                 judgeResult != null && judgeResult.failed()
                         ? Acceptance.REJECTED_JUDGE_FAILURE : delivery.acceptance(),

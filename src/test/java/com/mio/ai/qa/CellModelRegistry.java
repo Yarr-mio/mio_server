@@ -55,6 +55,22 @@ final class CellModelRegistry {
     static final String SEED_PROPERTY = "mio.eval.seed";
 
     /**
+     * 모델별 생성 출력 토큰 예산을 덮어쓰는 프로퍼티 접두사
+     * ({@code -PcellMaxCompletionTokens="<모델 ID>=<정수>"}).
+     *
+     * <p>1단계 실 실행(run_id 826444f8)이 만든 문제를 푼다. 프로덕션 예산 400 토큰을 추론
+     * 모델은 내부 추론에 전부 쓰고 사용자에게 보일 본문을 내지 못했다 — gpt-5-nano 는 47/47,
+     * gpt-5-mini 는 43/47 턴에서 아무것도 전달하지 못했다. 그 상태로 잰 수치는 모델의 품질이
+     * 아니라 "이 예산 안에서 말을 할 수 있는가" 이고, 두 모델을 비교했다고 말할 수 없다.
+     *
+     * <p><b>기본값은 프로덕션 상수 그대로다.</b> 덮어쓰지 않은 모델은 프로덕션과 같은 예산으로
+     * 돌아 셀 원가가 프로덕션 원가를 잰다. 덮어쓴 모델은
+     * {@link #raisedCompletionBudgets()} 에 남아 리포트·manifest 가 "이 수치는 프로덕션 예산으로
+     * 잰 것이 아니다" 를 밝힌다.
+     */
+    static final String MAX_COMPLETION_TOKENS_PROPERTY_PREFIX = "mio.eval.maxCompletionTokens.";
+
+    /**
      * 표본 추출 시드의 기본값.
      *
      * <p>실행마다 바뀌는 시드는 파일럿과 본 실행의 표본이 달라 비교를 무의미하게 만든다.
@@ -85,13 +101,16 @@ final class CellModelRegistry {
     private final Map<CellModelRole, String> sources;
     private final CellPricingBook pricing;
     private final long seed;
+    private final Map<String, Integer> completionBudgets;
 
     private CellModelRegistry(Map<CellModelRole, String> models, Map<CellModelRole, String> sources,
-                              CellPricingBook pricing, long seed) {
+                              CellPricingBook pricing, long seed,
+                              Map<String, Integer> completionBudgets) {
         this.models = Map.copyOf(models);
         this.sources = Map.copyOf(sources);
         this.pricing = pricing;
         this.seed = seed;
+        this.completionBudgets = Map.copyOf(completionBudgets);
     }
 
     /**
@@ -180,7 +199,7 @@ final class CellModelRegistry {
 
         return new CellModelRegistry(models, sources,
                 CellPricingBook.load(readPrices(pins), pins.get(PRICING_AS_OF_PROPERTY)),
-                readSeed(pins));
+                readSeed(pins), readCompletionBudgets(pins));
     }
 
     /**
@@ -231,8 +250,39 @@ final class CellModelRegistry {
     private static boolean isPinKey(String key) {
         return key.startsWith(MODEL_PROPERTY_PREFIX)
                 || key.startsWith(PRICE_PROPERTY_PREFIX)
+                || key.startsWith(MAX_COMPLETION_TOKENS_PROPERTY_PREFIX)
                 || key.equals(PRICING_AS_OF_PROPERTY)
                 || key.equals(SEED_PROPERTY);
+    }
+
+    /**
+     * {@code mio.eval.maxCompletionTokens.<model>=<정수>} 를 파싱한다.
+     *
+     * <p>프로덕션 예산보다 <b>낮은</b> 값도 받는다 — "예산을 줄이면 어떻게 되는가" 도 물어볼 수
+     * 있는 질문이다. 다만 0 이하는 받지 않는다: 그건 예산이 아니라 생성 금지다.
+     */
+    private static Map<String, Integer> readCompletionBudgets(Map<String, String> pins) {
+        Map<String, Integer> budgets = new LinkedHashMap<>();
+        pins.forEach((key, value) -> {
+            if (!key.startsWith(MAX_COMPLETION_TOKENS_PROPERTY_PREFIX)) {
+                return;
+            }
+            String model = key.substring(MAX_COMPLETION_TOKENS_PROPERTY_PREFIX.length());
+            int budget;
+            try {
+                budget = Integer.parseInt(value.trim());
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        "completion 토큰 예산이 정수가 아니다: %s=%s".formatted(key, value), e);
+            }
+            if (budget <= 0) {
+                throw new IllegalArgumentException(
+                        "completion 토큰 예산은 양수여야 한다: %s=%s — 0 은 예산이 아니라 생성 금지다"
+                                .formatted(key, value));
+            }
+            budgets.put(model, budget);
+        });
+        return budgets;
     }
 
     private static Map<String, String> readRegistryFile(Path path) {
@@ -363,6 +413,46 @@ final class CellModelRegistry {
 
     CellPricingBook pricing() {
         return pricing;
+    }
+
+    /**
+     * 이 모델의 생성 출력 토큰 예산.
+     *
+     * <p>덮어쓰지 않았으면 프로덕션 상수 그대로다 — 기본값이 프로덕션과 다르면 셀 원가가
+     * 프로덕션 원가를 재지 않는다.
+     */
+    int maxCompletionTokensFor(String model) {
+        return completionBudgets.getOrDefault(model, CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS);
+    }
+
+    /**
+     * 프로덕션 예산과 <b>다른</b> 값으로 잰 모델.
+     *
+     * <p>비어 있지 않으면 그 실행의 원가·지연은 프로덕션 수치가 아니다. 리포트와 manifest 가
+     * 그 사실을 그대로 찍는다 — 빈칸으로 두면 나중에 "프로덕션 예산으로 잰 값" 과 구별되지
+     * 않는다.
+     */
+    Map<String, Integer> raisedCompletionBudgets() {
+        Map<String, Integer> raised = new TreeMap<>();
+        completionBudgets.forEach((model, budget) -> {
+            if (budget != CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS) {
+                raised.put(model, budget);
+            }
+        });
+        return raised;
+    }
+
+    /** 이 실행에서 <b>실제로 쓰이는</b> 역할별 예산. manifest 에 그대로 실린다. */
+    Map<String, String> completionBudgetSummary() {
+        Map<String, String> summary = new TreeMap<>();
+        models.forEach((role, model) -> {
+            int budget = maxCompletionTokensFor(model);
+            summary.put(model, budget == CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS
+                    ? "%d (프로덕션 예산)".formatted(budget)
+                    : "%d (프로덕션 예산 %d 에서 덮어씀)"
+                            .formatted(budget, CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS));
+        });
+        return summary;
     }
 
     long seed() {

@@ -107,7 +107,16 @@ final class CandidateElimination {
         /** 사전 등록 문턱을 깼다. */
         ELIMINATED,
         /** 문턱을 대볼 수 없다 — 단가 미상 등. 통과로도 탈락으로도 세지 않는다. */
-        NOT_ASSESSABLE
+        NOT_ASSESSABLE,
+        /**
+         * 이 실행이 이 후보를 <b>재지 못했다</b>. 순위에 올리지 않는다.
+         *
+         * <p>{@link #NOT_ASSESSABLE} 과 다르다. 저쪽은 "값은 유효한데 한 축(단가)을 모른다" 이고,
+         * 이쪽은 "측정 자체가 성립하지 않았다" 다. 대부분의 턴이 출력 토큰 상한에서 잘렸다면
+         * 그 후보의 수용률·CBT 적합률은 모델의 품질이 아니라 예산의 결과이고, 그것을 조용히
+         * 채점하면 아무 말도 못 한 모델이 점수를 얻는다.
+         */
+        NOT_EVALUABLE
     }
 
     record Verdict(CellVariant candidate, Outcome outcome, List<Check> checks, String reason) {
@@ -169,7 +178,21 @@ final class CandidateElimination {
     static Verdict evaluate(Thresholds thresholds, CellVariant candidate,
                             CellMetrics.Population baseline, CellMetrics.Population cand,
                             boolean latencyMeasured) {
+        // 재지 못한 실행은 다른 무엇을 보기 전에 막는다. 절단률이 높은 후보의 수용률·CBT
+        // 적합률은 모델의 품질이 아니라 토큰 예산의 결과라, 순위에 올리는 순간 표가 거짓말을
+        // 시작한다 — 1단계 실행에서 실제로 일어난 일이다.
+        Check truncation = truncation(cand, thresholds.maxGenerationTruncationRatePercent());
+        if (!truncation.passed()) {
+            return new Verdict(candidate, Outcome.NOT_EVALUABLE, List.of(truncation),
+                    ("생성의 %.1f%% 가 출력 토큰 상한에서 절단됐다 (%d/%d턴) — 이 후보의 품질 지표는 "
+                            + "모델이 아니라 토큰 예산을 잰 것이라 순위에 올리지 않는다. "
+                            + "-PcellMaxCompletionTokens 로 예산을 올려 다시 재거나, 이 후보를 "
+                            + "명부에서 내린다").formatted(cand.truncationRatePercent(),
+                            cand.truncatedGenerations(), cand.generationCalls()));
+        }
+
         List<Check> checks = new ArrayList<>();
+        checks.add(truncation);
         checks.add(increase("고위험 미탐 증가", cand.falseNegatives(), baseline.falseNegatives(),
                 thresholds.maxHighRiskFalseNegativeIncrease()));
         checks.add(increase("HARD 위기 하향 증가", cand.hardCrisisDowngraded(),
@@ -236,6 +259,20 @@ final class CandidateElimination {
         return new Check(name, delta <= maxIncrease,
                 "%d건 (기준선 %d, 증가 %+d)".formatted(observed, baseline, delta),
                 "<= %+d건".formatted(maxIncrease));
+    }
+
+    /**
+     * 생성 절단률.
+     *
+     * <p>분모는 생성 호출 수다. 생성을 한 번도 하지 않은 실행(전부 위기 고정·보안 거절)에서는
+     * 0% 로 통과한다 — 절단이 없었던 것이 맞다.
+     */
+    private static Check truncation(CellMetrics.Population candidate, double maxPercent) {
+        double rate = candidate.truncationRatePercent();
+        return new Check("생성 절단률", rate <= maxPercent,
+                "%.1f%% (%d/%d턴)".formatted(rate, candidate.truncatedGenerations(),
+                        candidate.generationCalls()),
+                "<= %.1f%%".formatted(maxPercent));
     }
 
     private static Check latency(String name, long observedMs, long maxMs) {

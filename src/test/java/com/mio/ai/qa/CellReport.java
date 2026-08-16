@@ -74,6 +74,34 @@ final class CellReport {
                 "    %-16s %-28s %s%s%n".formatted(role, model,
                         result.registry().pinSources().get(role),
                         result.registry().pricing().isPriced(model) ? "" : "  ← 단가 미등록")));
+        appendCompletionBudget(out, result);
+    }
+
+    /**
+     * 생성 출력 토큰 예산.
+     *
+     * <p>프로덕션과 같은 값이면 그렇다고 찍고, 올려서 쟀으면 <b>그 사실을 앞세워</b> 찍는다.
+     * 예산을 올려 잰 수치는 프로덕션 원가·지연이 아니므로, 조용히 같은 표에 섞이면 안 된다.
+     */
+    private static void appendCompletionBudget(StringBuilder out, CellRunner.Result result) {
+        Map<String, Integer> raised = result.registry().raisedCompletionBudgets();
+        if (raised.isEmpty()) {
+            out.append("    생성 출력 예산   %d 토큰 (프로덕션 예산 그대로)%n"
+                    .formatted(CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS));
+            return;
+        }
+        out.append("    생성 출력 예산   %s%n".formatted(formatBudgets(raised)));
+        out.append(("      ** 프로덕션 예산(%d 토큰)이 아니다. 이 실행의 원가·지연·수용률은 "
+                + "프로덕션 수치가 아니며, 프로덕션 상수를 올리는 것은 원가와 '2~4문장 간결' "
+                + "계약을 동시에 바꾸는 제품 결정이다 — docs/eval/cell-benchmark.md §0-4 **%n")
+                .formatted(CellRunner.PRODUCTION_MAX_COMPLETION_TOKENS));
+    }
+
+    private static String formatBudgets(Map<String, Integer> budgets) {
+        return budgets.entrySet().stream()
+                .map(entry -> "%s=%d".formatted(entry.getKey(), entry.getValue()))
+                .reduce((a, b) -> a + " · " + b)
+                .orElse("");
     }
 
     private static void appendPopulation(StringBuilder out, Population population,
@@ -126,6 +154,9 @@ final class CellReport {
                 + "판정 모델이 셀을 변별하지 않는다\n");
         out.append("      ↑ CBT 분류는 프로덕션이 매 턴 부르는 실호출이다 — 전 셀 공통이지만 "
                 + "빼면 턴당 원가가 프로덕션보다 낮게 나온다\n");
+        out.append("    생성 절단        %d/%d턴 (%.1f%%)  ← 출력 토큰 상한에 걸려 잘린 생성%n"
+                .formatted(population.truncatedGenerations(), population.generationCalls(),
+                        population.truncationRatePercent()));
         out.append("    케이스 타임아웃  %d건  ← 셀을 중단시키지 않고 실패로 기록한 건수%n"
                 .formatted(population.timedOutCases()));
         out.append("    토큰             prompt %d / completion %d%n".formatted(
@@ -236,6 +267,11 @@ final class CellReport {
         extra.put("timed_out_cases", String.valueOf(
                 metrics.modelDiscriminating().timedOutCases()
                         + metrics.deterministicLayer().timedOutCases()));
+        extra.put("max_completion_tokens", result.registry().completionBudgetSummary().toString());
+        extra.put("truncated_generations", "%d/%d턴 (%.1f%%)".formatted(
+                metrics.modelDiscriminating().truncatedGenerations(),
+                metrics.modelDiscriminating().generationCalls(),
+                metrics.modelDiscriminating().truncationRatePercent()));
         extra.put("latency_measured", result.latencyMeasured()
                 ? "실측 (동기 스트리밍)" : BatchQualityMode.NOT_MEASURED);
         extra.put("frontier_candidate", result.variant().frontierCandidate() == null

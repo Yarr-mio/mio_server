@@ -37,6 +37,14 @@ record CellCaseOutcome(
         boolean outputJudgeCalled,
         /** 프로덕션이 매 턴 부르는 {@code CbtMetadataClassifier} 를 이 턴에서 불렀는가. */
         boolean cbtClassifierCalled,
+        /**
+         * 생성이 출력 토큰 상한에 걸려 잘렸는가.
+         *
+         * <p>1단계 실 실행에서 추론 모델은 400 토큰 예산을 내부 추론에 전부 쓰고 잘렸다. 그
+         * 사실이 {@code OpenAiLlmClient} 의 경고 로그로만 남고 점수에는 들어가지 않아,
+         * 47/47 이 잘린 후보가 수용률 100%% 로 표에 올랐다. 절단은 값으로 남겨야 계산에 들어간다.
+         */
+        boolean generationTruncated,
 
         ContractOutcome contract,
         List<String> contractViolations,

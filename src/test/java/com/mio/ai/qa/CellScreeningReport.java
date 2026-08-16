@@ -149,6 +149,11 @@ final class CellScreeningReport {
                     .formatted(percentOf(p.acceptanceRate()), percentOf(p.cbtFitRate()),
                             p.cbtScoreable(), p.contractViolated(), p.contractApplicable(),
                             p.contraindicationViolations()));
+            out.append("      전달     생성 절단 %d/%d턴 (%.1f%%)%s%n"
+                    .formatted(p.truncatedGenerations(), p.generationCalls(),
+                            p.truncationRatePercent(),
+                            p.truncationRatePercent() > 0
+                                    ? "  ← 사용자에게 전달된 것이 없는 턴은 수용이 아니다" : ""));
             out.append(row.latencyMeasured()
                     ? "      지연     p50 %d / p95 %d ms · 첫 실질 토큰 p50 %d / p95 %d ms%n"
                     .formatted(p.p50LatencyMs(), p.p95LatencyMs(),

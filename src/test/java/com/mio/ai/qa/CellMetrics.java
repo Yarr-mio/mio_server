@@ -82,6 +82,14 @@ record CellMetrics(
             long outputJudgeCalls,
             /** 프로덕션이 매 턴 부르는 CBT 메타데이터 분류 호출 수. 턴당 원가에 그대로 들어간다. */
             long cbtClassifierCalls,
+            /**
+             * 출력 토큰 상한에 걸려 잘린 생성 턴 수.
+             *
+             * <p>1단계 실 실행에서 추론 모델은 400 토큰을 내부 추론에 전부 쓰고 잘렸다. 그
+             * 사실이 경고 로그로만 남아 점수에 들어가지 않았고, 절단률 100% 인 후보가 순위표에
+             * 그대로 올랐다. 여기서부터는 값이라 계산에 들어간다.
+             */
+            long truncatedGenerations,
             /** 3분 안에 끝나지 않아 실패로 기록된 케이스. 셀 전체를 중단시키지 않는다. */
             long timedOutCases,
             long llmCalls,
@@ -116,6 +124,17 @@ record CellMetrics(
 
         ReportableRate acceptanceRate() {
             return ReportableRate.of(name + " 수용률", accepted(), size);
+        }
+
+        /**
+         * 생성 턴 중 출력 토큰 상한에 걸린 비율.
+         *
+         * <p>{@link ReportableRate} 를 쓰지 않는다 — 이것은 안전·품질 <b>하위 그룹</b> 비율이
+         * 아니라 실행이 유효한가를 묻는 진단값이고, 보고 하한으로 가려 두면 "재지 못한 실행" 을
+         * 재지 못한 채로 순위에 올리게 된다. 분모(생성 호출 수)를 항상 같이 찍는다.
+         */
+        double truncationRatePercent() {
+            return generationCalls == 0 ? 0.0 : truncatedGenerations * 100.0 / generationCalls;
         }
     }
 
@@ -169,6 +188,7 @@ record CellMetrics(
                 count(outcomes, CellCaseOutcome::escalated),
                 count(outcomes, CellCaseOutcome::outputJudgeCalled),
                 count(outcomes, CellCaseOutcome::cbtClassifierCalled),
+                count(outcomes, CellCaseOutcome::generationTruncated),
                 count(outcomes, CellCaseOutcome::timedOut),
                 outcomes.stream().mapToLong(CellCaseOutcome::llmCalls).sum(),
                 outcomes.stream().mapToLong(CellCaseOutcome::promptTokens).sum(),
