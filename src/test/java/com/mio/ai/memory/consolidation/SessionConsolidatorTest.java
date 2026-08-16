@@ -67,6 +67,7 @@ class SessionConsolidatorTest {
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
     private CrisisTodoSafetyGate crisisTodoSafetyGate;
+    private MemoryConsentChecker memoryConsentChecker;
     private ObjectProvider<SessionConsolidator> self;
     private SimpleMeterRegistry meterRegistry;
     private SessionSummaryRepository sessionSummaryRepository;
@@ -99,6 +100,9 @@ class SessionConsolidatorTest {
         crisisTodoSafetyGate = mock(CrisisTodoSafetyGate.class);
         when(crisisTodoSafetyGate.evaluate(any(), any()))
                 .thenReturn(new CrisisTodoDecision(false, "no_crisis_evidence"));
+        memoryConsentChecker = mock(MemoryConsentChecker.class);
+        // 기본은 동의 유지 — 게이트 테스트에서만 철회로 뒤집는다.
+        when(memoryConsentChecker.isRetentionAllowed(any())).thenReturn(true);
         meterRegistry = new SimpleMeterRegistry();
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
@@ -131,6 +135,8 @@ class SessionConsolidatorTest {
                 crisisEpisodePromoter,
                 crisisTodoSafetyGate,
                 new SummaryStageMetrics(meterRegistry),
+                memoryConsentChecker,
+                meterRegistry,
                 selfProvider
         );
     }
@@ -179,6 +185,29 @@ class SessionConsolidatorTest {
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
+    }
+
+    @Test
+    @DisplayName("메모리 동의를 철회한 사용자는 컨솔리데이션이 시작 전에 차단된다 (이슈 #453)")
+    void onSessionEnded_skipsConsolidationWhenConsentWithdrawn() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        when(memoryConsentChecker.isRetentionAllowed(userId)).thenReturn(false);
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
+
+        verify(summaryStatusWriter).markFailed(sessionId);
+        // 게이트는 processing 시작 표시보다도 앞이다 — 철회 세션은 처리를 시작조차 하지 않는다
+        verify(summaryStatusWriter, never()).markProcessingStarted(sessionId);
+        // LLM 요약·보강·위기 승격·Todo 생성 어느 것도 시작되지 않아야 한다
+        verifyNoInteractions(self);
+        verifyNoInteractions(crisisEpisodePromoter);
+        verifyNoInteractions(todoRecommendationService);
+        verifyNoInteractions(componentStatusWriter);
+        // 동의 기인 스킵은 실제 실패와 구분되는 전용 카운터로 남는다
+        assertThat(meterRegistry.counter("mio.summary.consent.skip", "stage", "gate").count())
+                .isEqualTo(1.0);
     }
 
     @Test
