@@ -114,15 +114,18 @@ final class CellReport {
         }
         out.append("    LLM 호출         %d건 (턴당 %.2f)%n".formatted(
                 population.llmCalls(), population.llmCalls() / (double) population.size()));
-        out.append("      역할별        InputJudge %d · 생성 %d · escalation %d · OutputJudge %d "
-                        + "· CBT 분류 %d%n"
+        // 두 문자열을 + 로 잇고 .formatted 를 붙이면 뒤쪽 리터럴에만 적용된다. 그래서 앞
+        // 절반이 %d 그대로 인쇄됐다 — 1단계 실행 리포트 전체가 그 상태로 아카이브에 남았다.
+        out.append(("      역할별        InputJudge %d · 생성 %d · escalation %d · OutputJudge %d"
+                + " · CBT 분류 %d%n")
                 .formatted(population.inputJudgeCalls(), population.generationCalls(),
                         population.escalations(), population.outputJudgeCalls(),
                         population.cbtClassifierCalls()));
+        // append(String) 에 %n 을 넣으면 줄바꿈이 아니라 '%n' 두 글자가 인쇄된다.
         out.append("      ↑ InputJudge 를 부르지 않은 턴은 룰 레이어가 결정한 것이라 "
-                + "판정 모델이 셀을 변별하지 않는다%n");
+                + "판정 모델이 셀을 변별하지 않는다\n");
         out.append("      ↑ CBT 분류는 프로덕션이 매 턴 부르는 실호출이다 — 전 셀 공통이지만 "
-                + "빼면 턴당 원가가 프로덕션보다 낮게 나온다%n");
+                + "빼면 턴당 원가가 프로덕션보다 낮게 나온다\n");
         out.append("    케이스 타임아웃  %d건  ← 셀을 중단시키지 않고 실패로 기록한 건수%n"
                 .formatted(population.timedOutCases()));
         out.append("    토큰             prompt %d / completion %d%n".formatted(
