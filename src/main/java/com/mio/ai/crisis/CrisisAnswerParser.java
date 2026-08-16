@@ -19,14 +19,21 @@ public class CrisisAnswerParser {
     /**
      * 문장 어디에 있어도 긍정으로 보는 마커. 정했·준비·구했 같은 준비 행동 동사는
      * 부정 서두 뒤에 나와도 긍정 증거다.
+     *
+     * <p>"있"/"없" 은 어간만으로 매칭하지 않는다. 한국어에서 매우 흔한 음절이라
+     * "있잖아요"·"상관없이" 같은 무관한 발화까지 확정 답변으로 분류됐다. 서술어 어미가
+     * 붙은 형태만 인정해, 답이 아닌 문장은 UNKNOWN 으로 남아 handoff 로 닫히게 한다.
      */
     private static final List<String> YES_MARKERS = List.of(
-            "그래", "맞아", "있", "정했", "준비", "구했", "yes");
+            "있어", "있습", "있다", "있음", "있네", "있죠", "있지", "있는데",
+            "그래", "맞아", "정했", "준비", "구했", "yes");
 
     /** 한 음절 인정어. 다른 단어의 일부로 흔히 나타나서(반응·언니네) 서두에서만 인정한다. */
     private static final List<String> YES_PREFIXES = List.of("네", "예", "응");
 
-    private static final List<String> NO_MARKERS = List.of("아니", "없", "no");
+    private static final List<String> NO_MARKERS = List.of(
+            "없어", "없습", "없다", "없음", "없네", "없죠", "없지", "없는데",
+            "아니", "no");
 
     public CrisisAnswer parse(String raw) {
         if (raw == null || raw.isBlank()) {

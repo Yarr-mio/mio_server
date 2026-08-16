@@ -43,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyShort;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -332,8 +333,13 @@ class SessionConsolidatorTest {
         verify(proxy).enrichMemory(input);
         verify(crisisTodoSafetyGate).evaluate(userId, sessionId);
         verifyNoInteractions(todoRecommendationService);
-        verify(summaryStatusWriter).markDone(sessionId);
+        // 세션 수준 DONE 은 핵심 요약 커밋 직후 한 번만 — 위기 차단이 완료를 중복 계상하면
+        // 요약 readiness 지표가 위기 세션 수만큼 부풀려진다.
+        verify(summaryStatusWriter, times(1)).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        // 차단된 것은 Todo 컴포넌트 하나뿐이므로 정상 경로의 "생성 0건" 과 같게 종결한다.
+        verify(componentStatusWriter).markTodoSkipped(sessionId);
+        assertThat(timerCount("todo_generation", "skipped")).isEqualTo(1);
     }
 
     @Test

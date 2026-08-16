@@ -49,6 +49,33 @@ public class CrisisFixedFlowCoordinator {
         return stateMachine.handoffResponse();
     }
 
+    /**
+     * 이 세션이 위기 triage 진행 중인지 먼저 알아본다 — 실패 폴백에 핫라인을 넣을지 결정하는 용도.
+     *
+     * <p>{@code route()} 는 사용자 발화 저장·이력 조회가 끝난 뒤에야 호출된다. 그 앞 단계가
+     * 실패하면 라우팅에 닿기도 전에 최상위 catch 로 떨어지는데, 그때 위기 맥락 표시가 없으면
+     * triage 도중인 사용자에게 핫라인 없는 일반 재시도 문구가 나간다. 그래서 이 조회만
+     * 턴 시작 직후로 끌어올린다.
+     *
+     * <p>조회 실패는 {@code true} 로 닫는다. 이 클래스의 다른 저장 실패 처리(handoff 반환)와
+     * 같은 방향이다 — 진행 중인 triage 를 놓치는 쪽이, 위기가 아닌 사용자에게 핫라인을 한 번
+     * 더 보여주는 쪽보다 나쁜 실패다. 과다 발동을 볼 수 있게 별도 outcome 으로 계측한다.
+     */
+    public boolean hasActiveFlow(UUID sessionId) {
+        try {
+            boolean active = store.find(sessionId)
+                    .filter(snapshot -> snapshot.status() == CrisisFlowStatus.ACTIVE)
+                    .filter(snapshot -> snapshot.stage().isActive())
+                    .isPresent();
+            record("probe", active ? "active" : "inactive");
+            return active;
+        } catch (Exception e) {
+            log.error("Crisis fixed-flow probe failed, assuming active sessionId={}", sessionId, e);
+            record("probe", "storage_failure");
+            return true;
+        }
+    }
+
     /** @return routed=false인 경우에만 기존 정책 경로를 계속 진행할 수 있다. */
     public CrisisFixedRoute route(UUID sessionId, UUID userId, String userMessage) {
         Optional<CrisisFlowSnapshot> snapshot;

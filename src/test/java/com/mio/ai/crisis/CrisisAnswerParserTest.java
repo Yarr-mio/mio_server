@@ -49,4 +49,17 @@ class CrisisAnswerParserTest {
         assertThat(parser.parse("아니요 없어요")).isEqualTo(CrisisAnswer.NO);
         assertThat(parser.parse("그런 건 없어요")).isEqualTo(CrisisAnswer.NO);
     }
+
+    /**
+     * "있"/"없" 은 한국어에서 너무 흔한 음절이라, 어간만 보면 답이 아닌 발화까지 확정
+     * 답변이 된다. CURRENT_INTENT 의 잘못된 NO 는 자·타해 의도 확인을 건너뛰고 다음
+     * 단계로 내려보내므로, 확정하지 못할 바에는 UNKNOWN(→ handoff)이 맞다.
+     */
+    @Test
+    @DisplayName("답변이 아닌 문장의 '있'·'없' 음절은 확정 답변으로 읽지 않는다")
+    void bareStemSyllablesDoNotForceAnAnswer() {
+        assertThat(parser.parse("있잖아요 그게")).isEqualTo(CrisisAnswer.UNKNOWN);
+        assertThat(parser.parse("상관없이 그냥 힘들어요")).isEqualTo(CrisisAnswer.UNKNOWN);
+        assertThat(parser.parse("어이없는 하루였어요")).isEqualTo(CrisisAnswer.UNKNOWN);
+    }
 }

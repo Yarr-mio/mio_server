@@ -153,4 +153,52 @@ class CrisisFixedFlowCoordinatorTest {
         assertThat(meterRegistry.find("mio.crisis.flow.begin.failure")
                 .counter().count()).isEqualTo(1);
     }
+
+    @Test
+    @DisplayName("상태의 소유자가 아닌 사용자의 발화는 전이 없이 handoff로만 응답한다")
+    void identityMismatchHandsOffWithoutAdvancing() {
+        UUID otherUserId = UUID.randomUUID();
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 2)));
+
+        CrisisFixedRoute route = coordinator.route(sessionId, otherUserId, "네");
+
+        assertThat(route.routed()).isTrue();
+        assertThat(route.status()).isEqualTo(CrisisFlowStatus.HANDOFF);
+        assertThat(route.reason()).isEqualTo("identity_mismatch");
+        assertThat(route.fixedResponse()).contains("109");
+        // 원 소유자의 triage 는 그대로 둔다 — 남의 답으로 상태를 전진시키면 그 사람의
+        // 위험도 판정이 오염되고, 되돌릴 방법도 없다.
+        assertThat(route.severity()).isEqualTo(2);
+        verify(store, never()).advance(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("활성 triage 조회는 활성일 때만 true 를 준다")
+    void hasActiveFlowReportsActiveOnly() {
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.MEANS, CrisisFlowStatus.ACTIVE, 2)));
+        assertThat(coordinator.hasActiveFlow(sessionId)).isTrue();
+
+        when(store.find(sessionId)).thenReturn(Optional.of(
+                new CrisisFlowSnapshot(sessionId, userId,
+                        CrisisFlowStage.HANDOFF, CrisisFlowStatus.HANDOFF, 2)));
+        assertThat(coordinator.hasActiveFlow(sessionId)).isFalse();
+
+        when(store.find(sessionId)).thenReturn(Optional.empty());
+        assertThat(coordinator.hasActiveFlow(sessionId)).isFalse();
+    }
+
+    @Test
+    @DisplayName("활성 triage 조회가 실패하면 활성으로 간주해 핫라인 경로를 연다")
+    void hasActiveFlowFailsClosed() {
+        when(store.find(sessionId)).thenThrow(new IllegalStateException("db down"));
+
+        assertThat(coordinator.hasActiveFlow(sessionId)).isTrue();
+        assertThat(meterRegistry.find("mio.crisis.fixed.flow")
+                .tags("stage", "probe", "outcome", "storage_failure")
+                .counter().count()).isEqualTo(1);
+    }
 }

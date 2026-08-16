@@ -176,6 +176,40 @@ class ConversationOrchestratorCrisisFallbackTest {
     }
 
     @Test
+    @DisplayName("라우팅에 닿기 전에 턴 열기가 실패해도 활성 triage 면 핫라인이 포함된다")
+    void preRouteFailureDuringActiveFlowFallsBackWithHotlines() {
+        // route() 는 사용자 발화 저장 뒤에야 호출된다. 그 앞에서 죽으면 위기 맥락 표시가
+        // 붙을 기회조차 없었다 — 직전 턴에서 "죽고 싶은 생각이 있나요?" 에 답하려던
+        // 사용자가 핫라인 없는 재시도 문구를 받는 경로다.
+        when(crisisFixedFlowCoordinator.hasActiveFlow(sessionId)).thenReturn(true);
+        doThrow(new RuntimeException("db down before routing"))
+                .when(messagePersistenceService).openTurn(any(), any(), any(), any(), any());
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        orchestrator.handle(userId, sessionId, "네", emitter, null);
+
+        assertThat(emitter.payload())
+                .as("라우팅 전 실패라도 활성 triage 면 핫라인이 있어야 한다")
+                .contains("109")
+                .contains("1577-0199");
+    }
+
+    @Test
+    @DisplayName("활성 여부를 조회하지 못하면 핫라인을 포함하는 쪽으로 닫는다")
+    void probeFailureFallsBackWithHotlines() {
+        // 조회 자체가 실패하면 triage 중인지 알 수 없다. 진행 중인 triage 를 놓치는 쪽이
+        // 위기가 아닌 사용자에게 핫라인을 한 번 더 보여주는 쪽보다 나쁜 실패다.
+        when(crisisFixedFlowCoordinator.hasActiveFlow(sessionId)).thenReturn(true);
+        doThrow(new RuntimeException("history load failed"))
+                .when(messagePersistenceService).loadRecentUserSafetyHistory(any(), anyInt());
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        orchestrator.handle(userId, sessionId, "네", emitter, null);
+
+        assertThat(emitter.payload()).contains("109").contains("1577-0199");
+    }
+
+    @Test
     @DisplayName("위기 맥락이 아닌 실패는 기존 재시도 문구를 유지한다")
     void nonCrisisFailureKeepsGenericFallback() {
         when(crisisFixedFlowCoordinator.route(sessionId, userId, "네"))
