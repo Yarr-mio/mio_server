@@ -1,0 +1,265 @@
+{
+  "version": "candidate-roster-v1",
+  "registeredOn": "2026-08-16",
+  "source": "계정의 /v1/models chat 가능 목록 (39건, 2026-08-16 조회)",
+  "note": [
+    "이 파일은 '어떤 모델이 어느 단계에 들어가고, 무엇이 왜 빠졌는가' 만 담는다.",
+    "단가는 담지 않는다 — 로드맵 §11.3 이 '정확한 후보 ID 와 당시 단가는 코드 상수나 문서의",
+    "영구 결론으로 고정하지 않고 각 벤치마크 실행의 registry 에 핀한다' 고 정했기 때문이다.",
+    "제외 사유를 산문이 아니라 값으로 남기는 이유는, 나중에 '왜 이 모델은 안 봤나' 를 물었을 때",
+    "기록이 대답할 수 있어야 하기 때문이다. 사유가 바뀌면 이 파일이 PR 에서 따로 보인다."
+  ],
+  "decisions": {
+    "BASELINE": "현행 운영 모델. 비교의 분모이며 모든 단계에 들어간다",
+    "SCREEN": "1단계 스크리닝 대상 — 생성 역할 후보",
+    "REFERENCE_ONLY": "턴당 경제성이 성립하지 않아 생성 후보에서는 빼되, offline reference judge(셀 C) 후보로는 남긴다",
+    "EXCLUDED_LEGACY_DOMINATED": "더 싸고 더 나은 현행 모델에 완전히 지배된다 — 돌려볼 이유가 없다",
+    "EXCLUDED_UNECONOMIC_PER_TURN": "턴당 채팅 제품의 생성 모델로 쓰기에 단가가 비현실적이다",
+    "EXCLUDED_UNRESOLVABLE_PRICE": "공표 가격표에서 단가를 확정할 수 없다 — 비용 기준 순위에 넣을 수 없다"
+  },
+  "models": [
+    {
+      "id": "gpt-4o",
+      "decision": "BASELINE",
+      "reasoningModel": false,
+      "roles": ["generation"],
+      "reason": "현행 ConversationOrchestrator 생성 모델. 모든 비교의 분모다"
+    },
+    {
+      "id": "gpt-4o-mini",
+      "decision": "BASELINE",
+      "reasoningModel": false,
+      "roles": ["input_safety", "output_judge", "cbt_classifier", "generation"],
+      "reason": "현행 InputJudge·OutputJudge·CBT 분류 모델이자 셀 D 의 경량 생성 기본값"
+    },
+
+    {
+      "id": "gpt-5.6-terra",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "escalation"],
+      "reason": "현행 기준선과 단가대가 겹치는 최신 세대 — '품질을 올리면서 비용은 같다' 가 가능한지 보는 핵심 후보"
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "최신 세대의 경량 — 셀 D 경량 cascade 의 생성 후보이자 판정 역할 후보"
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "escalation"],
+      "reason": "최신 세대 상위 — 품질 상한을 확인하는 후보"
+    },
+    {
+      "id": "gpt-5.5",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "escalation"],
+      "reason": "직전 세대 상위. 5.6 대비 세대 효과를 분리해 보기 위해 남긴다"
+    },
+    {
+      "id": "gpt-5.4",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "escalation"],
+      "reason": "중간 단가대 후보"
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "경량 후보"
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "초경량 후보 — 판정 역할 비용을 내리는 쪽"
+    },
+    {
+      "id": "gpt-5.2",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation"],
+      "reason": "중간 단가대 후보"
+    },
+    {
+      "id": "gpt-5.1",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation"],
+      "reason": "gpt-5 대비 소폭 상위 세대. 단가가 같아 세대 차이만 본다"
+    },
+    {
+      "id": "gpt-5",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation"],
+      "reason": "기준선보다 싼 상위 세대 후보"
+    },
+    {
+      "id": "gpt-5-mini",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "경량 후보"
+    },
+    {
+      "id": "gpt-5-nano",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "로스터에서 가장 싼 후보 — 판정 역할 하한을 본다"
+    },
+    {
+      "id": "gpt-4.1",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation"],
+      "reason": "기준선과 같은 계열의 상위 — 세대 교체 없이 얻을 수 있는 개선폭"
+    },
+    {
+      "id": "gpt-4.1-mini",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "현행 판정 모델의 직접 대체 후보"
+    },
+    {
+      "id": "gpt-4.1-nano",
+      "decision": "SCREEN",
+      "reasoningModel": false,
+      "roles": ["generation", "input_safety", "output_judge", "cbt_classifier"],
+      "reason": "판정 역할 최저가 후보"
+    },
+    {
+      "id": "o3",
+      "decision": "SCREEN",
+      "reasoningModel": true,
+      "roles": ["generation", "escalation"],
+      "reason": "추론 모델. 난례 escalation 후보로 유력하나 지연으로 탈락할 수 있어 지연을 같이 잰다"
+    },
+    {
+      "id": "o3-mini",
+      "decision": "SCREEN",
+      "reasoningModel": true,
+      "roles": ["generation", "escalation"],
+      "reason": "경량 추론 모델"
+    },
+    {
+      "id": "o4-mini",
+      "decision": "SCREEN",
+      "reasoningModel": true,
+      "roles": ["generation", "escalation"],
+      "reason": "경량 추론 모델"
+    },
+
+    {
+      "id": "gpt-5.5-pro",
+      "decision": "REFERENCE_ONLY",
+      "reasoningModel": true,
+      "roles": ["reference_judge"],
+      "reason": "생성으로 쓰면 턴당 원가가 현행의 수십 배다. 그러나 offline reference judge 는 턴당 경제성·지연 제약을 받지 않으므로 셀 C 후보로 남긴다"
+    },
+    {
+      "id": "gpt-5-pro",
+      "decision": "REFERENCE_ONLY",
+      "reasoningModel": true,
+      "roles": ["reference_judge"],
+      "reason": "위와 같은 이유. 두 독립 reference judge 를 요구하는 미해결 게이트를 위해 둘을 남긴다"
+    },
+
+    {
+      "id": "gpt-5.4-pro",
+      "decision": "EXCLUDED_UNECONOMIC_PER_TURN",
+      "reasoningModel": true,
+      "roles": [],
+      "reason": "생성 단가가 현행의 12배 이상이라 턴당 채팅 제품에 성립하지 않는다. reference judge 후보는 이미 둘을 남겼으므로 셋째는 비용만 늘린다"
+    },
+    {
+      "id": "gpt-5.2-pro",
+      "decision": "EXCLUDED_UNECONOMIC_PER_TURN",
+      "reasoningModel": true,
+      "roles": [],
+      "reason": "위와 같다"
+    },
+    {
+      "id": "o3-pro",
+      "decision": "EXCLUDED_UNECONOMIC_PER_TURN",
+      "reasoningModel": true,
+      "roles": [],
+      "reason": "위와 같다. 추론 토큰까지 출력 단가로 과금돼 실질 배수는 더 크다"
+    },
+    {
+      "id": "o1",
+      "decision": "EXCLUDED_UNECONOMIC_PER_TURN",
+      "reasoningModel": true,
+      "roles": [],
+      "reason": "단가가 현행 생성의 6배·출력 6배이고 추론 토큰이 더해진다. 같은 계열에서 o3·o4-mini 가 더 싸고 새로우므로 지배된다"
+    },
+    {
+      "id": "o1-pro",
+      "decision": "EXCLUDED_UNECONOMIC_PER_TURN",
+      "reasoningModel": true,
+      "roles": [],
+      "reason": "생성 단가가 현행의 60배 규모다. 어떤 품질 개선으로도 턴당 제품 경제성이 회복되지 않는다"
+    },
+
+    {
+      "id": "gpt-4",
+      "decision": "EXCLUDED_LEGACY_DOMINATED",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "구세대. 현행 gpt-4o 보다 비싸고 느리며 품질 우위가 없다"
+    },
+    {
+      "id": "gpt-4-turbo",
+      "decision": "EXCLUDED_LEGACY_DOMINATED",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "gpt-4o 에 지배된다 — 같은 계열의 후속이 더 싸고 빠르다"
+    },
+    {
+      "id": "gpt-3.5-turbo",
+      "decision": "EXCLUDED_LEGACY_DOMINATED",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "변형 포함. gpt-4o-mini·gpt-4.1-nano 가 더 싸거나 비슷하면서 한국어 품질과 지시 준수가 낫다"
+    },
+
+    {
+      "id": "gpt-5-chat-latest",
+      "decision": "EXCLUDED_UNRESOLVABLE_PRICE",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "alias 라 공표 가격표에서 단가를 확정할 수 없다. 어느 구체 모델을 가리키는지도 시점에 따라 바뀐다 — 비용 기준 순위와 재현 가능한 실행 기록 둘 다 성립하지 않는다"
+    },
+    {
+      "id": "gpt-5.1-chat-latest",
+      "decision": "EXCLUDED_UNRESOLVABLE_PRICE",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "위와 같다"
+    },
+    {
+      "id": "gpt-5.2-chat-latest",
+      "decision": "EXCLUDED_UNRESOLVABLE_PRICE",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "위와 같다"
+    },
+    {
+      "id": "gpt-5.3-chat-latest",
+      "decision": "EXCLUDED_UNRESOLVABLE_PRICE",
+      "reasoningModel": false,
+      "roles": [],
+      "reason": "위와 같다. gpt-5.3 은 alias 외에 구체 모델이 목록에 없어 다른 경로도 없다"
+    }
+  ]
+}
