@@ -15,7 +15,6 @@ CREATE TABLE crisis_flow_states (
     means_access       TEXT NOT NULL DEFAULT 'unknown',
     immediate_support  TEXT NOT NULL DEFAULT 'unknown',
     version            INTEGER NOT NULL DEFAULT 0,
-    last_error_code    TEXT,
     started_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     terminal_at        TIMESTAMPTZ,

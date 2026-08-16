@@ -29,7 +29,6 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                 stage = ?,
                 status = ?,
                 version = version + 1,
-                last_error_code = NULL,
                 updated_at = now(),
                 terminal_at = CASE WHEN ? = 'active' THEN NULL ELSE now() END
             WHERE session_id = ?
@@ -63,10 +62,10 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                 INSERT INTO crisis_flow_states (
                     session_id, user_id, stage, status, severity,
                     current_intent, plan, means, means_access, immediate_support,
-                    version, last_error_code, started_at, updated_at, terminal_at
+                    version, started_at, updated_at, terminal_at
                 ) VALUES (?, ?, 'current_intent', 'active', ?,
                           'unknown', 'unknown', 'unknown', 'unknown', 'unknown',
-                          0, NULL, now(), now(), NULL)
+                          0, now(), now(), NULL)
                 ON CONFLICT (session_id) DO UPDATE SET
                     user_id = EXCLUDED.user_id,
                     stage = 'current_intent',
@@ -78,7 +77,6 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                     means_access = 'unknown',
                     immediate_support = 'unknown',
                     version = crisis_flow_states.version + 1,
-                    last_error_code = NULL,
                     started_at = now(),
                     updated_at = now(),
                     terminal_at = NULL
