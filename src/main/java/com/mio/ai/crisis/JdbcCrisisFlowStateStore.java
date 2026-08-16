@@ -5,17 +5,55 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
-/** PostgreSQL 행 잠금과 조건부 갱신으로 위기 전이를 원자적으로 저장한다. */
+/**
+ * PostgreSQL 조건부 갱신(CAS)으로 위기 전이를 원자적으로 저장한다.
+ *
+ * <p>행 잠금(SELECT ... FOR UPDATE)이 아니라 {@code WHERE stage = ? AND status = 'active'}
+ * 조건이 걸린 단일 UPDATE 다. 동시 전이가 들어오면 한 쪽만 1행을 갱신하고 나머지는
+ * 0행 갱신으로 실패해 stale 전이로 거부된다.
+ */
 @Component
 @RequiredArgsConstructor
 public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
 
+    private static final String ADVANCE_SQL_TEMPLATE = """
+            UPDATE crisis_flow_states
+            SET %s = ?,
+                stage = ?,
+                status = ?,
+                version = version + 1,
+                last_error_code = NULL,
+                updated_at = now(),
+                terminal_at = CASE WHEN ? = 'active' THEN NULL ELSE now() END
+            WHERE session_id = ?
+              AND stage = ?
+              AND status = 'active'
+            """;
+
+    /**
+     * stage별 응답 컬럼이 확정된 UPDATE 문. 닫힌 enum 키로만 조회하므로 런타임에
+     * 동적 SQL 조립이 없다. terminal stage 는 응답 컬럼이 없어 키 자체가 없다.
+     */
+    private static final Map<CrisisFlowStage, String> ADVANCE_SQL_BY_STAGE = buildAdvanceSql();
+
     private final JdbcTemplate jdbcTemplate;
+
+    private static Map<CrisisFlowStage, String> buildAdvanceSql() {
+        Map<CrisisFlowStage, String> byStage = new EnumMap<>(CrisisFlowStage.class);
+        byStage.put(CrisisFlowStage.CURRENT_INTENT, ADVANCE_SQL_TEMPLATE.formatted("current_intent"));
+        byStage.put(CrisisFlowStage.PLAN, ADVANCE_SQL_TEMPLATE.formatted("plan"));
+        byStage.put(CrisisFlowStage.MEANS, ADVANCE_SQL_TEMPLATE.formatted("means"));
+        byStage.put(CrisisFlowStage.MEANS_ACCESS, ADVANCE_SQL_TEMPLATE.formatted("means_access"));
+        byStage.put(CrisisFlowStage.IMMEDIATE_SUPPORT, ADVANCE_SQL_TEMPLATE.formatted("immediate_support"));
+        return byStage;
+    }
 
     @Override
     @Transactional
@@ -82,25 +120,16 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                         CrisisAnswer answer,
                         CrisisFlowStage toStage,
                         CrisisFlowStatus status) {
-        String answerColumn = responseColumn(fromStage);
+        String advanceSql = ADVANCE_SQL_BY_STAGE.get(fromStage);
+        if (advanceSql == null) {
+            throw new IllegalArgumentException("terminal stage has no response column: " + fromStage);
+        }
         String answerValue = code(answer);
         String nextStage = code(toStage);
         String nextStatus = code(status);
 
         int updated = jdbcTemplate.update(
-                """
-                UPDATE crisis_flow_states
-                SET %s = ?,
-                    stage = ?,
-                    status = ?,
-                    version = version + 1,
-                    last_error_code = NULL,
-                    updated_at = now(),
-                    terminal_at = CASE WHEN ? = 'active' THEN NULL ELSE now() END
-                WHERE session_id = ?
-                  AND stage = ?
-                  AND status = 'active'
-                """.formatted(answerColumn),
+                advanceSql,
                 answerValue, nextStage, nextStatus, nextStatus,
                 sessionId, code(fromStage));
         if (updated != 1) {
@@ -115,18 +144,6 @@ public class JdbcCrisisFlowStateStore implements CrisisFlowStateStore {
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 sessionId, code(fromStage), nextStage, answerValue, nextStatus);
-    }
-
-    private String responseColumn(CrisisFlowStage stage) {
-        return switch (stage) {
-            case CURRENT_INTENT -> "current_intent";
-            case PLAN -> "plan";
-            case MEANS -> "means";
-            case MEANS_ACCESS -> "means_access";
-            case IMMEDIATE_SUPPORT -> "immediate_support";
-            case COMPLETED, HANDOFF -> throw new IllegalArgumentException(
-                    "terminal stage has no response column: " + stage);
-        };
     }
 
     private String code(Enum<?> value) {
