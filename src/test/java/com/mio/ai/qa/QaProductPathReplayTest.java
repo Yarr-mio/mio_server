@@ -13,11 +13,13 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.io.IOException;
@@ -27,6 +29,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
@@ -111,6 +116,13 @@ class QaProductPathReplayTest {
     @MockBean
     private OpenAiModerationClient moderationClient;
 
+    /**
+     * 온톨로지 비동기 활성화 실행기. 턴마다 배수(drain)한다 — 아래 {@link #drainOntologyTasks}.
+     */
+    @Autowired
+    @Qualifier("ontologyActivationExecutor")
+    private Executor ontologyActivationExecutor;
+
     @TestFactory
     @DisplayName("고정된 QA 케이스는 최종 노출 결과가 재발 없이 유지된다")
     Stream<DynamicTest> replayAllFixtures() throws IOException {
@@ -163,6 +175,10 @@ class QaProductPathReplayTest {
 
                 RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
                 orchestrator.handle(userId, sessionId, turn.userMessage(), emitter, null);
+
+                // handle() 이 GENERATE 턴에서 던진 @Async 온톨로지 활성화가 끝나기 전에
+                // 스텁 교체·reset·행 삭제로 넘어가면 안 된다 — 아래 drainOntologyTasks 참조.
+                drainOntologyTasks(label);
 
                 assertTurn(label, turn.expect(), emitter, streamCalled.get());
             }
@@ -219,6 +235,43 @@ class QaProductPathReplayTest {
         return fixtureValue != null && !fixtureValue.isNull()
                 ? objectMapper.writeValueAsString(fixtureValue)
                 : defaultJson;
+    }
+
+    /**
+     * 턴이 던진 온톨로지 비동기 작업이 끝날 때까지 기다린다.
+     *
+     * <p>{@code ConversationOrchestrator.handle()} 은 안전한 GENERATE 턴에서
+     * {@code ReactiveOntologyActivator.activateBeliefs} 를 {@code @Async} 로 던진다. 이걸
+     * 배수하지 않으면 (1) 진행 중인 목 호출과 {@code Mockito.reset()} 이 경합하고 —
+     * reset 은 살아 있는 호출에 대해 스레드 안전하지 않다 — (2) 정리 단계의 사용자 행
+     * 삭제가 비동기 쓰기와 경합해, 결정론이 존재 이유인 게이트에 드문 CI 실패를 만든다.
+     * 실행기를 동기로 바꾸지 않고 배수를 택한 것은 프로덕션 경로를 그대로 두기 위해서다.
+     *
+     * <p>이 실행기는 core 1 / queue 20 FIFO 라 마커 작업 완료가 곧 앞선 작업 전부의 완료다.
+     * 만에 하나 두 번째 워커가 떠 있는 경우까지 닫기 위해 active/queue 소진도 함께 본다.
+     */
+    private void drainOntologyTasks(String label) {
+        if (!(ontologyActivationExecutor instanceof ThreadPoolTaskExecutor taskExecutor)) {
+            throw new AssertionError("ontologyActivationExecutor 타입이 바뀌었다 — 배수 전략을 다시 확인하라: "
+                    + ontologyActivationExecutor.getClass());
+        }
+        try {
+            taskExecutor.submit(() -> { }).get(5, TimeUnit.SECONDS);
+            ThreadPoolExecutor pool = taskExecutor.getThreadPoolExecutor();
+            long deadlineMs = System.currentTimeMillis() + 5_000;
+            while (pool.getActiveCount() > 0 || !pool.getQueue().isEmpty()) {
+                if (System.currentTimeMillis() > deadlineMs) {
+                    throw new AssertionError(
+                            "[%s] 온톨로지 비동기 작업이 제한 시간 내에 끝나지 않았다".formatted(label));
+                }
+                Thread.sleep(20);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("[%s] 온톨로지 배수 대기가 중단됐다".formatted(label), e);
+        } catch (Exception e) {
+            throw new AssertionError("[%s] 온톨로지 배수에 실패했다".formatted(label), e);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
