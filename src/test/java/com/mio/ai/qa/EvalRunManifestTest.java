@@ -31,9 +31,6 @@ class EvalRunManifestTest {
         assertThatThrownBy(() -> manifestWith(m -> m.randomSeed = null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("random_seed");
-        assertThatThrownBy(() -> manifestWith(m -> m.datasetSplit = ""))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("dataset_split");
         assertThatThrownBy(() -> manifestWith(m -> m.pricingAsOf = null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("pricing_as_of");
@@ -107,6 +104,56 @@ class EvalRunManifestTest {
                 .containsEntry("elapsed", "8m 12s")
                 // 덮어쓰기 방지가 정상 값까지 잡아먹지 않는지 함께 본다.
                 .containsEntry("prompt_version", EvalRunManifest.UNVERSIONED);
+    }
+
+    /**
+     * 잠금 gold 세트의 값은 "튜닝에 노출된 적 없다" 는 사실 하나에서 나온다. 그 사실이 관례로만
+     * 지켜지면, 이미 튜닝에 쓴 데이터셋을 잠금이라고 적어도 아무도 이의를 제기하지 않는다.
+     */
+    @Test
+    @DisplayName("튜닝에 쓴 데이터셋은 잠금 gold 로 표기할 수 없다")
+    void tunedDatasetCannotClaimTheLockedSplit() {
+        assertThatThrownBy(() -> manifestWith(m -> {
+            m.datasetSplit = EvalRunManifest.DatasetSplit.LOCKED_GOLD;
+            m.tuningExposure = EvalRunManifest.TuningExposure.USED_FOR_TUNING;
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("locked_gold");
+    }
+
+    /** 노출 이력을 모르는 데이터셋도 잠금이 아니다 — 모른다는 것은 깨끗하다는 뜻이 아니다. */
+    @Test
+    @DisplayName("노출 이력이 확인되지 않은 데이터셋도 잠금 gold 가 아니다")
+    void unverifiedExposureCannotClaimTheLockedSplit() {
+        assertThatThrownBy(() -> manifestWith(m -> {
+            m.datasetSplit = EvalRunManifest.DatasetSplit.LOCKED_GOLD;
+            m.tuningExposure = EvalRunManifest.TuningExposure.UNVERIFIED;
+        }))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("locked_gold");
+    }
+
+    @Test
+    @DisplayName("튜닝 미노출을 진술하면 잠금 gold 로 기록할 수 있다")
+    void neverTunedDatasetMayClaimTheLockedSplit() {
+        Map<String, String> metadata = manifestWith(m -> {
+            m.datasetSplit = EvalRunManifest.DatasetSplit.LOCKED_GOLD;
+            m.tuningExposure = EvalRunManifest.TuningExposure.NEVER_USED;
+        }).toMetadata();
+
+        assertThat(metadata).containsEntry("dataset_split", "locked_gold");
+        assertThat(metadata.get("tuning_exposure")).contains("사용된 적 없음");
+    }
+
+    @Test
+    @DisplayName("split 과 튜닝 노출 진술이 없는 실행은 기록하지 않는다")
+    void missingSplitOrExposureIsRejected() {
+        assertThatThrownBy(() -> manifestWith(m -> m.datasetSplit = null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dataset_split");
+        assertThatThrownBy(() -> manifestWith(m -> m.tuningExposure = null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tuning_exposure");
     }
 
     /**
@@ -208,9 +255,9 @@ class EvalRunManifestTest {
         mutation.accept(draft);
         return new EvalRunManifest(
                 draft.scope, draft.cell, draft.datasetVersion, draft.datasetSplit, draft.datasetSize,
-                draft.labelGuide, draft.dataRights, draft.models, draft.promptVersion,
-                draft.policyVersion, draft.pricingAsOf, draft.randomSeed, draft.command,
-                draft.gates, draft.extra);
+                draft.labelGuide, draft.dataRights, draft.tuningExposure, draft.models,
+                draft.promptVersion, draft.policyVersion, draft.pricingAsOf, draft.randomSeed,
+                draft.command, draft.gates, draft.extra);
     }
 
     private Map<String, String> mapWithNullValue(String key) {
@@ -229,10 +276,12 @@ class EvalRunManifestTest {
         String scope = "full path";
         String cell = EvalRunManifest.BASELINE_CELL;
         String datasetVersion = "crisis-corpus-v1";
-        String datasetSplit = "dev_gold";
+        EvalRunManifest.DatasetSplit datasetSplit = EvalRunManifest.DatasetSplit.DEV_GOLD;
         int datasetSize = 172;
         String labelGuide = "docs/eval/crisis-corpus-labeling-guide.md";
         EvalRunManifest.DataRights dataRights = EvalRunManifest.DataRights.PRIORITY_USE;
+        EvalRunManifest.TuningExposure tuningExposure =
+                EvalRunManifest.TuningExposure.USED_FOR_TUNING;
         Map<String, String> models = Map.of("input_judge", "gpt-4o-mini");
         String promptVersion = EvalRunManifest.UNVERSIONED;
         String policyVersion = "v2.0-phase2";

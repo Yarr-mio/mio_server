@@ -393,12 +393,13 @@ class CrisisDetectionCorpusQaTest {
                 CrisisCorpus.VERSION,
                 // 이 172건은 이미 룰·프롬프트 튜닝에 쓰였다. 잠금 세트로 승격할 수 없다
                 // (로드맵 §6.4 — 잠금 gold 는 튜닝에 노출되지 않은 것만).
-                "dev_gold",
+                EvalRunManifest.DatasetSplit.DEV_GOLD,
                 CrisisCorpus.PROBES.size(),
                 "docs/eval/crisis-corpus-labeling-guide.md",
                 // 코퍼스 172건은 전부 저장소 안에서 직접 작성한 문장이다 (CrisisCorpus.java).
                 // 외부 라이선스가 얽히지 않으므로 §6.3 판정은 "우선 사용" 이다.
                 EvalRunManifest.DataRights.PRIORITY_USE,
+                EvalRunManifest.TuningExposure.USED_FOR_TUNING,
                 Map.of("input_judge", EvalRunManifest.NOT_CALLED),
                 EvalRunManifest.UNVERSIONED,
                 policyVersion,

@@ -26,10 +26,11 @@ record EvalRunManifest(
         String scope,
         String cell,
         String datasetVersion,
-        String datasetSplit,
+        DatasetSplit datasetSplit,
         int datasetSize,
         String labelGuide,
         DataRights dataRights,
+        TuningExposure tuningExposure,
         Map<String, String> models,
         String promptVersion,
         String policyVersion,
@@ -57,6 +58,65 @@ record EvalRunManifest(
 
     /** 모델을 한 건도 호출하지 않는 실행(룰 레이어 단독)에서 역할 값으로 쓴다. */
     static final String NOT_CALLED = "n/a (미호출)";
+
+    /**
+     * 평가셋의 성격 (로드맵 §6.4).
+     *
+     * <p>평문 문자열이면 오타가 곧 새 split 이 되어 셀 비교의 분모가 흔들린다. 값이 닫혀 있어야
+     * "같은 split 을 돌렸는가" 를 기계적으로 물을 수 있다.
+     */
+    enum DatasetSplit {
+        /** 튜닝에 한 번도 노출되지 않은 잠금 gold. Go/No-Go 판정의 기준셋이다. */
+        LOCKED_GOLD("locked_gold"),
+        /** 튜닝·회귀에 이미 쓰인 개발용 gold. 개선 방향은 볼 수 있지만 최종 판정에는 못 쓴다. */
+        DEV_GOLD("dev_gold"),
+        /** 상위 모델(teacher)이 라벨을 붙인 대량 silver. */
+        TEACHER_SILVER("teacher_silver"),
+        /** 우회·공격 패턴을 합성한 적대적 세트. */
+        ADVERSARIAL_SYNTHETIC("adversarial_synthetic");
+
+        private final String value;
+
+        DatasetSplit(String value) {
+            this.value = value;
+        }
+
+        String value() {
+            return value;
+        }
+    }
+
+    /**
+     * 이 평가셋이 튜닝에 노출된 적 있는지에 대한 진술 (로드맵 §6.4).
+     *
+     * <p>잠금 gold 의 값은 "튜닝에 노출된 적 없다" 는 사실 하나에서 나온다. 그 사실을 관례로만
+     * 지키면, 이미 룰·프롬프트 튜닝에 쓴 데이터셋을 {@code locked_gold} 로 적어도 아무것도
+     * 막지 않는다 — 오염된 세트로 낸 수치는 성능이 아니라 암기 결과인데, 기록만 보고는 둘을
+     * 구별할 수 없다.
+     *
+     * <p><b>설계 선택</b>: 별도 레지스트리 조회 대신 <b>필수 동반 필드</b>로 둔다. 레지스트리는
+     * 그 자체가 최신인지 다시 확인해야 하는 또 하나의 상태이고, 잠금셋이 아직 만들어지지 않은
+     * 지금은 유지 비용만 남는다. 필수 필드는 잠금이라고 적는 사람이 같은 커밋에서 노출 이력을
+     * 명시적으로 진술하게 만들고, 진술이 없으면 manifest 자체가 만들어지지 않는다.
+     */
+    enum TuningExposure {
+        /** 룰·프롬프트 튜닝, few-shot 예시 어디에도 쓰인 적 없음. 잠금 표기의 전제. */
+        NEVER_USED("튜닝·프롬프트 피팅·few-shot 에 사용된 적 없음"),
+        /** 하네스 수치·프롬프트 튜닝에 이미 쓰임. */
+        USED_FOR_TUNING("룰·프롬프트 튜닝에 사용됨"),
+        /** 노출 이력을 확인하지 못함. 모른다는 것은 깨끗하다는 뜻이 아니다. */
+        UNVERIFIED("튜닝 노출 이력 미확인");
+
+        private final String attestation;
+
+        TuningExposure(String attestation) {
+            this.attestation = attestation;
+        }
+
+        String attestation() {
+            return attestation;
+        }
+    }
 
     /**
      * 평가에 쓴 데이터셋의 권리 판정 (로드맵 §6.3 / 이슈 #454 "데이터 권리 게이트 통과 기록").
@@ -96,7 +156,7 @@ record EvalRunManifest(
     private static final Set<String> RESERVED_KEYS = Set.of(
             "run_at", "code_commit",
             "scope", "cell", "dataset", "dataset_split", "dataset_size", "label_guide",
-            "data_rights",
+            "data_rights", "tuning_exposure",
             "prompt_version", "policy_version", "pricing_as_of", "random_seed", "command");
 
     /** 역할·게이트가 늘어나면 키도 늘어나므로 이름이 아니라 네임스페이스 단위로 예약한다. */
@@ -106,13 +166,25 @@ record EvalRunManifest(
         requireText("scope", scope);
         requireText("cell", cell);
         requireText("dataset_version", datasetVersion);
-        requireText("dataset_split", datasetSplit);
         requireText("label_guide", labelGuide);
         requireText("prompt_version", promptVersion);
         requireText("policy_version", policyVersion);
         requireText("pricing_as_of", pricingAsOf);
         requireText("random_seed", randomSeed);
         requireText("command", command);
+        if (datasetSplit == null) {
+            throw new IllegalArgumentException(
+                    "dataset_split 이 비었다 — 어떤 성격의 평가셋인지 모르는 수치는 셀 비교에 쓸 수 없다");
+        }
+        if (tuningExposure == null) {
+            throw new IllegalArgumentException(
+                    "tuning_exposure 가 비었다 — 튜닝 노출 이력이 없는 기록은 잠금 여부를 확인할 수 없다");
+        }
+        if (datasetSplit == DatasetSplit.LOCKED_GOLD && tuningExposure != TuningExposure.NEVER_USED) {
+            throw new IllegalArgumentException(
+                    "locked_gold 인데 튜닝 미노출 진술이 없다 (" + tuningExposure.attestation() + ") — "
+                            + "튜닝에 노출된 세트의 수치는 성능이 아니라 암기 결과다");
+        }
         if (dataRights == null) {
             throw new IllegalArgumentException(
                     "data_rights 가 비었다 — 권리 판정이 없는 데이터로 낸 수치는 확인된 수치와 구별할 수 없다");
@@ -164,10 +236,11 @@ record EvalRunManifest(
         metadata.put("scope", scope);
         metadata.put("cell", cell);
         metadata.put("dataset", datasetVersion);
-        metadata.put("dataset_split", datasetSplit);
+        metadata.put("dataset_split", datasetSplit.value());
         metadata.put("dataset_size", String.valueOf(datasetSize));
         metadata.put("label_guide", labelGuide);
         metadata.put("data_rights", dataRights.judgement());
+        metadata.put("tuning_exposure", tuningExposure.attestation());
         // 역할이 늘어도 행 순서가 흔들리지 않게 정렬해서 싣는다.
         new TreeMap<>(models).forEach((role, id) -> metadata.put("model." + role, id));
         metadata.put("prompt_version", promptVersion);

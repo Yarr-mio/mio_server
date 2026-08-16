@@ -47,6 +47,7 @@ class EvalRunArchiveTest {
                 .contains("| `scope` | rule+routing |")
                 .contains("| `dataset_split` | dev_gold |")
                 .contains("| `data_rights` | 우선 사용 (로드맵 §6.3 판정) |")
+                .contains("| `tuning_exposure` | 룰·프롬프트 튜닝에 사용됨 |")
                 .contains("| `model.input_judge` | gpt-4o-mini |")
                 .contains("| `prompt_version` | " + EvalRunManifest.UNVERSIONED + " |")
                 .contains("| `pricing_as_of` | " + EvalRunManifest.PRICING_DATE_UNRECORDED + " |")
@@ -82,10 +83,11 @@ class EvalRunArchiveTest {
                 "rule+routing",
                 EvalRunManifest.BASELINE_CELL,
                 "crisis-corpus-v1",
-                "dev_gold",
+                EvalRunManifest.DatasetSplit.DEV_GOLD,
                 172,
                 "docs/eval/crisis-corpus-labeling-guide.md",
                 EvalRunManifest.DataRights.PRIORITY_USE,
+                EvalRunManifest.TuningExposure.USED_FOR_TUNING,
                 Map.of("input_judge", "gpt-4o-mini"),
                 EvalRunManifest.UNVERSIONED,
                 "v2.0-phase2",
