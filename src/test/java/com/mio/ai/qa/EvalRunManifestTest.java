@@ -50,6 +50,65 @@ class EvalRunManifestTest {
                 .hasMessageContaining("models.judge");
     }
 
+    /**
+     * 값만 검사하면 역할 이름이 빈 항목이 {@code "model."} 이라는 이름 없는 행으로 기록된다.
+     * 어떤 역할이 그 모델을 썼는지 모르는 행은 셀 비교에 쓸 수 없다.
+     */
+    @Test
+    @DisplayName("모델 역할 이름이 비어도 기록하지 않는다")
+    void blankModelRoleIsRejected() {
+        assertThatThrownBy(() -> manifestWith(m -> m.models = Map.of(" ", "gpt-4o-mini")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models");
+        assertThatThrownBy(() -> manifestWith(m -> m.models = mapWithNullKey("gpt-4o-mini")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("models");
+    }
+
+    /**
+     * 생성자가 검증한 값이 {@code extra} 의 동명 키로 덮이면, 검증을 통과한 manifest 와 디스크에
+     * 남은 기록이 서로 다른 값을 말하게 된다. 그 순간 "출처를 강제한다" 는 전제가 무너지므로
+     * 기록 시점이 아니라 생성 시점에 막는다 — 어긋난 manifest 는 아예 만들어지지 않아야 한다.
+     */
+    @Test
+    @DisplayName("extra 는 manifest 가 직접 기록하는 항목을 덮어쓸 수 없다")
+    void extraCannotShadowValidatedFields() {
+        assertThatThrownBy(() -> manifestWith(m -> m.extra = Map.of("prompt_version", "v3")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("prompt_version");
+        assertThatThrownBy(() -> manifestWith(m -> m.extra = Map.of("command", "./gradlew 다른것")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("command");
+        assertThatThrownBy(() -> manifestWith(m -> m.extra = Map.of("dataset_split", "locked_gold")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("dataset_split");
+    }
+
+    @Test
+    @DisplayName("extra 는 gate_·model. 네임스페이스도 침범할 수 없다")
+    void extraCannotShadowNamespacedFields() {
+        assertThatThrownBy(() -> manifestWith(
+                m -> m.extra = Map.of("gate_final_false_negative", "<= 999건")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("gate_final_false_negative");
+        assertThatThrownBy(() -> manifestWith(m -> m.extra = Map.of("model.input_judge", "gpt-4o")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model.input_judge");
+    }
+
+    @Test
+    @DisplayName("예약 키와 겹치지 않는 부가 정보는 그대로 기록에 실린다")
+    void nonCollidingExtraIsRecorded() {
+        Map<String, String> metadata = manifestWith(
+                m -> m.extra = Map.of("judge_calls", "112", "elapsed", "8m 12s")).toMetadata();
+
+        assertThat(metadata)
+                .containsEntry("judge_calls", "112")
+                .containsEntry("elapsed", "8m 12s")
+                // 덮어쓰기 방지가 정상 값까지 잡아먹지 않는지 함께 본다.
+                .containsEntry("prompt_version", EvalRunManifest.UNVERSIONED);
+    }
+
     @Test
     @DisplayName("빈 평가셋의 실행 기록은 남기지 않는다")
     void emptyDatasetIsRejected() {
@@ -123,6 +182,12 @@ class EvalRunManifestTest {
     private Map<String, String> mapWithNullValue(String key) {
         Map<String, String> map = new LinkedHashMap<>();
         map.put(key, null);
+        return map;
+    }
+
+    private Map<String, String> mapWithNullKey(String value) {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put(null, value);
         return map;
     }
 

@@ -1,7 +1,9 @@
 package com.mio.ai.qa;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -55,6 +57,20 @@ record EvalRunManifest(
     /** 모델을 한 건도 호출하지 않는 실행(룰 레이어 단독)에서 역할 값으로 쓴다. */
     static final String NOT_CALLED = "n/a (미호출)";
 
+    /**
+     * manifest 가 직접 기록하는 항목 이름. {@code extra} 가 이 이름을 쓰면 생성 자체를 막는다.
+     *
+     * <p>{@code run_at}·{@code code_commit} 은 {@link EvalRunArchive} 가 헤더에 먼저 넣는
+     * 값이라 여기 함께 둔다 — 실행 시각과 코드 리비전이 덮이면 기록의 의미가 통째로 사라진다.
+     */
+    private static final Set<String> RESERVED_KEYS = Set.of(
+            "run_at", "code_commit",
+            "scope", "cell", "dataset", "dataset_split", "dataset_size", "label_guide",
+            "prompt_version", "policy_version", "pricing_as_of", "random_seed", "command");
+
+    /** 역할·게이트가 늘어나면 키도 늘어나므로 이름이 아니라 네임스페이스 단위로 예약한다. */
+    private static final List<String> RESERVED_PREFIXES = List.of("model.", "gate_");
+
     EvalRunManifest {
         requireText("scope", scope);
         requireText("cell", cell);
@@ -73,7 +89,22 @@ record EvalRunManifest(
             throw new IllegalArgumentException(
                     "models 가 비었다 — 어떤 모델이 낸 수치인지 모르는 실행은 셀 비교에 쓸 수 없다");
         }
-        models.forEach((role, id) -> requireText("models." + role, id));
+        models.forEach((role, id) -> {
+            // 역할 이름이 비면 "model." 이라는 이름 없는 행이 남는다 — 누가 낸 수치인지 모르는
+            // 행은 없느니만 못하므로 값과 같은 기준으로 막는다.
+            requireText("models 의 역할 이름", role);
+            requireText("models." + role, id);
+        });
+        // extra 는 자유 영역이지만, 자유가 검증된 항목을 덮는 데까지 미치면 manifest 와 기록물이
+        // 다른 값을 말하게 된다. 기록 시점이 아니라 생성 시점에 막아 어긋난 manifest 자체를
+        // 만들 수 없게 한다 — 이 타입의 다른 검증과 같은 fail-closed 원칙이다.
+        if (extra != null) {
+            extra.forEach((key, value) -> {
+                requireText("extra 의 키", key);
+                requireText("extra." + key, value);
+                requireNotReserved(key);
+            });
+        }
         // 방어적 복사: 호출부가 나중에 맵을 바꿔도 기록된 manifest 는 변하지 않는다.
         models = Map.copyOf(models);
         gates = gates == null ? Map.of() : Map.copyOf(gates);
@@ -102,6 +133,7 @@ record EvalRunManifest(
         metadata.put("pricing_as_of", pricingAsOf);
         metadata.put("random_seed", randomSeed);
         new TreeMap<>(gates).forEach((name, value) -> metadata.put("gate_" + name, value));
+        // 예약 키는 생성자가 이미 막았으므로 여기서 기존 항목이 덮일 일은 없다.
         metadata.putAll(new TreeMap<>(extra));
         metadata.put("command", command);
         return metadata;
@@ -111,6 +143,16 @@ record EvalRunManifest(
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(
                     field + " 가 비었다 — 출처를 복원할 수 없는 실행 기록은 남기지 않는다");
+        }
+    }
+
+    private static void requireNotReserved(String key) {
+        boolean reserved = RESERVED_KEYS.contains(key)
+                || RESERVED_PREFIXES.stream().anyMatch(key::startsWith);
+        if (reserved) {
+            throw new IllegalArgumentException(
+                    "extra 의 키 '" + key + "' 는 manifest 가 직접 기록하는 예약 항목이다 — "
+                            + "검증된 출처가 조용히 덮인 기록은 남기지 않는다");
         }
     }
 }
