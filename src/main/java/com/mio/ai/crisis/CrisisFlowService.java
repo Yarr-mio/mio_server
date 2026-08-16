@@ -46,21 +46,6 @@ public class CrisisFlowService {
             "구체적인 방법은 알려드릴 수 없어요. 그렇지만 그런 걸 찾아보게 될 만큼 지금 많이 힘드신 것 같아요. "
                     + "그 마음을 혼자 감당하지 않으셔도 돼요. 지금 바로 전문가와 이야기할 수 있는 곳을 알려드릴게요.";
 
-    public CrisisHandleResult handle(
-            SafetyL1Result l1Result,
-            CrisisTrigger trigger,
-            String originalMessage,
-            User user,
-            Session session,
-            SseEmitter emitter,
-            String outboundMsgId,
-            Integer emotionScore) {
-
-        return handleWithFixedResponse(
-                l1Result, trigger, originalMessage, user, session, emitter,
-                outboundMsgId, emotionScore, null);
-    }
-
     /**
      * 오케스트레이터가 상태 머신의 첫 질문을 합성한 경우 그 응답을 그대로 전달·기록한다.
      * {@code fixedResponseOverride}가 없으면 기존 고정 응답을 사용한다.
