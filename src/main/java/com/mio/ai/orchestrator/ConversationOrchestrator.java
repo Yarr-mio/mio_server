@@ -37,6 +37,8 @@ import com.mio.ai.profile.SafetyProfileBuilder.ProfileResult;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.delivery.ApprovedUnitBuffer;
 import com.mio.ai.delivery.HoldbackDelivery;
+import com.mio.ai.delivery.SafePrefixCatalog;
+import com.mio.ai.delivery.SafePrefixDelivery;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponseContractValidator;
@@ -109,6 +111,7 @@ public class ConversationOrchestrator {
     private final SafetyProfileBuilder safetyProfileBuilder;
     private final InputJudge inputJudge;
     private final ResponsePlanner responsePlanner;
+    private final SafePrefixDelivery safePrefixDelivery;
     private final ResponseContractValidator responseContractValidator;
     private final CbtMetadataClassifier cbtMetadataClassifier;
     private final OutputPreFilter outputPreFilter;
@@ -291,6 +294,25 @@ public class ConversationOrchestrator {
             // 6b. 응답 계약 확정 (이슈 #303). 결정론적이며 LLM 을 호출하지 않는다.
             // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
             decision = decision.withResponsePlan(responsePlanner.plan(decision));
+
+            // 사용자가 무언가를 보기까지 (P0-4). 아래 첫 승인 콘텐츠 지연과는 safe prefix 가
+            // 나간 턴에서만 갈라진다 — prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠다.
+            AtomicLong firstRenderedTokenMs = new AtomicLong(-1);
+
+            // 6c. 검토된 safe prefix 를 생성보다 먼저 전달한다 (P0-4, 로드맵 §5.6). 서버가 사전에
+            // 검토한 고정 문구라 모델 출력과 같은 검사 경로를 타지 않는다 — 안전한 이유가
+            // "검사를 통과해서"가 아니라 "모델이 쓰지 않아서"다.
+            //
+            // 문장 상한은 **전달에 성공한 뒤에만** 줄인다. 선택 시점에 줄이면 전송이 실패한 턴
+            // (연결 끊김 등)에서 사용자는 보상 문장 없이 한 문장 짧은 응답을 받는다. 프롬프트
+            // 지시와 계약 상한이 같은 조건을 보도록 이 한 값에서 갈라져 나간다.
+            String deliveredPrefix = safePrefixDelivery.deliverFor(
+                    decision, event -> sendEvent(emitter, event), outboundMsgId,
+                    firstRenderedTokenMs, startMs);
+            if (deliveredPrefix != null) {
+                decision = decision.withResponsePlan(
+                        decision.responsePlan().reservingSentences(SafePrefixCatalog.RESERVED_SENTENCES));
+            }
             ResponsePlan responsePlan = decision.responsePlan();
 
             // 현재 컨텍스트가 확정된 뒤, 안전한 생성 턴의 다음 턴 맥락만 비동기 활성화한다.
@@ -363,7 +385,8 @@ public class ConversationOrchestrator {
                 // GENERATE: build prompt with GenerationMode instruction
                 String systemPrompt = promptBuilder.buildSystemPrompt(
                         decision.generationMode(), decision.interventionHints(), memoryContext,
-                        session.getCharacterId(), checkpointSummary, responsePlan);
+                        session.getCharacterId(), checkpointSummary, responsePlan,
+                        deliveredPrefix != null);
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
@@ -395,7 +418,7 @@ public class ConversationOrchestrator {
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
                                     finishedReasonRef, crisisSeverityRef, turn, turnPersisted,
-                                    firstSubstantiveTokenMs, startMs);
+                                    firstSubstantiveTokenMs, startMs, deliveredPrefix);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 crisisContextRef.set(true);
@@ -537,6 +560,12 @@ public class ConversationOrchestrator {
                             persistTurnOutcome(turn, turnPersisted, assistantContent, true,
                                     "crisis_flow", preview.severity());
 
+                            // 이미 렌더된 서버 문구를 지우고 위기 안내를 보낸다. 이 분기는 조기
+                            // 중단 경로와 스트림 종료 후 경로가 함께 들어온다 — 둘 다 여기서
+                            // 지워진다.
+                            safePrefixDelivery.clearRendered(
+                                    deliveredPrefix, event -> sendEvent(emitter, event), outboundMsgId);
+
                             CrisisFlowService.CrisisHandleResult crisisResult =
                                     crisisFlowService.handleWithFixedResponse(
                                             l1Result, CrisisTrigger.OUTPUT_GUARD, userMessage,
@@ -565,8 +594,14 @@ public class ConversationOrchestrator {
                             } else if (stopSendingDeltas.get()) {
                                 // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
                                 // not trailing tokens that arrived after the early stop
-                                String reviewedContent = capturedSnapshotRef.get() != null
-                                        ? capturedSnapshotRef.get() : assistantContent;
+                                //
+                                // delta.replace 는 메시지 전체를 갈아끼운다. 서버가 먼저 보낸
+                                // 문장도 이 메시지의 일부이므로 함께 실어야 화면에서 사라지지
+                                // 않는다. 판정이 교체한 응답(위 분기)과는 다르다 — 그쪽은
+                                // 앞선 텍스트를 남기지 않는 것이 목적이다.
+                                String reviewedContent = safePrefixDelivery.withPrefix(deliveredPrefix,
+                                        capturedSnapshotRef.get() != null
+                                                ? capturedSnapshotRef.get() : assistantContent);
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, reviewedContent);
@@ -574,12 +609,16 @@ public class ConversationOrchestrator {
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
+                                assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             }
                         }
                     } else {
+                        // 서버가 먼저 보낸 문장도 이 턴의 응답이다. 저장하지 않으면 재생·요약·
+                        // 워킹 메모리가 사용자가 실제로 읽은 것과 달라진다.
+                        assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
                         sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
@@ -628,12 +667,15 @@ public class ConversationOrchestrator {
 
             // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
+            long firstRenderedMs = safePrefixDelivery.firstRenderedMs(
+                    firstRenderedTokenMs.get(), firstSubstantiveTokenMs.get());
             aiTurnMetrics.recordCompleted(
                     decision,
                     contractResult,
                     totalMs,
                     llmTtftMs,
                     firstSubstantiveTokenMs.get(),
+                    firstRenderedMs,
                     heldBackChars,
                     resolveFinishedReason(finishedReasonRef));
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
@@ -641,7 +683,8 @@ public class ConversationOrchestrator {
                     inputJudgeCalled, preFilterResult, judgeActionResult,
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs.get(), heldBackChars, liveMemoryResult);
+                    firstSubstantiveTokenMs.get(), firstRenderedMs,
+                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult);
 
             emitter.complete();
 
@@ -911,7 +954,8 @@ public class ConversationOrchestrator {
             MessageTurn turn,
             AtomicBoolean turnPersisted,
             AtomicLong firstSubstantiveTokenMs,
-            long pipelineStartedAtMs) throws IOException {
+            long pipelineStartedAtMs,
+            String deliveredPrefix) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
@@ -924,6 +968,12 @@ public class ConversationOrchestrator {
                         session.getId(), user.getId());
                 persistTurnOutcome(turn, turnPersisted, preview.fixedResponse(), true,
                         "crisis_flow", preview.severity());
+
+                // 이 경로의 전달 방식(BUFFER)은 현재 prefix 대상이 아니지만, 위기 안내 앞을
+                // 지우는 책임은 위기를 보내는 모든 지점에 있어야 한다. 대상 조건이 넓어질 때
+                // 이 분기만 조용히 빠지는 것이 정확히 이 리뷰가 잡은 실패 형태다.
+                safePrefixDelivery.clearRendered(
+                        deliveredPrefix, event -> sendEvent(emitter, event), outboundMsgId);
 
                 CrisisFlowService.CrisisHandleResult cr =
                         crisisFlowService.handleWithFixedResponse(

@@ -470,6 +470,8 @@ class AiDecisionLoggerTest {
                 null,
                 ResponseContractResult.notApplicable(),
                 -1,
+                -1,
+                false,
                 0,
                 memoryResult
         );

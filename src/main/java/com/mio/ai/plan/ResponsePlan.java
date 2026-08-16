@@ -48,6 +48,22 @@ public record ResponsePlan(
         return new ResponsePlan(responseAct, GenerationFreedom.TEMPLATE_ONLY, 0, 0, BASE_FORBIDDEN);
     }
 
+    /**
+     * 서버가 문장 일부를 먼저 전달한 계획 (P0-4, 로드맵 §5.6).
+     *
+     * <p>safe prefix 는 사용자에게 보이는 응답의 일부다. 상한을 그대로 두면 사용자가 읽는
+     * 문장 수가 계약보다 하나 많아진다 — 계약이 정한 것은 "모델이 쓴 문장 수"가 아니라
+     * "이 턴에 나가는 문장 수"이기 때문이다. 상한은 줄이기만 한다. 계획은 위험 등급도,
+     * 그에 따른 제약도 완화할 수 없다.
+     */
+    public ResponsePlan reservingSentences(int reserved) {
+        if (reserved <= 0 || maxSentences == Integer.MAX_VALUE) {
+            return this;
+        }
+        return new ResponsePlan(responseAct, generationFreedom, maxQuestions,
+                Math.max(1, maxSentences - reserved), forbiddenElements);
+    }
+
     /** 계약 검사를 적용할 수 있는 계획인지. */
     public boolean isContractEnforced() {
         return generationFreedom == GenerationFreedom.CONSTRAINED
