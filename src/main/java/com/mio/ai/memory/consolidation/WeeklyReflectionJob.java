@@ -55,6 +55,7 @@ public class WeeklyReflectionJob {
     private final LlmClient llmClient;
     private final UserSelfModelRepository selfModelRepository;
     private final ObjectMapper objectMapper;
+    private final MemoryConsentChecker memoryConsentChecker;
 
     @Scheduled(cron = "0 0 0 * * SUN", zone = "Asia/Seoul")
     public void run() {
@@ -76,6 +77,14 @@ public class WeeklyReflectionJob {
     }
 
     private void processUser(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
+        // 메모리 동의 철회 게이트 (이슈 #453). 대상 선정은 sessions 만 보므로 철회한
+        // 사용자도 들어온다 — 여기서 막지 않으면 그 사용자의 집계가 외부 LLM 으로 나가고
+        // user_self_model·weekly_reports 에 새 파생 장기 상태가 쌓인다. 집계 전에 끊는다.
+        if (!memoryConsentChecker.isRetentionAllowed(userId)) {
+            log.info("[WeeklyReflectionJob] memory consent withdrawn, skipping userId={}", userId);
+            return;
+        }
+
         // 집계 (읽기 전용, 트랜잭션 불필요)
         Map<String, Double> effectiveMap = aggregateEffectiveInterventions(userId, weekStart);
         List<String> recurringTriggers = aggregateRecurringTriggers(userId, weekStart);
@@ -133,14 +142,21 @@ public class WeeklyReflectionJob {
         return result;
     }
 
-    private List<String> aggregateRecurringTriggers(UUID userId, LocalDate weekStart) {
+    // package-private: memory_status 필터 회귀를 실 DB 로 검증하려면 집계만 따로 불러야 한다.
+    List<String> aggregateRecurringTriggers(UUID userId, LocalDate weekStart) {
         try {
+            // memory_status 필터는 검색기 4곳과 같은 이유로 여기에도 필요하다 (이슈 #453 리뷰).
+            // 주간 회고는 로그가 아니라 weekly_reports.narrative 로 사용자에게 그대로 노출되는
+            // 산출물이라, 사용자가 정정·비활성화한 요약의 트리거 태그가 여기로 새면
+            // "서버가 나를 어떻게 기억하는지 통제한다"는 약속이 깨진다. processUser 의 동의
+            // 게이트는 전체 철회만 막으므로 개별 기억 단위는 이 조건이 담당한다.
             return jdbcTemplate.query("""
                     SELECT t AS trigger, COUNT(*) AS cnt
                     FROM session_summaries ss,
                          UNNEST(ss.trigger_tags) t
                     WHERE ss.user_id = ?
                       AND (ss.created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND ss.memory_status = 'active'
                     GROUP BY t ORDER BY cnt DESC LIMIT 5
                     """,
                     (rs, i) -> rs.getString("trigger"),

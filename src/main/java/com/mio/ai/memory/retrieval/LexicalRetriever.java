@@ -30,6 +30,7 @@ public class LexicalRetriever {
                                plainto_tsquery('simple', ?)) AS score
                 FROM session_summaries ss
                 WHERE ss.user_id = ?
+                  AND ss.memory_status = 'active'
                   AND to_tsvector('simple', ss.summary_text)
                       @@ plainto_tsquery('simple', ?)
                 ORDER BY score DESC

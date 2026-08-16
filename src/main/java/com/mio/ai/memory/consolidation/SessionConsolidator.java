@@ -21,6 +21,7 @@ import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -103,6 +104,8 @@ public class SessionConsolidator {
     private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
     private final SummaryStageMetrics stageMetrics;
+    private final MemoryConsentChecker memoryConsentChecker;
+    private final MeterRegistry meterRegistry;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -123,6 +126,24 @@ public class SessionConsolidator {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
+
+        // 메모리 동의 철회 게이트 (이슈 #453). LLM 을 부르기 전에 막아야 한다 —
+        // 요약을 만들고 버리는 것은 게이트가 아니라, 대화 원문이 이미 외부로 나간 뒤다.
+        //
+        // 상태는 세션 수준 failed 로 종결한다 (이슈 #356 의 pending 고착 방지).
+        // 컴포넌트 상태 모델(#426)의 skipped 는 session_summaries 행에 붙는 파생 작업
+        // 상태라서 여기서는 쓸 수 없다 — 동의 철회는 요약 행 자체를 만들지 않는다.
+        // 세션 수준 SummaryStatus 에는 skipped 가 없고, failed 는 "요약이 오지 않는다" 는
+        // 기존 terminal(메시지 0건 세션과 동일) 이므로 그대로 쓴다. 대신 동의 기인 스킵을
+        // 실제 실패와 구분할 수 있게 별도 카운터로 남긴다 — 없으면 failed 비율 분석이
+        // 철회 사용자 수에 오염된다.
+        if (!memoryConsentChecker.isRetentionAllowed(event.userId())) {
+            log.info("SessionConsolidator: memory consent withdrawn, skipping consolidation sessionId={}",
+                    event.sessionId());
+            markConsentSkip(event.sessionId(), "gate");
+            return;
+        }
+
         EnrichmentInput enrichInput;
         SummaryStageMetrics.StageSample coreReady = stageMetrics.start(SummaryStageMetrics.CORE_SUMMARY_READY);
         try {
@@ -238,6 +259,17 @@ public class SessionConsolidator {
     }
 
     /**
+     * 동의 기인 스킵을 종결한다: failed 확정 + 전용 카운터.
+     *
+     * <p>카운터(mio.summary.consent.skip)가 없으면 summary_status=failed 비율 분석이
+     * 철회 사용자 수에 오염된다 — 운영은 실패율에서 이 값을 빼고 본다.
+     */
+    private void markConsentSkip(UUID sessionId, String stage) {
+        meterRegistry.counter("mio.summary.consent.skip", "stage", stage).increment();
+        summaryStatusWriter.markFailed(sessionId);
+    }
+
+    /**
      * 1단계: 세션 요약을 생성·영속화한다(독립 트랜잭션).
      * 메모리 보강에 필요한 입력을 반환하며, 영속화할 요약이 없으면(세션/유저 부재·메시지 없음)
      * 상태를 변경하지 않고 null을 반환한다. (요약 row 없이 DONE으로 표시되어 조회 시 404가 나는 것을 방지)
@@ -309,6 +341,18 @@ public class SessionConsolidator {
                         .toList());
         boolean cbtIntervened = "cbt_success".equalsIgnoreCase(extracted.episodeType())
                 || "cbt_partial".equalsIgnoreCase(extracted.episodeType());
+
+        // 동의 재확인 (이슈 #453 리뷰, TOCTOU). onSessionEnded 진입 게이트 통과 후 이 지점까지
+        // 수 초의 LLM 호출이 끼어든다 — 그 사이 사용자가 동의를 철회하면, 철회의 일괄
+        // 비활성화(UPDATE ... WHERE memory_status='active')는 아직 커밋되지 않은 이 행을
+        // 보지 못하고, 이 행은 active 로 커밋되어 영구히 회수 가능해진다. 영속화 직전에
+        // 같은 트랜잭션 안에서 다시 확인하고, 철회됐으면 아무것도 저장하지 않는다.
+        if (!memoryConsentChecker.isRetentionAllowed(userId)) {
+            log.info("SessionConsolidator: consent withdrawn during consolidation, aborting persist sessionId={}",
+                    sessionId);
+            meterRegistry.counter("mio.summary.consent.skip", "stage", "persist_recheck").increment();
+            return null;
+        }
 
         upsertSessionSummary(session, user, characterId, summaryText, ciphertext, dekId,
                 dominantEmotion, extracted.triggerTags(), extracted.episodeType(),
