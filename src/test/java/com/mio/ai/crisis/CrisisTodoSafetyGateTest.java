@@ -12,6 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CrisisTodoSafetyGateTest {
@@ -35,6 +36,9 @@ class CrisisTodoSafetyGateTest {
 
         assertThat(decision.suppressTodo()).isTrue();
         assertThat(decision.reason()).isEqualTo("active_crisis_flow");
+        // 차단 결정이 감사 테이블에 실제로 저장됐는지까지 고정한다.
+        verify(jdbcTemplate).update(anyString(), eq(sessionId), eq(userId),
+                eq("suppressed"), eq("active_crisis_flow"));
     }
 
     @Test
