@@ -96,6 +96,52 @@ tasks.withType<Test> {
         systemProperty("mio.eval.archiveDir", it.toString())
     }
 
+    // ── A~E 셀 벤치마크 (이슈 #454, 로드맵 §11.3) ────────────────────
+    //
+    // 상위 모델 후보 ID 와 단가는 코드에 없다. 실행 직전에 여기로 핀한다 — 로드맵이
+    // "정확한 후보 ID 와 당시 단가는 각 벤치마크 실행의 registry 에 핀한다" 고 정했다.
+    //
+    //   ./gradlew test -PllmTests -Pcells=A,D -PsampleSize=20 \
+    //     -PcellModels="generation=<후보 ID>,escalation=<후보 ID>" \
+    //     -PcellPrices="<후보 ID>=5.0/2.5/20.0" -PpricingAsOf=2026-08-16
+    //
+    // 견적은 태그 없이 돌아간다: ./gradlew test --tests "com.mio.ai.qa.CellCostEstimateTest"
+    project.findProperty("cells")?.let { systemProperty("mio.eval.cells", it.toString()) }
+    project.findProperty("sampleSize")?.let { systemProperty("mio.eval.sampleSize", it.toString()) }
+    project.findProperty("pricingAsOf")?.let { systemProperty("mio.eval.pricingAsOf", it.toString()) }
+    project.findProperty("evalSeed")?.let { systemProperty("mio.eval.seed", it.toString()) }
+    project.findProperty("cellRegistry")?.let { systemProperty("mio.eval.registry", it.toString()) }
+
+    // "<역할>=<모델 ID>" 목록 → mio.eval.model.<역할>
+    project.findProperty("cellModels")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) { "cellModels 항목 형식이 잘못됐다: '$entry' — <역할>=<모델 ID> 여야 한다" }
+            systemProperty(
+                "mio.eval.model." + entry.substring(0, idx).trim().lowercase(),
+                entry.substring(idx + 1).trim()
+            )
+        }
+
+    // "<모델 ID>=<input>/<cachedInput>/<output>" 목록 → mio.eval.price.<모델 ID>
+    project.findProperty("cellPrices")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) {
+                "cellPrices 항목 형식이 잘못됐다: '$entry' — <모델 ID>=<input>/<cachedInput>/<output> 여야 한다"
+            }
+            systemProperty(
+                "mio.eval.price." + entry.substring(0, idx).trim(),
+                entry.substring(idx + 1).trim()
+            )
+        }
+
     val envFile = rootProject.file(".env")
     if (envFile.exists()) {
         envFile.forEachLine { line ->
