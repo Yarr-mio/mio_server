@@ -43,6 +43,9 @@ public class CrisisTodoSafetyGate {
             log.error("Crisis Todo safety evaluation failed; suppressing Todo sessionId={}",
                     sessionId, e);
             record(decision);
+            // 인프라 장애로 인한 fail-closed 차단 전용 카운터. 실제 위기 증거 차단과
+            // 분리해 집계해야 인프라 장애가 위기 지표 상승으로 위장되지 않는다.
+            meterRegistry.counter("mio.crisis.todo.safety.storage.failure").increment();
             try {
                 persist(userId, sessionId, decision);
             } catch (Exception persistError) {
