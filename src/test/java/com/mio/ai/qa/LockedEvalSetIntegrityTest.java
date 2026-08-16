@@ -7,10 +7,8 @@ import org.junit.jupiter.api.TestInstance;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.TreeMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -44,8 +42,7 @@ class LockedEvalSetIntegrityTest {
     /** 어느 하위 그룹도 이 비율을 넘지 않는다. */
     private static final double MAX_SUBGROUP_SHARE = 8.0;
 
-    private final Map<String, String> manifest = parseManifestScalars();
-    private final Map<String, String> manifestCaseHashes = parseManifestCaseHashes();
+    private final Map<String, String> manifest = LockedEvalManifest.scalars();
 
     // ── 잠금 ────────────────────────────────────────────────────────
 
@@ -62,21 +59,9 @@ class LockedEvalSetIntegrityTest {
     @Test
     @DisplayName("케이스별 해시가 매니페스트와 같다 — 무엇이 바뀌었는지까지 드러난다")
     void everyCaseHashMatchesManifest() {
-        List<String> changed = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-
-        for (LockedCase c : LockedEvalSet.CASES) {
-            seen.add(c.id());
-            String recorded = manifestCaseHashes.get(c.id());
-            if (recorded == null) {
-                changed.add("추가됨: " + c.id());
-            } else if (!recorded.equals(LockedEvalSet.caseSha256(c))) {
-                changed.add("변경됨: " + c.id());
-            }
-        }
-        manifestCaseHashes.keySet().stream()
-                .filter(id -> !seen.contains(id))
-                .forEach(id -> changed.add("삭제됨: " + id));
+        // 대조 로직 자체가 살아 있는지는 LockedEvalContaminationSelfTest 가 메모리에서 변조한
+        // 케이스를 같은 diff() 에 먹여 확인한다 — "차이 없음" 이 "비교를 안 함" 과 구분되도록.
+        List<String> changed = LockedEvalManifest.diff(LockedEvalSet.CASES);
 
         assertThat(changed)
                 .as("매니페스트와 다른 케이스:%n  %s", String.join("\n  ", changed))
@@ -366,31 +351,4 @@ class LockedEvalSetIntegrityTest {
         return counts;
     }
 
-    private static Map<String, String> parseManifestScalars() {
-        Map<String, String> out = new LinkedHashMap<>();
-        for (String line : LockedEvalSet.manifestText().lines().toList()) {
-            if (line.isBlank() || line.startsWith("#") || !line.contains("=")) {
-                continue;
-            }
-            String key = line.substring(0, line.indexOf('='));
-            if (key.equals("case") || key.equals("subgroup")) {
-                continue;
-            }
-            out.put(key, line.substring(line.indexOf('=') + 1).strip());
-        }
-        return out;
-    }
-
-    private static Map<String, String> parseManifestCaseHashes() {
-        Map<String, String> out = new LinkedHashMap<>();
-        for (String line : LockedEvalSet.manifestText().lines().toList()) {
-            if (!line.startsWith("case=")) {
-                continue;
-            }
-            String body = line.substring("case=".length()).strip();
-            int split = body.lastIndexOf(' ');
-            out.put(body.substring(0, split), body.substring(split + 1));
-        }
-        return out;
-    }
 }
