@@ -44,13 +44,18 @@ class CrisisTodoSafetyGateTest {
         UUID userId = UUID.randomUUID();
         UUID sessionId = UUID.randomUUID();
         when(store.find(sessionId)).thenThrow(new IllegalStateException("db down"));
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
 
         CrisisTodoSafetyGate gate = new CrisisTodoSafetyGate(
-                store, mock(JdbcTemplate.class), new SimpleMeterRegistry());
+                store, mock(JdbcTemplate.class), meterRegistry);
 
         CrisisTodoDecision decision = gate.evaluate(userId, sessionId);
 
         assertThat(decision.suppressTodo()).isTrue();
         assertThat(decision.reason()).isEqualTo("storage_failure");
+        // 인프라 장애로 인한 차단 전용 카운터. 실제 위기 증거로 인한 차단과 섞이면
+        // 인프라 장애가 위기 지표의 상승으로 위장된다.
+        assertThat(meterRegistry.find("mio.crisis.todo.safety.storage.failure")
+                .counter().count()).isEqualTo(1);
     }
 }
