@@ -76,7 +76,7 @@ class LockedEvalSetIntegrityTest {
                 .as("로드맵 §6.4 의 첫 목표 규모")
                 .isBetween(MIN_CASES, MAX_CASES);
         assertThat(manifest.get("version")).isEqualTo(LockedEvalSet.VERSION);
-        assertThat(manifest.get("canonical_algo")).isEqualTo("v1");
+        assertThat(manifest.get("canonical_algo")).isEqualTo("v2");
     }
 
     @Test

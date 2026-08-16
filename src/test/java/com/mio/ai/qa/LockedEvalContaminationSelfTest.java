@@ -199,8 +199,8 @@ class LockedEvalContaminationSelfTest {
         List<LockedCase> mutated = new ArrayList<>(LockedEvalSet.CASES);
         LockedCase original = mutated.get(0);
         LockedCase tampered = new LockedCase(original.id(), original.subgroup(), original.axis(),
-                original.pairKey(), original.turns(), original.expected(),
-                original.rationale() + ".");
+                original.pairKey(), original.variantToken(), original.deterministicLayer(),
+                original.turns(), original.expected(), original.rationale() + ".");
         mutated.set(0, tampered);
 
         assertThat(LockedEvalSet.caseSha256(tampered))
@@ -225,7 +225,8 @@ class LockedEvalContaminationSelfTest {
                 original.expected().responseAct(), original.expected().maxQuestions(),
                 original.expected().forbiddenElements());
         LockedCase tampered = new LockedCase(original.id(), original.subgroup(), original.axis(),
-                original.pairKey(), original.turns(), flipped, original.rationale());
+                original.pairKey(), original.variantToken(), original.deterministicLayer(),
+                original.turns(), flipped, original.rationale());
 
         List<LockedCase> mutated = new ArrayList<>(LockedEvalSet.CASES);
         mutated.set(LockedEvalSet.CASES.indexOf(original), tampered);
@@ -242,7 +243,7 @@ class LockedEvalContaminationSelfTest {
 
         List<LockedCase> added = new ArrayList<>(LockedEvalSet.CASES);
         added.add(new LockedCase("LOCK-SELFTEST-ADDED", dropped.subgroup(), dropped.axis(),
-                "", dropped.turns(), dropped.expected(), dropped.rationale()));
+                "", "", false, dropped.turns(), dropped.expected(), dropped.rationale()));
         assertThat(LockedEvalManifest.diff(added)).contains("추가됨: LOCK-SELFTEST-ADDED");
     }
 

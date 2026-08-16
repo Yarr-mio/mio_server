@@ -79,10 +79,16 @@ public final class LockedEvalSet {
     /**
      * 잠금 케이스 한 건.
      *
-     * @param pairKey 편향 축의 짝 식별자. 같은 짝의 변형들은 기대 판정이 같아야 한다.
-     *                편향 케이스가 아니면 빈 문자열이다
+     * @param pairKey            편향 축의 짝 식별자. 같은 짝의 변형들은 기대 판정이 같아야 하고
+     *                           본문은 {@code variantToken} 하나만 달라야 한다. 편향 케이스가
+     *                           아니면 빈 문자열이다
+     * @param variantToken       최소대립쌍에서 바뀌는 표지 토큰. 이 토큰을 지운 나머지가 같은
+     *                           짝끼리 글자까지 같아야 한다
+     * @param deterministicLayer 모델 호출 이전(InputNormalizer·SafetyL1)에 결정되는 케이스.
+     *                           전 셀이 같은 결과를 내므로 모델 변별 결과와 나눠 보고한다
      */
     public record LockedCase(String id, String subgroup, String axis, String pairKey,
+                             String variantToken, boolean deterministicLayer,
                              List<Turn> turns, Expected expected, String rationale) {
         public LockedCase {
             turns = List.copyOf(turns);
@@ -153,9 +159,44 @@ public final class LockedEvalSet {
         }
     }
 
+    /**
+     * 보고 하한 (로드맵 §11.3, 리뷰 H2).
+     *
+     * <p>하위 그룹 n 이 작으면 관측 가능한 비율이 몇 개 값으로 양자화된다. n=12 면 한 건이
+     * 뒤집힐 때 8.3%p 가 움직이므로 "셀 C 가 3인칭에서 나빠졌다" 같은 문장을 지지할 수 없다.
+     * 그런데 계산해 두면 결국 인용되므로, <b>산출 자체를 금지하는 값</b>으로 둔다. 실행
+     * 하네스는 이 값을 읽어 미달 그룹의 비율 필드를 비워야 한다.
+     */
+    public record Reporting(int minSubgroupN, String rule, String reportableUnit,
+                            String deterministicLayerNote) {
+
+        /** 이 그룹 크기로 비율을 보고해도 되는가. */
+        public boolean isReportable(long subgroupSize) {
+            return subgroupSize >= minSubgroupN;
+        }
+
+        public Map<String, String> asManifestFields() {
+            Map<String, String> fields = new LinkedHashMap<>();
+            fields.put("reporting_min_subgroup_n", String.valueOf(minSubgroupN));
+            fields.put("reporting_unit", reportableUnit);
+            return fields;
+        }
+    }
+
     public static final List<LockedCase> CASES = readCases();
     public static final DataRights DATA_RIGHTS = readDataRights();
     public static final LabelingStatus LABELING = readLabeling();
+    public static final Reporting REPORTING = readReporting();
+
+    /** 모델이 변별하는 케이스 — 결정론 계층이 이미 해결하는 케이스를 뺀 나머지. */
+    public static List<LockedCase> modelDiscriminatingCases() {
+        return CASES.stream().filter(c -> !c.deterministicLayer()).toList();
+    }
+
+    /** 모델 호출 이전에 결정되는 케이스. 전 셀이 같은 결과를 낸다. */
+    public static List<LockedCase> deterministicLayerCases() {
+        return CASES.stream().filter(LockedCase::deterministicLayer).toList();
+    }
 
     /** 하위 그룹별 의도한 케이스 수. 실제 분포와 일치하는지는 무결성 테스트가 검사한다. */
     public static final Map<String, Integer> INTENDED_DISTRIBUTION = readDistribution();
@@ -174,11 +215,16 @@ public final class LockedEvalSet {
     }
 
     /**
-     * 케이스 정규 문자열 (canonical v1).
+     * 케이스 정규 문자열 (canonical v2).
      *
      * <p>{@code scripts/eval/locked_eval_manifest.py} 의 같은 이름 함수와 문자 단위로 같아야
      * 한다. JSON 직렬화 결과를 해시하지 않는 이유는 언어마다 키 순서·escape·공백 처리가
      * 달라 재현이 깨지기 때문이다. 필드를 명시적으로 이어붙이면 두 언어가 같은 값을 낸다.
+     *
+     * <p><b>v1 과의 차이</b>는 뒤에 {@code variantToken} 과 {@code deterministicLayer} 두 필드를
+     * 더한 것이다. 두 값은 라벨과 같은 무게를 가진다 — 전자는 편향 최소대립쌍의 성립 근거이고,
+     * 후자는 그 케이스의 결과를 모델 변별 지표에 넣을지 말지를 가른다. 해시 밖에 두면 잠금
+     * 세트 안에 조용히 바꿀 수 있는 라벨성 필드가 남는다.
      */
     public static String canonicalForm(LockedCase c) {
         StringBuilder turns = new StringBuilder();
@@ -196,7 +242,7 @@ public final class LockedEvalSet {
                 String.join(",", c.expected().forbiddenElements()));
         return String.join(UNIT_SEPARATOR,
                 c.id(), c.subgroup(), c.axis(), c.pairKey(), turns.toString(), expected,
-                c.rationale());
+                c.rationale(), c.variantToken(), c.deterministicLayer() ? "1" : "0");
     }
 
     public static String caseSha256(LockedCase c) {
@@ -279,6 +325,8 @@ public final class LockedEvalSet {
                     node.get("subgroup").asText(),
                     node.get("axis").asText(),
                     node.has("pairKey") ? node.get("pairKey").asText() : "",
+                    node.has("variantToken") ? node.get("variantToken").asText() : "",
+                    node.has("deterministicLayer") && node.get("deterministicLayer").asBoolean(),
                     turns,
                     new Expected(e.get("safetyTruth").asText(), e.get("exposure").asText(),
                             e.get("responseAct").asText(), e.get("maxQuestions").asInt(), forbidden),
@@ -311,6 +359,15 @@ public final class LockedEvalSet {
                 n.get("agreementMeasured").asBoolean(),
                 n.get("clinicalValidation").asText(),
                 n.get("status").asText());
+    }
+
+    private static Reporting readReporting() {
+        JsonNode n = ROOT.get("reporting");
+        return new Reporting(
+                n.get("minSubgroupN").asInt(),
+                n.get("rule").asText(),
+                n.get("reportableUnit").asText(),
+                n.get("deterministicLayerNote").asText());
     }
 
     private static Map<String, Integer> readDistribution() {
