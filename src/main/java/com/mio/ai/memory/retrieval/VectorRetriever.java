@@ -36,6 +36,7 @@ public class VectorRetriever {
                 WHERE user_id = ?
                   AND episode_emb IS NOT NULL
                   AND embedding_status = 'done'
+                  AND memory_status = 'active'
                 ORDER BY episode_emb <=> ?::vector
                 LIMIT ?
                 """,

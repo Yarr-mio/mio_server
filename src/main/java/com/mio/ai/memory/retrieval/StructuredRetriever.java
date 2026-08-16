@@ -116,6 +116,7 @@ public class StructuredRetriever {
                                    1.0 AS score
                             FROM session_summaries ss
                             WHERE ss.user_id = ?
+                              AND ss.memory_status = 'active'
                               AND ss.trigger_tags && ?
                             ORDER BY ss.created_at DESC
                             LIMIT 3
@@ -158,6 +159,8 @@ public class StructuredRetriever {
                             FROM thoughts t
                             JOIN session_summaries ss ON ss.session_id = t.session_id
                             WHERE t.user_id = ?
+                              AND t.memory_status = 'active'
+                              AND ss.memory_status = 'active'
                               AND t.distortion_code = ANY (?)
                             GROUP BY ss.id, ss.summary_text
                             ORDER BY MAX(t.created_at) DESC

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.CbtPattern;
 import com.mio.ai.domain.EmotionalState;
 import com.mio.ai.domain.MemoryEmbedding;
+import com.mio.ai.domain.UserMemoryPreference;
+import com.mio.ai.repository.UserMemoryPreferenceRepository;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
@@ -101,6 +103,7 @@ public class SessionConsolidator {
     private final UserSummaryWriter userSummaryWriter;
     private final SummaryStatusWriter summaryStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
+    private final UserMemoryPreferenceRepository memoryPreferenceRepository;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
     private final ObjectProvider<SessionConsolidator> self;
@@ -121,6 +124,17 @@ public class SessionConsolidator {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onSessionEnded(SessionEndedEvent event) {
         log.info("SessionConsolidator: processing sessionId={}", event.sessionId());
+
+        // 메모리 동의 철회 게이트 (이슈 #453). LLM 을 부르기 전에 막아야 한다 —
+        // 요약을 만들고 버리는 것은 게이트가 아니라, 대화 원문이 이미 외부로 나간 뒤다.
+        // 상태를 failed 로 확정해 요약 조회가 pending 에 고착되지 않게 한다 (이슈 #356).
+        if (!isMemoryRetentionAllowed(event.userId())) {
+            log.info("SessionConsolidator: memory consent withdrawn, skipping consolidation sessionId={}",
+                    event.sessionId());
+            summaryStatusWriter.markFailed(event.sessionId());
+            return;
+        }
+
         EnrichmentInput enrichInput;
         try {
             // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화한다.
@@ -202,6 +216,19 @@ public class SessionConsolidator {
             return;
         }
         summaryStatusWriter.markDone(event.sessionId());
+    }
+
+    /** 선호 행이 없는 사용자는 기본 동의 상태다 (user_memory_preferences 기본값과 동일). */
+    private boolean isMemoryRetentionAllowed(UUID userId) {
+        try {
+            return memoryPreferenceRepository.findByUserId(userId)
+                    .map(UserMemoryPreference::isMemoryRetentionAgreed)
+                    .orElse(true);
+        } catch (Exception e) {
+            // 조회 실패 시 적재하지 않는다 — 철회한 사용자의 기억을 만드는 쪽이 더 나쁜 실패다.
+            log.error("SessionConsolidator: consent lookup failed, skipping consolidation userId={}", userId, e);
+            return false;
+        }
     }
 
     /**

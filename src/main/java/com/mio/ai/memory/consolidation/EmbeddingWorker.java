@@ -92,7 +92,8 @@ public class EmbeddingWorker {
                     embedding_attempts = embedding_attempts + 1
                 WHERE id IN (
                     SELECT id FROM session_summaries
-                    WHERE embedding_attempts < ?
+                    WHERE memory_status = 'active'
+                      AND embedding_attempts < ?
                       AND (
                         embedding_status = 'pending'
                         OR (embedding_status = 'processing'

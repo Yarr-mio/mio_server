@@ -53,6 +53,7 @@ class SessionConsolidatorTest {
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
+    private com.mio.ai.repository.UserMemoryPreferenceRepository memoryPreferenceRepository;
     private ObjectProvider<SessionConsolidator> self;
 
     private SessionConsolidator newConsolidator() {
@@ -68,6 +69,7 @@ class SessionConsolidatorTest {
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
+        memoryPreferenceRepository = mock(com.mio.ai.repository.UserMemoryPreferenceRepository.class);
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
         when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
@@ -96,6 +98,7 @@ class SessionConsolidatorTest {
                 userSummaryWriter,
                 summaryStatusWriter,
                 crisisEpisodePromoter,
+                memoryPreferenceRepository,
                 selfProvider
         );
     }
@@ -136,6 +139,27 @@ class SessionConsolidatorTest {
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
+    }
+
+    @Test
+    @DisplayName("메모리 동의를 철회한 사용자는 컨솔리데이션이 시작 전에 차단된다 (이슈 #453)")
+    void onSessionEnded_skipsConsolidationWhenConsentWithdrawn() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        when(memoryPreferenceRepository.findByUserId(userId)).thenReturn(Optional.of(
+                com.mio.ai.domain.UserMemoryPreference.builder()
+                        .userId(userId)
+                        .memoryRetentionAgreed(false)
+                        .build()));
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
+
+        verify(summaryStatusWriter).markFailed(sessionId);
+        // LLM 요약·보강·위기 승격·Todo 생성 어느 것도 시작되지 않아야 한다
+        verifyNoInteractions(self);
+        verifyNoInteractions(crisisEpisodePromoter);
+        verifyNoInteractions(todoRecommendationService);
     }
 
     @Test
