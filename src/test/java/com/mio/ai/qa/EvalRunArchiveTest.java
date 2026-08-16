@@ -46,6 +46,7 @@ class EvalRunArchiveTest {
                 .contains("| `code_commit` |")
                 .contains("| `scope` | rule+routing |")
                 .contains("| `dataset_split` | dev_gold |")
+                .contains("| `data_rights` | 우선 사용 (로드맵 §6.3 판정) |")
                 .contains("| `model.input_judge` | gpt-4o-mini |")
                 .contains("| `prompt_version` | " + EvalRunManifest.UNVERSIONED + " |")
                 .contains("| `pricing_as_of` | " + EvalRunManifest.PRICING_DATE_UNRECORDED + " |")
@@ -84,6 +85,7 @@ class EvalRunArchiveTest {
                 "dev_gold",
                 172,
                 "docs/eval/crisis-corpus-labeling-guide.md",
+                EvalRunManifest.DataRights.PRIORITY_USE,
                 Map.of("input_judge", "gpt-4o-mini"),
                 EvalRunManifest.UNVERSIONED,
                 "v2.0-phase2",

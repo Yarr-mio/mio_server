@@ -29,6 +29,7 @@ record EvalRunManifest(
         String datasetSplit,
         int datasetSize,
         String labelGuide,
+        DataRights dataRights,
         Map<String, String> models,
         String promptVersion,
         String policyVersion,
@@ -58,6 +59,35 @@ record EvalRunManifest(
     static final String NOT_CALLED = "n/a (미호출)";
 
     /**
+     * 평가에 쓴 데이터셋의 권리 판정 (로드맵 §6.3 / 이슈 #454 "데이터 권리 게이트 통과 기록").
+     *
+     * <p>자유 문자열이면 호출부마다 다른 표현을 쓰게 되고, 그러면 여러 실행 기록을 놓고
+     * "권리가 확인된 데이터로만 낸 수치인가" 를 기계적으로 물을 수 없다. 판정 어휘는 §6.3
+     * 판정표에 이미 고정돼 있으므로 그대로 타입으로 옮긴다.
+     */
+    enum DataRights {
+        /** 자체 보유·자체 작성 데이터. 별도 확인 없이 쓸 수 있다. */
+        PRIORITY_USE("우선 사용"),
+        /** 라이선스 조건(출처 표기·비상업 등)을 지키는 범위에서만 쓸 수 있다. */
+        CONDITIONAL("조건부 사용 가능"),
+        /** 권리 확인이 끝나지 않은 후보. 확인 전 수치는 잠정값으로만 읽어야 한다. */
+        PENDING_VERIFICATION("권리 확인 후 후보"),
+        /** 판정 결과 사용 불가. 이 값으로는 실행 기록을 만들 수 없다. */
+        EXCLUDED("제외");
+
+        private final String judgement;
+
+        DataRights(String judgement) {
+            this.judgement = judgement;
+        }
+
+        /** 실행 기록에 실릴 표현. 판정 어휘와 근거 조항을 한 칸에 같이 남긴다. */
+        String judgement() {
+            return judgement + " (로드맵 §6.3 판정)";
+        }
+    }
+
+    /**
      * manifest 가 직접 기록하는 항목 이름. {@code extra} 가 이 이름을 쓰면 생성 자체를 막는다.
      *
      * <p>{@code run_at}·{@code code_commit} 은 {@link EvalRunArchive} 가 헤더에 먼저 넣는
@@ -66,6 +96,7 @@ record EvalRunManifest(
     private static final Set<String> RESERVED_KEYS = Set.of(
             "run_at", "code_commit",
             "scope", "cell", "dataset", "dataset_split", "dataset_size", "label_guide",
+            "data_rights",
             "prompt_version", "policy_version", "pricing_as_of", "random_seed", "command");
 
     /** 역할·게이트가 늘어나면 키도 늘어나므로 이름이 아니라 네임스페이스 단위로 예약한다. */
@@ -82,6 +113,16 @@ record EvalRunManifest(
         requireText("pricing_as_of", pricingAsOf);
         requireText("random_seed", randomSeed);
         requireText("command", command);
+        if (dataRights == null) {
+            throw new IllegalArgumentException(
+                    "data_rights 가 비었다 — 권리 판정이 없는 데이터로 낸 수치는 확인된 수치와 구별할 수 없다");
+        }
+        if (dataRights == DataRights.EXCLUDED) {
+            // "제외" 라고 정직하게 적는 것은 위반을 문서화할 뿐 되돌리지 못한다. 기록을 막아
+            // 실행을 막는 편이 게이트에 가깝다.
+            throw new IllegalArgumentException(
+                    "data_rights 판정이 제외다 — §6.3 에서 사용 불가로 판정된 데이터의 실행 기록은 남기지 않는다");
+        }
         if (datasetSize <= 0) {
             throw new IllegalArgumentException("dataset_size 가 0 이하다 — 빈 평가셋의 실행 기록은 남기지 않는다");
         }
@@ -126,6 +167,7 @@ record EvalRunManifest(
         metadata.put("dataset_split", datasetSplit);
         metadata.put("dataset_size", String.valueOf(datasetSize));
         metadata.put("label_guide", labelGuide);
+        metadata.put("data_rights", dataRights.judgement());
         // 역할이 늘어도 행 순서가 흔들리지 않게 정렬해서 싣는다.
         new TreeMap<>(models).forEach((role, id) -> metadata.put("model." + role, id));
         metadata.put("prompt_version", promptVersion);

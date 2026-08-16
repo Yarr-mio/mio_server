@@ -109,6 +109,39 @@ class EvalRunManifestTest {
                 .containsEntry("prompt_version", EvalRunManifest.UNVERSIONED);
     }
 
+    /**
+     * 이슈 #454 의 최상위 산출물 중 하나가 "데이터 권리 게이트 통과 기록" 이다. 판정이 기록에
+     * 없으면 권리 미확인 데이터로 낸 수치가 확인된 수치와 구별되지 않는다.
+     */
+    @Test
+    @DisplayName("데이터 권리 판정이 없는 실행은 기록하지 않는다")
+    void missingDataRightsIsRejected() {
+        assertThatThrownBy(() -> manifestWith(m -> m.dataRights = null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("data_rights");
+    }
+
+    /**
+     * §6.3 판정이 "제외" 인 데이터로 평가를 돌리는 것 자체가 판정 위반이다. 실행 기록에 "제외"
+     * 라고 정직하게 적는 것은 위반을 문서화할 뿐 되돌리지 못하므로, 기록을 막아 실행을 막는다.
+     */
+    @Test
+    @DisplayName("권리 판정이 제외인 데이터셋은 실행 기록을 만들지 못한다")
+    void excludedDataRightsCannotBeRecorded() {
+        assertThatThrownBy(() -> manifestWith(m -> m.dataRights = EvalRunManifest.DataRights.EXCLUDED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("data_rights");
+    }
+
+    @Test
+    @DisplayName("데이터 권리 판정은 §6.3 어휘 그대로 기록에 남는다")
+    void dataRightsJudgementIsRecorded() {
+        Map<String, String> metadata = manifestWith(
+                m -> m.dataRights = EvalRunManifest.DataRights.CONDITIONAL).toMetadata();
+
+        assertThat(metadata).containsEntry("data_rights", "조건부 사용 가능 (로드맵 §6.3 판정)");
+    }
+
     @Test
     @DisplayName("빈 평가셋의 실행 기록은 남기지 않는다")
     void emptyDatasetIsRejected() {
@@ -175,8 +208,9 @@ class EvalRunManifestTest {
         mutation.accept(draft);
         return new EvalRunManifest(
                 draft.scope, draft.cell, draft.datasetVersion, draft.datasetSplit, draft.datasetSize,
-                draft.labelGuide, draft.models, draft.promptVersion, draft.policyVersion,
-                draft.pricingAsOf, draft.randomSeed, draft.command, draft.gates, draft.extra);
+                draft.labelGuide, draft.dataRights, draft.models, draft.promptVersion,
+                draft.policyVersion, draft.pricingAsOf, draft.randomSeed, draft.command,
+                draft.gates, draft.extra);
     }
 
     private Map<String, String> mapWithNullValue(String key) {
@@ -198,6 +232,7 @@ class EvalRunManifestTest {
         String datasetSplit = "dev_gold";
         int datasetSize = 172;
         String labelGuide = "docs/eval/crisis-corpus-labeling-guide.md";
+        EvalRunManifest.DataRights dataRights = EvalRunManifest.DataRights.PRIORITY_USE;
         Map<String, String> models = Map.of("input_judge", "gpt-4o-mini");
         String promptVersion = EvalRunManifest.UNVERSIONED;
         String policyVersion = "v2.0-phase2";

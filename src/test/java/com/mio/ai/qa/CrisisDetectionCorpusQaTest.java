@@ -396,6 +396,9 @@ class CrisisDetectionCorpusQaTest {
                 "dev_gold",
                 CrisisCorpus.PROBES.size(),
                 "docs/eval/crisis-corpus-labeling-guide.md",
+                // 코퍼스 172건은 전부 저장소 안에서 직접 작성한 문장이다 (CrisisCorpus.java).
+                // 외부 라이선스가 얽히지 않으므로 §6.3 판정은 "우선 사용" 이다.
+                EvalRunManifest.DataRights.PRIORITY_USE,
                 Map.of("input_judge", EvalRunManifest.NOT_CALLED),
                 EvalRunManifest.UNVERSIONED,
                 policyVersion,
