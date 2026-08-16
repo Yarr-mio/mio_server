@@ -1,5 +1,5 @@
 -- 위기 세션의 CBT Todo 생성 차단 결정은 요약 상태와 분리해 감사 가능하게 남긴다.
--- V63의 고정 플로우 상태 다음 연속 버전이다.
+-- V74의 고정 플로우 상태 다음 연속 버전이다.
 CREATE TABLE crisis_todo_safety_states (
     session_id   UUID        PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
     user_id      UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -1,5 +1,6 @@
 -- P0-5 위기 고정 플로우 상태와 전이 감사 기록.
--- PR #445 가 V60~V62 를 사용하므로 이 브랜치는 V63부터 잇는다. 후속 P0-7 은 V64.
+-- 베이스가 V73까지 적용돼 있으므로(PR #445 의 V60~V62, PR #456 의 V70~V73)
+-- 이 브랜치는 V74부터 잇는다. 후속 P0-7 은 V75.
 
 CREATE TABLE crisis_flow_states (
     session_id         UUID PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
