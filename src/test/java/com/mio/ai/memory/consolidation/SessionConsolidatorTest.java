@@ -3,17 +3,21 @@ package com.mio.ai.memory.consolidation;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.LlmStreamResult;
+import com.mio.ai.llm.LlmUsage;
 import com.mio.ai.memory.episodic.ThoughtRepository;
 import com.mio.ai.memory.episodic.UserBelief;
 import com.mio.ai.memory.episodic.UserBeliefRepository;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.session.domain.SummaryStatus;
+import com.mio.session.domain.Session;
 import com.mio.session.repository.SessionCheckpointRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -23,11 +27,14 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.anyShort;
@@ -38,6 +45,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mockingDetails;
 
 class SessionConsolidatorTest {
 
@@ -50,11 +59,19 @@ class SessionConsolidatorTest {
     private SessionRepository sessionRepository;
     private TodoRecommendationService todoRecommendationService;
     private SummaryStatusWriter summaryStatusWriter;
+    private SummaryComponentStatusWriter componentStatusWriter;
     private SessionSummaryRenderer sessionSummaryRenderer;
     private UserSummaryWriter userSummaryWriter;
     private CrisisEpisodePromoter crisisEpisodePromoter;
     private com.mio.ai.repository.UserMemoryPreferenceRepository memoryPreferenceRepository;
     private ObjectProvider<SessionConsolidator> self;
+    private SimpleMeterRegistry meterRegistry;
+    private SessionSummaryRepository sessionSummaryRepository;
+    private SessionCheckpointRepository checkpointRepository;
+    private UserRepository userRepository;
+    private ExtractorLlmClient extractorLlmClient;
+    private LlmClient llmClient;
+    private OntologyValidator ontologyValidator;
 
     private SessionConsolidator newConsolidator() {
         messageEncryptor = mock(MessageEncryptor.class);
@@ -64,12 +81,20 @@ class SessionConsolidatorTest {
         evidenceAccumulator = mock(BeliefEvidenceAccumulator.class);
         jdbcTemplate = mock(JdbcTemplate.class);
         sessionRepository = mock(SessionRepository.class);
+        sessionSummaryRepository = mock(SessionSummaryRepository.class);
+        checkpointRepository = mock(SessionCheckpointRepository.class);
+        userRepository = mock(UserRepository.class);
+        extractorLlmClient = mock(ExtractorLlmClient.class);
+        llmClient = mock(LlmClient.class);
+        ontologyValidator = mock(OntologyValidator.class);
         todoRecommendationService = mock(TodoRecommendationService.class);
         summaryStatusWriter = mock(SummaryStatusWriter.class);
+        componentStatusWriter = mock(SummaryComponentStatusWriter.class);
         sessionSummaryRenderer = mock(SessionSummaryRenderer.class);
         userSummaryWriter = mock(UserSummaryWriter.class);
         crisisEpisodePromoter = mock(CrisisEpisodePromoter.class);
         memoryPreferenceRepository = mock(com.mio.ai.repository.UserMemoryPreferenceRepository.class);
+        meterRegistry = new SimpleMeterRegistry();
         when(messageEncryptor.encrypt(any())).thenReturn(new byte[]{1});
         when(messageEncryptor.dekId()).thenReturn("app-key-v1");
         when(beliefIdentityHasher.hash(any(), anyString(), anyShort())).thenReturn(new byte[]{9});
@@ -80,24 +105,26 @@ class SessionConsolidatorTest {
 
         return new SessionConsolidator(
                 sessionRepository,
-                mock(SessionSummaryRepository.class),
-                mock(SessionCheckpointRepository.class),
-                mock(UserRepository.class),
+                sessionSummaryRepository,
+                checkpointRepository,
+                userRepository,
                 thoughtRepository,
                 beliefRepository,
                 evidenceAccumulator,
-                mock(ExtractorLlmClient.class),
-                mock(LlmClient.class),
+                extractorLlmClient,
+                llmClient,
                 messageEncryptor,
                 beliefIdentityHasher,
                 jdbcTemplate,
                 new ObjectMapper(),
-                mock(OntologyValidator.class),
+                ontologyValidator,
                 todoRecommendationService,
                 sessionSummaryRenderer,
                 userSummaryWriter,
                 summaryStatusWriter,
+                componentStatusWriter,
                 crisisEpisodePromoter,
+                new SummaryStageMetrics(meterRegistry),
                 memoryPreferenceRepository,
                 selfProvider
         );
@@ -114,8 +141,8 @@ class SessionConsolidatorTest {
     }
 
     @Test
-    @DisplayName("세션 요약 DONE은 Todo 저장 완료 후에만 표시한다")
-    void onSessionEnded_marksDoneOnlyAfterTodoGeneration() {
+    @DisplayName("핵심 요약은 Todo보다 먼저 DONE으로 공개한다")
+    void onSessionEnded_marksCoreSummaryDoneBeforeTodoGeneration() {
         SessionConsolidator consolidator = newConsolidator();
         SessionConsolidator proxy = mock(SessionConsolidator.class);
         UUID userId = UUID.randomUUID();
@@ -126,16 +153,24 @@ class SessionConsolidatorTest {
         when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
         when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
                 .thenReturn(3);
+        when(sessionSummaryRenderer.render("세션 요약", "mio", userId, sessionId))
+                .thenReturn("사용자용 요약");
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
         InOrder inOrder = inOrder(proxy, todoRecommendationService, summaryStatusWriter);
+        inOrder.verify(summaryStatusWriter).markProcessingStarted(sessionId);
         inOrder.verify(proxy).consolidate(sessionId, userId, "mio", 2);
+        inOrder.verify(summaryStatusWriter).markDone(sessionId);
         inOrder.verify(proxy).enrichMemory(input);
         inOrder.verify(todoRecommendationService).generateForSession(eq(userId), eq(sessionId), any());
-        inOrder.verify(summaryStatusWriter).markDone(sessionId);
         verify(sessionRepository, never()).updateSummaryStatus(sessionId, SummaryStatus.DONE);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoDone(sessionId);
+        assertThat(timerCount("core_summary_ready", "done")).isEqualTo(1);
+        assertThat(timerCount("memory_enrichment", "done")).isEqualTo(1);
+        assertThat(timerCount("user_render", "done")).isEqualTo(1);
+        assertThat(timerCount("todo_generation", "done")).isEqualTo(1);
 
         // 승격 호출이 통째로 빠져도 나머지 단언은 통과한다 — 배선 자체를 고정한다 (이슈 #256).
         verify(crisisEpisodePromoter).promoteIfCrisis(userId, sessionId, "regular");
@@ -156,10 +191,13 @@ class SessionConsolidatorTest {
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 0));
 
         verify(summaryStatusWriter).markFailed(sessionId);
+        // 게이트는 processing 시작 표시보다도 앞이다 — 철회 세션은 처리를 시작조차 하지 않는다
+        verify(summaryStatusWriter, never()).markProcessingStarted(sessionId);
         // LLM 요약·보강·위기 승격·Todo 생성 어느 것도 시작되지 않아야 한다
         verifyNoInteractions(self);
         verifyNoInteractions(crisisEpisodePromoter);
         verifyNoInteractions(todoRecommendationService);
+        verifyNoInteractions(componentStatusWriter);
     }
 
     @Test
@@ -181,6 +219,7 @@ class SessionConsolidatorTest {
         verify(sessionSummaryRenderer).render("내부 요약", "chichi", userId, sessionId);
         verify(userSummaryWriter).write(sessionId, "오늘 이야기 정리해봤어요.");
         verify(summaryStatusWriter).markDone(sessionId);
+        verify(componentStatusWriter).markUserRenderDone(sessionId);
     }
 
     @Test
@@ -202,6 +241,29 @@ class SessionConsolidatorTest {
         verifyNoInteractions(userSummaryWriter);
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "CONTRACT_INVALID");
+    }
+
+    @Test
+    @DisplayName("렌더링 결과가 공백이면 저장하지 않고 계약 실패로 종결한다")
+    void onSessionEnded_whenRenderReturnsWhitespace_marksContractInvalid() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "내부 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any())).thenReturn(1);
+        when(sessionSummaryRenderer.render(any(), any(), any(), any())).thenReturn("   \n\t");
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verifyNoInteractions(userSummaryWriter);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "CONTRACT_INVALID");
+        verify(componentStatusWriter, never()).markUserRenderDone(sessionId);
+        assertThat(timerCount("user_render", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -223,11 +285,13 @@ class SessionConsolidatorTest {
 
         verify(summaryStatusWriter).markDone(sessionId);
         verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markUserRenderFailed(sessionId, "USER_RENDER_FAILED");
+        assertThat(timerCount("user_render", "failed")).isEqualTo(1);
     }
 
     @Test
-    @DisplayName("Todo를 만들지 못하면 빈 Todo 요약을 노출하지 않고 실패 상태로 전환한다")
-    void onSessionEnded_whenTodoGenerationCreatesNoTasks_marksFailed() {
+    @DisplayName("Todo가 0건이어도 핵심 요약은 유지하고 Todo만 skipped로 남긴다")
+    void onSessionEnded_whenTodoGenerationCreatesNoTasks_keepsSummaryAndSkipsTodo() {
         SessionConsolidator consolidator = newConsolidator();
         SessionConsolidator proxy = mock(SessionConsolidator.class);
         UUID userId = UUID.randomUUID();
@@ -241,8 +305,31 @@ class SessionConsolidatorTest {
 
         consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
 
-        verify(summaryStatusWriter, never()).markDone(sessionId);
-        verify(summaryStatusWriter).markFailed(sessionId);
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoSkipped(sessionId);
+    }
+
+    @Test
+    @DisplayName("Todo 생성 예외는 Todo만 failed로 남기고 핵심 요약을 봉인하지 않는다")
+    void onSessionEnded_whenTodoGenerationThrows_keepsSummaryAndMarksTodoFailed() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        when(todoRecommendationService.generateForSession(eq(userId), eq(sessionId), any()))
+                .thenThrow(new IllegalStateException("todo unavailable"));
+
+        consolidator.onSessionEnded(new SessionEndedEvent(sessionId, userId, "mio", 2));
+
+        verify(summaryStatusWriter).markDone(sessionId);
+        verify(summaryStatusWriter, never()).markFailed(sessionId);
+        verify(componentStatusWriter).markTodoFailed(sessionId, "TODO_GENERATION_FAILED");
+        assertThat(timerCount("todo_generation", "failed")).isEqualTo(1);
     }
 
     @Test
@@ -262,6 +349,31 @@ class SessionConsolidatorTest {
         verify(summaryStatusWriter).markFailed(sessionId);
         verify(summaryStatusWriter, never()).markDone(sessionId);
         verifyNoInteractions(todoRecommendationService, crisisEpisodePromoter, sessionSummaryRenderer);
+        assertThat(timerCount("core_summary_ready", "failed")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("핵심 요약 상태 저장이 실패하면 준비 완료 지연으로 집계하지 않는다")
+    void onSessionEnded_whenCoreStatusWriteFails_recordsFailedReadiness() {
+        SessionConsolidator consolidator = newConsolidator();
+        SessionConsolidator proxy = mock(SessionConsolidator.class);
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        SessionConsolidator.EnrichmentInput input = new SessionConsolidator.EnrichmentInput(
+                userId, sessionId, List.of(), null, List.of(), List.of(), "세션 요약", "regular");
+        when(self.getObject()).thenReturn(proxy);
+        when(proxy.consolidate(sessionId, userId, "mio", 2)).thenReturn(input);
+        doAnswer(invocation -> {
+            throw new IllegalStateException("status db unavailable");
+        }).when(summaryStatusWriter).markDone(sessionId);
+
+        assertThatThrownBy(() -> consolidator.onSessionEnded(
+                new SessionEndedEvent(sessionId, userId, "mio", 2)))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(timerCount("core_summary_ready", "failed")).isEqualTo(1);
+        assertThat(timerCount("core_summary_ready", "done")).isZero();
+        verifyNoInteractions(sessionSummaryRenderer, todoRecommendationService);
     }
 
     @Test
@@ -401,6 +513,70 @@ class SessionConsolidatorTest {
     }
 
     @Test
+    @DisplayName("핵심 요약 생성과 메타데이터 추출 지연을 서로 다른 단계로 기록한다")
+    void consolidate_recordsSummaryGenerationAndMetadataExtractionStages() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId)).thenReturn(ExtractorResult.empty());
+
+        SessionConsolidator.EnrichmentInput result =
+                consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        assertThat(result).isNotNull();
+        assertThat(timerCount("summary_generation", "done")).isEqualTo(1);
+        assertThat(timerCount("metadata_extraction", "done")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("메타데이터 추출 실패는 요약 생성 성공과 분리해 계측한다")
+    void consolidate_metadataExtractionFailure_recordsFailedStage() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId))
+                .thenThrow(new IllegalStateException("extractor down"));
+
+        assertThatThrownBy(() -> consolidator.consolidate(sessionId, userId, "mio", 0))
+                .isInstanceOf(IllegalStateException.class);
+
+        assertThat(timerCount("summary_generation", "done")).isEqualTo(1);
+        assertThat(timerCount("metadata_extraction", "failed")).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("기존 요약 재처리는 모든 파생 상태와 이전 오류를 pending 기준으로 초기화한다")
+    void consolidate_existingSummary_resetsDerivedComponentStates() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(extractorLlmClient.extract("세션 요약", userId, sessionId)).thenReturn(ExtractorResult.empty());
+        when(sessionSummaryRepository.findBySession_Id(sessionId))
+                .thenReturn(Optional.of(mock(com.mio.session.domain.SessionSummary.class)));
+
+        consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        List<String> updateSql = mockingDetails(jdbcTemplate).getInvocations().stream()
+                .filter(invocation -> invocation.getMethod().getName().equals("update"))
+                .map(invocation -> invocation.getArgument(0).toString().replaceAll("\\s+", " "))
+                .toList();
+        assertThat(updateSql).anySatisfy(sql -> assertThat(sql)
+                .contains("user_render_status = 'pending'")
+                .contains("todo_status = 'pending'")
+                .contains("user_render_pending_at = now()")
+                .contains("todo_pending_at = now()")
+                .contains("embedding_status = 'pending'")
+                .contains("episode_emb = NULL")
+                .contains("embedding_attempts = 0")
+                .contains("embedding_claimed_at = NULL")
+                .contains("component_errors = '{}'::jsonb")
+                .contains("updated_at = now()"));
+    }
+
+    @Test
     @DisplayName("허용값 밖 polarity는 thought만 저장하고 신념 연결은 만들지 않는다")
     void persistThought_invalidPolarity_skipsBeliefConnection() {
         SessionConsolidator consolidator = newConsolidator();
@@ -411,5 +587,34 @@ class SessionConsolidatorTest {
 
         verify(thoughtRepository).save(any());
         verifyNoInteractions(beliefRepository, evidenceAccumulator);
+    }
+
+    private long timerCount(String stage, String outcome) {
+        var timer = meterRegistry.find("mio.summary.stage.duration")
+                .tags("stage", stage, "outcome", outcome)
+                .timer();
+        return timer == null ? 0 : timer.count();
+    }
+
+    private void stubCoreInputs(UUID userId, UUID sessionId) {
+        Session session = mock(Session.class);
+        User user = mock(User.class);
+        when(session.getId()).thenReturn(sessionId);
+        when(user.getId()).thenReturn(userId);
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(checkpointRepository.findBySession_IdOrderByCheckpointSeqAsc(sessionId)).thenReturn(List.of());
+        when(jdbcTemplate.queryForList(anyString(), eq(sessionId))).thenReturn(List.of(Map.of(
+                "role", "user",
+                "content_ciphertext", new byte[]{1}
+        )));
+        when(messageEncryptor.decrypt(any())).thenReturn("대화 원문".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<String> chunks = invocation.getArgument(1, Consumer.class);
+            chunks.accept("세션 요약");
+            return new LlmStreamResult(1, LlmUsage.unresolved("gpt-4o-mini"), false);
+        }).when(llmClient).stream(any(), any());
+        when(sessionSummaryRepository.findBySession_Id(sessionId)).thenReturn(Optional.empty());
     }
 }

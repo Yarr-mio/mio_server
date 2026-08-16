@@ -102,7 +102,9 @@ public class SessionConsolidator {
     private final SessionSummaryRenderer sessionSummaryRenderer;
     private final UserSummaryWriter userSummaryWriter;
     private final SummaryStatusWriter summaryStatusWriter;
+    private final SummaryComponentStatusWriter componentStatusWriter;
     private final CrisisEpisodePromoter crisisEpisodePromoter;
+    private final SummaryStageMetrics stageMetrics;
     private final UserMemoryPreferenceRepository memoryPreferenceRepository;
     // 메모리 보강을 별도 트랜잭션(REQUIRES_NEW)으로 호출하기 위한 self 프록시.
     // self-invocation으로는 프록시 어드바이스(@Transactional)가 적용되지 않으므로 ObjectProvider로 우회.
@@ -117,7 +119,7 @@ public class SessionConsolidator {
     // @TransactionalEventListener(AFTER_COMMIT): endSession 트랜잭션 커밋 후 실행 → 커밋된 데이터 안전하게 읽기
     // 진입점 자체에는 @Transactional을 두지 않는다. 1·2단계를 각각 self 프록시 + REQUIRES_NEW로
     // 호출해, 요약 트랜잭션이 먼저 커밋된 뒤 메모리 보강 트랜잭션이 독립적으로 실행되게 한다.
-    // summary_status=DONE은 사용자 응답에 필요한 Todo 저장까지 끝난 뒤 별도로 표시한다.
+    // 핵심 요약은 1단계 커밋 직후 DONE으로 공개하고 렌더링·Todo는 독립 상태로 종결한다.
     // (진입점을 @Transactional로 두면 요약 tx가 커밋되지 않은 채 보강 tx가 suspend 상태로 겹쳐
     //  커넥션 동시 점유·가시성 문제가 생긴다.)
     @Async
@@ -127,7 +129,12 @@ public class SessionConsolidator {
 
         // 메모리 동의 철회 게이트 (이슈 #453). LLM 을 부르기 전에 막아야 한다 —
         // 요약을 만들고 버리는 것은 게이트가 아니라, 대화 원문이 이미 외부로 나간 뒤다.
-        // 상태를 failed 로 확정해 요약 조회가 pending 에 고착되지 않게 한다 (이슈 #356).
+        //
+        // 상태는 세션 수준 failed 로 종결한다 (이슈 #356 의 pending 고착 방지).
+        // 컴포넌트 상태 모델(#426)의 skipped 는 session_summaries 행에 붙는 파생 작업
+        // 상태라서 여기서는 쓸 수 없다 — 동의 철회는 요약 행 자체를 만들지 않는다.
+        // 세션 수준 SummaryStatus 에는 skipped 가 없고, failed 는 "요약이 오지 않는다" 는
+        // 기존 terminal(메시지 0건 세션과 동일) 이므로 그대로 쓴다.
         if (!isMemoryRetentionAllowed(event.userId())) {
             log.info("SessionConsolidator: memory consent withdrawn, skipping consolidation sessionId={}",
                     event.sessionId());
@@ -136,12 +143,15 @@ public class SessionConsolidator {
         }
 
         EnrichmentInput enrichInput;
+        SummaryStageMetrics.StageSample coreReady = stageMetrics.start(SummaryStageMetrics.CORE_SUMMARY_READY);
         try {
+            summaryStatusWriter.markProcessingStarted(event.sessionId());
             // 1단계: 세션 요약을 독립 트랜잭션(REQUIRES_NEW)에서 영속화한다.
             // self 프록시로 호출해야 consolidate의 @Transactional 어드바이스가 적용된다.
             enrichInput = self.getObject().consolidate(
                     event.sessionId(), event.userId(), event.characterId(), event.socraticCount());
         } catch (Exception e) {
+            coreReady.stop("failed");
             log.error("SessionConsolidator failed for sessionId={}", event.sessionId(), e);
             // REQUIRES_NEW: 현재 트랜잭션이 rollback-only 또는 DB-aborted 상태일 수 있으므로
             // 별도 트랜잭션에서 failed 상태를 저장한다.
@@ -153,9 +163,22 @@ public class SessionConsolidator {
         // 상태를 그대로 두면 pending 에 영구 고착되고, 요약 조회가 끝없이 202 를 반환해
         // 사용자는 앱을 다시 켜기 전까지 무한 로딩에서 빠져나오지 못한다 (이슈 #356).
         if (enrichInput == null) {
+            coreReady.stop("failed");
             log.info("SessionConsolidator: nothing to summarize, marking failed sessionId={}", event.sessionId());
             summaryStatusWriter.markFailed(event.sessionId());
             return;
+        }
+        // 핵심 요약은 이미 독립 트랜잭션으로 커밋됐다. 선택 작업이 실패해도 사용자가 비용을
+        // 치른 요약을 잃지 않도록 여기서 즉시 조회 가능하게 만든다 (이슈 #345, #378, #426).
+        try {
+            summaryStatusWriter.markDone(event.sessionId());
+            coreReady.stop("done");
+        } catch (Exception e) {
+            // 요약 row가 커밋됐더라도 공개 상태 쓰기가 실패하면 아직 사용자가 조회할 수 없다.
+            // 이를 done latency로 세면 p95가 실제 readiness보다 짧아 보인다. stale sweep가
+            // 이후 row를 발견해 복구하되, 이번 실행은 실패로 기록하고 기존 예외 흐름을 유지한다.
+            coreReady.stop("failed");
+            throw e;
         }
 
         // 2단계: thoughts/beliefs/cbt_patterns/todos 등 메모리 보강은 별도 트랜잭션(REQUIRES_NEW)에서
@@ -173,9 +196,12 @@ public class SessionConsolidator {
                     event.sessionId(), e);
         }
 
+        SummaryStageMetrics.StageSample enrichment = stageMetrics.start(SummaryStageMetrics.MEMORY_ENRICHMENT);
         try {
             self.getObject().enrichMemory(enrichInput);
+            enrichment.stop("done");
         } catch (Exception e) {
+            enrichment.stop("failed");
             log.error("SessionConsolidator: memory enrichment failed but summary preserved sessionId={}",
                     event.sessionId(), e);
         }
@@ -184,20 +210,29 @@ public class SessionConsolidator {
         // 실행하고, 쓰기만 별도 트랜잭션으로 분리한다.
         // 실패해도 진행한다 — user_summary_text 가 비면 조회 시 summary_text 로 폴백되므로
         // 사용자는 (분석 톤이긴 해도) 요약을 받는다. 렌더링 실패로 요약을 잃게 두지 않는다.
+        SummaryStageMetrics.StageSample render = stageMetrics.start(SummaryStageMetrics.USER_RENDER);
         try {
             String userSummary = sessionSummaryRenderer.render(
                     enrichInput.summaryText(), event.characterId(), enrichInput.userId(), enrichInput.sessionId());
-            if (userSummary != null) {
+            if (userSummary != null && !userSummary.isBlank()) {
                 userSummaryWriter.write(enrichInput.sessionId(), userSummary);
+                componentStatusWriter.markUserRenderDone(event.sessionId());
+                render.stop("done");
+            } else {
+                componentStatusWriter.markUserRenderFailed(event.sessionId(), "CONTRACT_INVALID");
+                render.stop("failed");
             }
         } catch (Exception e) {
+            render.stop("failed");
             log.error("SessionConsolidator: user summary rendering failed but summary preserved sessionId={}",
                     event.sessionId(), e);
+            componentStatusWriter.markUserRenderFailed(event.sessionId(), "USER_RENDER_FAILED");
         }
 
         // 3단계: Todo 자동 생성 (MIO-CBT-015, 세션 맥락 개인화 — 이슈 #228).
         // 블로킹 LLM 개인화 호출이 DB 트랜잭션 밖에서 실행되도록 enrichMemory 커밋 후 별도로 호출한다.
         int generatedTodoCount;
+        SummaryStageMetrics.StageSample todo = stageMetrics.start(SummaryStageMetrics.TODO_GENERATION);
         try {
             generatedTodoCount = todoRecommendationService.generateForSession(
                     enrichInput.userId(), enrichInput.sessionId(),
@@ -205,17 +240,20 @@ public class SessionConsolidator {
                             enrichInput.distortionCodes(), enrichInput.dominantEmotion(),
                             enrichInput.triggerTags(), enrichInput.summaryText()));
         } catch (Exception e) {
+            todo.stop("failed");
             log.warn("SessionConsolidator: todo generation failed sessionId={}", event.sessionId(), e);
-            summaryStatusWriter.markFailed(event.sessionId());
+            componentStatusWriter.markTodoFailed(event.sessionId(), "TODO_GENERATION_FAILED");
             return;
         }
         if (generatedTodoCount <= 0) {
-            log.warn("SessionConsolidator: no todo generated; summary not exposed sessionId={}",
+            log.info("SessionConsolidator: no todo generated; core summary remains available sessionId={}",
                     event.sessionId());
-            summaryStatusWriter.markFailed(event.sessionId());
+            componentStatusWriter.markTodoSkipped(event.sessionId());
+            todo.stop("skipped");
             return;
         }
-        summaryStatusWriter.markDone(event.sessionId());
+        componentStatusWriter.markTodoDone(event.sessionId());
+        todo.stop("done");
     }
 
     /** 선호 행이 없는 사용자는 기본 동의 상태다 (user_memory_preferences 기본값과 동일). */
@@ -253,14 +291,32 @@ public class SessionConsolidator {
         }
 
         // 2. 세션 요약 생성 (LLM)
-        String summaryText = generateSummary(conversationText, userId, sessionId);
+        SummaryStageMetrics.StageSample summaryGeneration =
+                stageMetrics.start(SummaryStageMetrics.SUMMARY_GENERATION);
+        String summaryText;
+        try {
+            summaryText = generateSummary(conversationText, userId, sessionId);
+            summaryGeneration.stop("done");
+        } catch (Exception e) {
+            summaryGeneration.stop("failed");
+            throw e;
+        }
 
         // 3. AES-256 암호화
         byte[] ciphertext = messageEncryptor.encrypt(summaryText.getBytes(StandardCharsets.UTF_8));
         String dekId = messageEncryptor.dekId();
 
         // 4. ExtractorLLM — thought/emotion/trigger 추출
-        ExtractorResult extracted = extractorLlmClient.extract(summaryText, userId, sessionId);
+        SummaryStageMetrics.StageSample metadataExtraction =
+                stageMetrics.start(SummaryStageMetrics.METADATA_EXTRACTION);
+        ExtractorResult extracted;
+        try {
+            extracted = extractorLlmClient.extract(summaryText, userId, sessionId);
+            metadataExtraction.stop("done");
+        } catch (Exception e) {
+            metadataExtraction.stop("failed");
+            throw e;
+        }
 
         // 5. OntologyValidator 필터 (Phase 3-1 의존, optional)
         List<ExtractorResult.ExtractedThought> validThoughts = filterValidThoughts(extracted.thoughts());
@@ -474,7 +530,17 @@ public class SessionConsolidator {
                             SET summary_text = ?, summary_ciphertext = ?, summary_dek_id = ?,
                                 dominant_emotion = ?, trigger_tags = ?, episode_type = ?,
                                 bias_types_detected = ?::jsonb, cbt_intervened = ?, key_thoughts = ?::jsonb,
-                                socratic_count = ?, embedding_status = 'pending'
+                                socratic_count = ?,
+                                user_render_status = 'pending',
+                                todo_status = 'pending',
+                                user_render_pending_at = now(),
+                                todo_pending_at = now(),
+                                embedding_status = 'pending',
+                                episode_emb = NULL,
+                                embedding_attempts = 0,
+                                embedding_claimed_at = NULL,
+                                component_errors = '{}'::jsonb,
+                                updated_at = now()
                             WHERE session_id = ?
                             """,
                             summaryText, ciphertext, dekId,

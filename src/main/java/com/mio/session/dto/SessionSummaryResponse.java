@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionSummary;
+import com.mio.session.domain.SummaryStatus;
 import com.mio.todo.domain.BehaviorTask;
 
 import java.time.OffsetDateTime;
@@ -13,6 +14,12 @@ import java.util.UUID;
 public record SessionSummaryResponse(
         @JsonProperty("session_id") UUID sessionId,
         @JsonProperty("summary_status") String summaryStatus,
+        @JsonProperty("core_summary_status") String coreSummaryStatus,
+        @JsonProperty("user_render_status") String userRenderStatus,
+        @JsonProperty("todo_status") String todoStatus,
+        @JsonProperty("embedding_status") String embeddingStatus,
+        @JsonProperty("last_updated_at") OffsetDateTime lastUpdatedAt,
+        @JsonRawValue @JsonProperty("component_errors") String componentErrors,
         @JsonProperty("ended_at") OffsetDateTime endedAt,
         @JsonProperty("duration_seconds") long durationSeconds,
         @JsonProperty("message_count") int messageCount,
@@ -47,6 +54,12 @@ public record SessionSummaryResponse(
         return new SessionSummaryResponse(
                 session.getId(),
                 "pending",
+                "pending",
+                "pending",
+                "pending",
+                "pending",
+                session.getUpdatedAt() != null ? session.getUpdatedAt() : session.getEndedAt(),
+                "{}",
                 session.getEndedAt(),
                 session.durationSeconds(),
                 session.getMessageCount(),
@@ -58,6 +71,12 @@ public record SessionSummaryResponse(
         return new SessionSummaryResponse(
                 session.getId(),
                 session.getSummaryStatus().value(),
+                coreStatus(session),
+                summary.getUserRenderStatus().value(),
+                summary.getTodoStatus().value(),
+                summary.getEmbeddingStatus(),
+                summary.getUpdatedAt(),
+                summary.getComponentErrors(),
                 session.getEndedAt(),
                 session.durationSeconds(),
                 session.getMessageCount(),
@@ -70,6 +89,12 @@ public record SessionSummaryResponse(
                 summary.getSocraticCount(),
                 todos.stream().map(TodoItem::from).toList()
         );
+    }
+
+    private static String coreStatus(Session session) {
+        return session.getSummaryStatus() == SummaryStatus.VIEWED
+                ? SummaryStatus.DONE.value()
+                : session.getSummaryStatus().value();
     }
 
     /**
