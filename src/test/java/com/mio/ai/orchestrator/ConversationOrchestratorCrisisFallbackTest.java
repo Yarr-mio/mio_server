@@ -195,6 +195,25 @@ class ConversationOrchestratorCrisisFallbackTest {
     }
 
     @Test
+    @DisplayName("세션·유저 조회가 죽어도 활성 triage 면 핫라인이 포함된다")
+    void sessionLookupFailureDuringActiveFlowFallsBackWithHotlines() {
+        // triage 조회는 sessionId 하나만 필요하므로 세션·유저 조회보다 앞에 있어야 한다.
+        // 뒤에 있으면 이 두 조회가 DB 장애로 죽는 순간 위기 맥락 표시가 붙을 기회가 없고,
+        // fail-closed 장치가 호출될 기회조차 얻지 못한다.
+        when(crisisFixedFlowCoordinator.hasActiveFlow(sessionId)).thenReturn(true);
+        when(sessionRepository.findById(sessionId))
+                .thenThrow(new RuntimeException("db down before session load"));
+
+        CapturingEmitter emitter = new CapturingEmitter();
+        orchestrator.handle(userId, sessionId, "네", emitter, null);
+
+        assertThat(emitter.payload())
+                .as("세션 조회 실패라도 활성 triage 면 핫라인이 있어야 한다")
+                .contains("109")
+                .contains("1577-0199");
+    }
+
+    @Test
     @DisplayName("활성 여부를 조회하지 못하면 핫라인을 포함하는 쪽으로 닫는다")
     void probeFailureFallsBackWithHotlines() {
         // 조회 자체가 실패하면 triage 중인지 알 수 없다. 진행 중인 triage 를 놓치는 쪽이

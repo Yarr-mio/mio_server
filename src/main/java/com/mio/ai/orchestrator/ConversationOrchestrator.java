@@ -162,6 +162,15 @@ public class ConversationOrchestrator {
         MDC.put("sessionId", sessionId.toString());
 
         try {
+            // 이 세션이 이미 위기 triage 중인지 **가장 먼저** 확인한다. 아래 세션·유저 조회부터
+            // 턴 열기까지 전부 DB 를 타므로 실패할 수 있고, 그때 위기 맥락 표시가 없으면
+            // 상담 전화번호가 빠진 일반 재시도 문구가 나간다 — 이 PR 이 없애려는 경로다.
+            // sessionId 하나만 있으면 되는 조회라 어떤 것보다 앞에 둘 수 있다.
+            // 라우팅 자체는 순서를 지켜 아래에서 하고, 여기서는 폴백 판단에 필요한 사실만 잡는다.
+            if (crisisFixedFlowCoordinator.hasActiveFlow(sessionId)) {
+                crisisContextRef.set(true);
+            }
+
             Session session = sessionRepository.findById(sessionId)
                     .orElseThrow(() -> new BusinessException(ErrorCode.SESSION_NOT_FOUND));
             User user = userRepository.findById(userId)
@@ -177,14 +186,6 @@ public class ConversationOrchestrator {
                 aiTurnMetrics.recordReplay(System.currentTimeMillis() - startMs);
                 emitter.complete();
                 return;
-            }
-
-            // 이 세션이 이미 위기 triage 중인지 먼저 확인한다. 아래 이력 조회·턴 열기는
-            // DB 를 타므로 실패할 수 있고, 그때 위기 맥락 표시가 없으면 상담 전화번호가 빠진
-            // 일반 재시도 문구가 나간다 — 이 PR 이 없애려는 바로 그 경로다. 라우팅 자체는
-            // 순서를 지켜 아래에서 하고, 여기서는 폴백 판단에 필요한 사실만 미리 잡는다.
-            if (crisisFixedFlowCoordinator.hasActiveFlow(sessionId)) {
-                crisisContextRef.set(true);
             }
 
             // 1. Normalize
