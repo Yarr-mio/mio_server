@@ -1,0 +1,12 @@
+# 잠금 평가셋과 매니페스트는 온디스크 바이트로 해시한다 (이슈 #454).
+#
+# LockedEvalSetIntegrityTest 는 파일 원본 바이트의 SHA-256 을 매니페스트와 대조한다.
+# Windows 기본값 core.autocrlf=true 로 체크아웃하면 개행이 CRLF 로 바뀌어, 아무도 파일을
+# 고치지 않았는데 변조로 보고된다. 반대로 개행이 조용히 바뀐 채 매니페스트를 재생성하면
+# 잠금 diff 가 전 줄 변경으로 뒤덮여 실제 라벨 변경이 묻힌다. 그래서 개행을 LF 로 고정한다.
+#
+# 범위는 잠금 리소스와 그 재생성 스크립트로 한정한다 — 저장소 전체에 text=auto 를 걸면
+# 이 PR 과 무관한 재정규화 diff 가 섞인다.
+src/test/resources/eval/locked/*.json text eol=lf
+src/test/resources/eval/locked/*.txt  text eol=lf
+scripts/eval/locked_eval_manifest.py  text eol=lf
