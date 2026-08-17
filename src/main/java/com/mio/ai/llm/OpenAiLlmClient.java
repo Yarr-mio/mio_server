@@ -66,6 +66,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             "REPORT_NARRATIVE",
             "RETRIEVAL_QUERY_EMBEDDING",
             "SESSION_SUMMARY",
+            "SHADOW_GENERATION",
             "SUMMARY_RENDER",
             "SUMMARY_STORAGE_EMBEDDING",
             "TODO_PERSONALIZER",
