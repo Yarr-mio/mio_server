@@ -142,6 +142,48 @@ final class ContractEvalSet {
     }
 
     /**
+     * 실행 유효성 상한의 <b>사전 등록</b> ({@code runValidity}, P0-3 MEDIUM-3).
+     *
+     * <p>{@code go-no-go}·{@code screening-elimination} 과 같은 규율을 쓴다 — 문턱은 데이터에
+     * 등록하고, 실행 결과를 보고 값을 고치는 것은 상한이 아니라 사후 합리화다.
+     * {@link ContractComplianceMetrics#MAX_EXTERNAL_FAILURE_SHARE} 가 이 값을 읽으므로 가드와
+     * 사전 등록이 갈라질 수 없다.
+     *
+     * @param maxExternalFailureShare 외부 실패 턴 비율의 상한
+     * @param tradeoff                이 문턱이 실패 모드 둘을 한 값으로 다룬다는 사실과 검토했으나
+     *                                채택하지 않은 대안. 비어 있으면 로딩이 실패한다 — 문턱을
+     *                                근거 없이 바꾸지 못하게 하는 것이 이 필드의 목적이다
+     */
+    record RunValidity(String version, double maxExternalFailureShare, String rationale,
+                       List<String> tradeoff) {
+
+        RunValidity {
+            tradeoff = List.copyOf(tradeoff);
+            if (maxExternalFailureShare <= 0 || maxExternalFailureShare > 1) {
+                throw new IllegalStateException(
+                        "외부 실패 상한이 비율이 아니다: " + maxExternalFailureShare);
+            }
+            if (rationale.isBlank() || tradeoff.isEmpty()) {
+                throw new IllegalStateException(
+                        "사전 등록 문턱에 근거·교환 기록이 없다 — 근거 없이 바꿀 수 있는 문턱은 문턱이 아니다");
+            }
+        }
+    }
+
+    static final RunValidity RUN_VALIDITY = readRunValidity();
+
+    private static RunValidity readRunValidity() {
+        JsonNode node = ROOT.path("runValidity");
+        List<String> tradeoff = new ArrayList<>();
+        node.path("singleThresholdTradeoff").forEach(v -> tradeoff.add(v.asText()));
+        return new RunValidity(
+                text(node, "version"),
+                node.path("maxExternalFailureShare").asDouble(),
+                text(node, "rationale"),
+                tradeoff);
+    }
+
+    /**
      * 세트가 <b>선언한</b> 모집단 이탈 목록 ({@code reporting.escapes}).
      *
      * <p>P0-3 이 읽기 시작했다. 이 목록은 지금까지 아무도 읽지 않는 산문이었고, 그래서 실행이

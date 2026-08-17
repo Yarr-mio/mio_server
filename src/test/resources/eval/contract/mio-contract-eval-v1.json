@@ -52,6 +52,22 @@
     "status": "SINGLE_AUTHOR_PENDING_SECOND_PASS",
     "notes": "expected.responseAct 은 '사람이 합의한 정답' 이 아니라 '이 케이스를 어느 계약 행위로 보내려고 썼는가' 라는 설계 의도다. 실제 행위는 InputJudge 판정에 달려 있으므로 실행이 관측한 분포를 그대로 보고한다."
   },
+  "runValidity": {
+    "version": "mio-contract-runvalidity-v1",
+    "registeredOn": "2026-08-17",
+    "source": "docs/eval/contract-compliance.md §5 · 이슈 #471 (P0-3)",
+    "rationale": "사전 등록한 상한이다. 실행 결과를 보고 값을 고치면 그건 상한이 아니라 사후 합리화다. 값을 바꾸는 변경은 개정 이력을 남기고 PR 에서 따로 검토한다. ContractComplianceMetrics.MAX_EXTERNAL_FAILURE_SHARE 가 이 값을 읽으므로 가드와 사전 등록이 갈라질 수 없다.",
+    "maxExternalFailureShare": 0.1,
+    "maxExternalFailureShareNote": "생성·판정·케이스 중단을 합친 외부 실패 턴이 전 케이스에서 이 비율을 넘으면 이 실행의 위반율을 인용하지 않는다. 분모는 시도한 전 케이스다 — 남은 모집단을 분모로 삼으면 실패가 늘수록 분모도 줄어 계량기가 자기 실패를 가린다.",
+    "singleThresholdTradeoff": [
+      "한 개의 10% 상한이 실패 모드 둘을 동시에 다룬다 — 그 사실을 여기 기록해 둔다 (P0-3 MEDIUM-3).",
+      "생성 호출 실패는 본문을 빼앗아 턴을 계약 분모에서 없앤다(이탈③). 모집단이 직접 줄어들므로 상한이 분명히 필요하다.",
+      "판정 호출 실패는 분모를 남긴다. PolicyEngine 4번 분기가 MEDIUM 을 세워 행위 분포를 EMOTION_CHECK 쪽으로 미는 것이 영향이다. 그래서 생성이 정상이고 판정만 rate limit 에 걸린 실행은 계약 모집단과 위반율이 온전할 수 있는데도 인용이 막힌다 — 그 오판의 대가는 유료 전수 재실행이다.",
+      "검토한 대안: 판정 실패 비율은 그것이 특정 행위의 minSubgroupN 을 위협할 때만 트립시키고, 생성 실패는 지금처럼 바로 트립시키는 두 갈래 상한.",
+      "채택하지 않은 이유: 그 대안은 행위별 모집단이 트립 산정에 들어가 가드가 복잡해진다. 그리고 이 PR 은 계량기를 고치는 PR 이다 — 가드를 느슨하게 하는 변경을 같은 PR 에 섞지 않는다. 현재는 엄격한 쪽을 택해 fail-closed 를 유지한다.",
+      "상태: 팀 승인 대기. 다음 재실행에서 판정 실패만으로 상한을 넘기는 사례가 실제로 나오면 그 사례를 근거로 개정을 상정한다. 집계가 external_failure_breakdown 으로 내역을 싣으므로 그 사례를 사후에 구분할 수 있다."
+    ]
+  },
   "reporting": {
     "minSubgroupN": 30,
     "rule": "행위별 위반율은 그 행위의 계약 적용 모집단이 minSubgroupN 미만이면 산출하지 않는다. ReportableRate 가 잠금 세트의 같은 하한을 읽어 강제한다.",

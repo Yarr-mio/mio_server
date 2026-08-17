@@ -258,6 +258,16 @@ record CellCaseOutcome(
      * 행위별 비교를 왜곡한다. {@code caseAborted} 는 타임아웃·예외로 케이스가 끝난 것이라
      * 원인이 모델이 아니라 동시성·rate limit 일 수 있다.
      *
+     * <h2>범위 — 전달 이후의 품질 축 호출은 여기 들어오지 않는다</h2>
+     *
+     * <p>이 축은 <b>계약 모집단과 행위 분포에 영향을 주는 실패</b>만 담는다. 전달·수용이 확정된
+     * <b>뒤에</b> 일어나는 품질 축 호출의 실패는 설계상 제외다 — {@code CbtMetadataClassifier} 가
+     * 그렇다. 그 호출이 실패해도 계약 분모는 줄지 않고 계획된 행위도 바뀌지 않으며, 영향은 이미
+     * 스스로 채점 대상에서 빠지는 축({@link CbtDeliveryJudgment#CLASSIFIER_FAILED}) 하나에
+     * 국한된다. {@code CellReport}·{@code CellMetrics} 도 같은 경계를 쓴다. 그래도 그 실패가
+     * 보이지 않으면 안 되므로 계약 manifest 가 {@code cbt_classifier_failures} 로 따로 싣는다
+     * (P0-3 MEDIUM-2) — 이 축에 섞지 않는 것과 감추는 것은 다르다.
+     *
      * @param generation  생성(또는 escalation 재생성) 호출이 실패했는가
      * @param judge       Input·Output 판정 호출이 실패해 폴백으로 접혔는가
      * @param caseAborted 케이스 자체가 타임아웃·예외로 중단됐는가
