@@ -397,6 +397,198 @@ class ContractComplianceHarnessTest {
                 .isNotEqualTo("$0.000000");
     }
 
+    // ── P0-3 MEDIUM-1: 이탈 자리는 분할이다 ────────────────────────────
+
+    /**
+     * 계획 이탈과 생성 실패가 <b>겹친</b> 턴 수.
+     *
+     * <p>Judge 가 보안을 {@code SUSPICIOUS} 로 올리고 등급이 {@code CLEAR_LOW} 면
+     * {@code PolicyEngine} 6번 분기가 {@code GENERATE} 를 내고 플래너는 {@code unplanned()} 를
+     * 돌려준다 — <b>계획은 계약 밖인데 생성은 실제로 돈다.</b> 그 턴의 생성까지 실패시키면 예전
+     * 집계에서 이탈②와 이탈③에 <b>동시에</b> 들어갔다.
+     */
+    private static final int OVERLAPPING_ESCAPES = 40;
+
+    @Test
+    @DisplayName("P0-3: 계획 이탈과 생성 실패가 겹친 턴은 정확히 한 이탈 자리에만 든다")
+    void overlappingEscapesLandInExactlyOneBucket() {
+        CellRunner.Result result = runWithPlannerAndGenerationOverlap();
+        List<CellCaseOutcome> outcomes = result.outcomes();
+        ContractComplianceMetrics metrics = metricsOf(result);
+
+        // ── 이 테스트가 헛돌지 않는다는 것을 먼저 못 박는다 ──────────────
+        //
+        // 겹침이 실제로 없으면 아래 단언은 전부 자명하게 통과한다. 예전 술어 넷을 그대로 재현해
+        // 두 자리 이상에 걸리는 턴이 정말 있는지 센다.
+        assertThat(outcomes).filteredOn(o -> legacyBucketCount(o) >= 2)
+                .as("겹치는 턴이 없으면 이 테스트는 아무것도 검사하지 않는다 — "
+                        + "PolicyEngine 6번 분기나 플래너가 바뀌었을 수 있다")
+                .hasSize(OVERLAPPING_ESCAPES);
+
+        // ── 예전 합산이 무엇을 냈는지 못 박는다 ────────────────────────
+        int legacySum = (int) outcomes.stream().mapToLong(
+                ContractComplianceHarnessTest::legacyBucketCount).sum();
+        assertThat(metrics.notApplicable() - legacySum)
+                .as("예전에는 한 턴을 두 번 세면서 notApplicable 은 한 번 세어 "
+                        + "'설명되지 않은 이탈' 이 음수가 됐다 — 없는 네 번째 이탈을 쫓게 된다")
+                .isNegative();
+
+        // ── 분할: 계획 층이 이긴다 ────────────────────────────────────
+        assertThat(metrics.unplanned())
+                .as("계획 단계에서 이미 계약 밖이 된 턴은 이탈② 다 — 생성이 성공했어도 "
+                        + "모집단에 들어오지 않으므로 그것이 이탈의 원인이다")
+                .isEqualTo(OVERLAPPING_ESCAPES);
+        assertThat(metrics.noBodyEscapes())
+                .as("같은 턴을 이탈③ 으로 또 세면 합계가 계약 밖 건수를 넘는다")
+                .isZero();
+        assertThat(metrics.explainedEscapes()).isEqualTo(metrics.notApplicable());
+        assertThat(metrics.unexplainedEscapes())
+                .as("분할이므로 0 이다 — 음수도 양수도 될 수 없다")
+                .isZero();
+
+        // ── 생성 실패 사실은 사라지지 않는다 ───────────────────────────
+        assertThat(metrics.generationFailures())
+                .as("이탈 분할이 이탈②를 골랐다는 것이 생성 실패를 없애지는 않는다 — "
+                        + "두 축은 다른 물음에 답한다")
+                .isEqualTo(OVERLAPPING_ESCAPES);
+        assertThat(metrics.externalFailures()).isEqualTo(OVERLAPPING_ESCAPES);
+
+        System.out.print(ContractComplianceReport.render(result, metrics));
+    }
+
+    @Test
+    @DisplayName("P0-3: 모든 계약 밖 턴이 정확히 한 자리를 받는다 — 두 실패 모양 모두에서")
+    void everyEscapeGetsExactlyOneBucket() {
+        for (CellRunner.Result result : List.of(runWithFailureShape(),
+                runWithPlannerAndGenerationOverlap())) {
+            ContractComplianceMetrics metrics = metricsOf(result);
+            int partitioned = 0;
+            for (ContractComplianceMetrics.Escape escape
+                    : ContractComplianceMetrics.Escape.values()) {
+                partitioned += metrics.escapeCount(escape);
+            }
+            assertThat(partitioned)
+                    .as("분할 합이 계약 밖 턴 수와 같아야 한다 (팔 %s)", metrics.arm().label())
+                    .isEqualTo(metrics.notApplicable());
+            assertThat(result.outcomes()).allSatisfy(outcome -> {
+                ContractComplianceMetrics.Escape escape =
+                        ContractComplianceMetrics.escapeOf(outcome);
+                if (outcome.contract() == ContractOutcome.NOT_APPLICABLE) {
+                    assertThat(escape).as("계약 밖 턴은 자리를 하나 받아야 한다").isNotNull();
+                } else {
+                    assertThat(escape).as("모집단에 남은 턴은 이탈 자리를 갖지 않는다").isNull();
+                }
+            });
+        }
+    }
+
+    /**
+     * 예전 집계의 술어 넷을 그대로 재현해 이 턴이 <b>몇 자리에</b> 걸리는지 센다.
+     *
+     * <p>2 이상이 나오는 턴이 MEDIUM-1 이 지적한 겹침이다. 고친 코드를 부르지 않고 여기 따로
+     * 적어 두는 이유는, 이 함수가 <b>결함의 모양</b>을 기록하기 때문이다 — 분할 구현이 나중에
+     * 바뀌어도 이 테스트는 여전히 같은 것을 묻는다.
+     */
+    private static long legacyBucketCount(CellCaseOutcome o) {
+        long count = 0;
+        if (o.observedResponseAct() == ResponseAct.CRISIS_ASSESSMENT) {
+            count++;
+        }
+        if (o.observedResponseAct() == ResponseAct.SECURITY_REFUSAL) {
+            count++;
+        }
+        if (o.observedResponseAct() == ResponseAct.UNPLANNED) {
+            count++;
+        }
+        if (o.contract() == ContractOutcome.NOT_APPLICABLE
+                && (o.externalFailure().removesBody()
+                || o.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EMPTY_RESPONSE)) {
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * 앞 {@value #OVERLAPPING_ESCAPES} 건을 <b>계획 이탈 + 생성 실패</b>로 만든다.
+     *
+     * <p>InputJudge 가 보안 {@code SUSPICIOUS} 를 돌려주게 하고(등급은 {@code CLEAR_LOW} 유지)
+     * 같은 케이스의 생성 호출을 실패시킨다. 판정 호출 자체는 <b>성공</b>한다 — 판정 실패까지
+     * 섞으면 무엇이 겹침을 만들었는지 흐려진다.
+     */
+    private static CellRunner.Result runWithPlannerAndGenerationOverlap() {
+        CellTokenLedger keys = new CellTokenLedger();
+        Set<UUID> overlapping = ContractEvalSet.CASES.stream()
+                .limit(OVERLAPPING_ESCAPES)
+                .map(c -> keys.keyFor(c.id()))
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+
+        CellVariant variant = CellVariant.of(BenchmarkCell.A, ContractPromptArm.WITH_CONTRACT_BLOCK);
+        try {
+            return CellRunner.withClientFactory(variant,
+                    CellModelRegistry.resolveForEstimate(BenchmarkCell.A, Map.of()),
+                    (ledger, pricing) -> new FailingLlmClient(new StubLlmClient(ledger, pricing),
+                            overlapping, Set.of(), overlapping))
+                    .run(ContractEvalSet.CASES, false, IDENTITY);
+        } catch (Exception e) {
+            throw new IllegalStateException("겹침 모양 재구성 실행이 죽었다", e);
+        }
+    }
+
+    @Test
+    @DisplayName("P0-3: 외부 실패 상한은 세트에 사전 등록되고 가드가 그 값을 읽는다")
+    void theExternalFailureThresholdIsPreRegistered() {
+        ContractEvalSet.RunValidity registered = ContractEvalSet.RUN_VALIDITY;
+
+        assertThat(ContractComplianceMetrics.MAX_EXTERNAL_FAILURE_SHARE)
+                .as("가드가 사전 등록값과 다른 값을 읽으면 등록이 아무것도 구속하지 않는다")
+                .isEqualTo(registered.maxExternalFailureShare());
+        assertThat(registered.maxExternalFailureShare())
+                .as("이 실행 시점의 사전 등록값을 못 박는다 — 바꾸려면 이 테스트도 같이 바뀌어야 하고, "
+                        + "그러면 변경이 PR diff 에 보인다")
+                .isEqualTo(0.10);
+
+        // 상한 하나가 실패 모드 둘을 다룬다는 사실이 데이터에 남아 있어야 한다 (MEDIUM-3).
+        // 근거 없이 값을 바꿀 수 있으면 사전 등록이 형식이 된다.
+        assertThat(registered.tradeoff())
+                .as("문턱의 교환 기록이 비면 나중에 그 문턱을 왜 이렇게 뒀는지 아무도 모른다")
+                .isNotEmpty()
+                .anySatisfy(line -> assertThat(line).contains("생성 호출 실패"))
+                .anySatisfy(line -> assertThat(line).contains("판정 호출 실패"))
+                .anySatisfy(line -> assertThat(line).contains("검토한 대안"))
+                .anySatisfy(line -> assertThat(line).contains("채택하지 않은 이유"))
+                .anySatisfy(line -> assertThat(line).contains("팀 승인 대기"));
+        assertThat(registered.rationale()).contains("사후 합리화");
+    }
+
+    @Test
+    @DisplayName("P0-3: CBT 분류 실패는 외부 실패 축 밖이지만 manifest 에는 보인다")
+    void cbtClassifierFailuresAreOutOfScopeButVisible() {
+        CellRunner.Result result = run(ContractPromptArm.WITH_CONTRACT_BLOCK, new PromptSpy());
+        ContractComplianceMetrics metrics = metricsOf(result);
+
+        assertThat(metrics.cbtClassifierCalls())
+                .as("분류기를 한 번도 부르지 않으면 이 경계를 검사할 대상이 없다")
+                .isPositive();
+        assertThat(result.outcomes())
+                .as("분류 실패는 ExternalFailure 축에 섞이지 않는다 — 전달·수용 이후 호출이다")
+                .allSatisfy(o -> {
+                    if (o.cbtClassifierFailed()) {
+                        assertThat(o.externalFailure().any())
+                                .as("케이스 %s: 분류 실패만으로 외부 실패가 되면 10%% 가드가 "
+                                        + "모집단과 무관한 축의 실패로 실행을 막는다", o.caseId())
+                                .isFalse();
+                    }
+                });
+
+        Map<String, String> metadata = ContractComplianceReport
+                .manifest(result, metrics, Map.of()).toMetadata();
+        assertThat(metadata.get("cbt_classifier_failures"))
+                .as("축에서 빼는 것과 감추는 것은 다르다 — 건수와 그 경계가 manifest 에 있어야 한다")
+                .contains("%d/%d회".formatted(metrics.cbtClassifierFailures(),
+                        metrics.cbtClassifierCalls()))
+                .contains("ExternalFailure 축에 넣지 않는다");
+    }
+
     @Test
     @DisplayName("P0-3: 세트가 선언한 이탈과 리포트가 이름 붙이는 이탈이 같은 수다")
     void declaredEscapesMatchWhatTheReportNames() {
@@ -434,7 +626,8 @@ class ContractComplianceHarnessTest {
             return CellRunner.withClientFactory(variant,
                     CellModelRegistry.resolveForEstimate(BenchmarkCell.A, Map.of()),
                     (ledger, pricing) -> new FailingLlmClient(
-                            new StubLlmClient(ledger, pricing), generationFailures, judgeFailures))
+                            new StubLlmClient(ledger, pricing), generationFailures, judgeFailures,
+                            Set.of()))
                     .run(ContractEvalSet.CASES, false, IDENTITY);
         } catch (Exception e) {
             throw new IllegalStateException("실패 모양 재구성 실행이 죽었다", e);
@@ -442,14 +635,30 @@ class ContractComplianceHarnessTest {
     }
 
     /**
-     * 지정한 케이스에서 외부 호출을 실패시키는 클라이언트.
+     * 지정한 케이스에서 외부 호출을 실패시키거나 Judge 보안 판정을 올리는 클라이언트.
      *
      * <p>실패 서명을 {@code #305} 실행의 로그와 같게 둔다 — {@code LLM streaming error} 는 생성
      * 스트리밍, {@code LLM complete error} 는 판정 호출이었다. 케이스 귀속은
      * {@code LlmRequest.userId}(= caseKey) 로 하며, 이는 원장이 쓰는 것과 같은 키다.
+     *
+     * @param suspiciousJudgements InputJudge 가 보안 {@code SUSPICIOUS} 를 돌려줄 케이스. 등급은
+     *                             {@code CLEAR_LOW} 로 두므로 {@code PolicyEngine} 6번 분기를 타고
+     *                             플래너가 {@code unplanned()} 를 낸다 — 계획 이탈(이탈②)을
+     *                             만드는 유일한 무과금 경로다
      */
     private record FailingLlmClient(LlmClient delegate, Set<UUID> generationFailures,
-                                    Set<UUID> judgeFailures) implements LlmClient {
+                                    Set<UUID> judgeFailures,
+                                    Set<UUID> suspiciousJudgements) implements LlmClient {
+
+        /** 룰이 CLEAN 이어도 EffectiveSecurityResolver 가 SUSPICIOUS 로 올리게 하는 판정. */
+        private static final String SUSPICIOUS_INPUT_JUDGE_JSON = """
+                {"security":{"level":"SUSPICIOUS","attack_types":["PROMPT_INJECTION"],
+                             "require_output_security_guard":true},
+                 "risk":{"risk_level":"CLEAR_LOW","risk_types":[],"crisis_attribution":"NONE",
+                         "recommended_generation_mode":"NORMAL","recommended_delivery":"SPECULATIVE",
+                         "require_output_safety_guard":false},
+                 "confidence":0.9}
+                """;
 
         @Override
         public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
@@ -466,11 +675,14 @@ class ContractComplianceHarnessTest {
 
         @Override
         public String completeJson(LlmRequest request) {
+            boolean inputJudge = CellModelRole.INPUT_SAFETY.component().equals(request.component());
             // InputJudge 만 실패시킨다. OutputJudge·CBT 분류까지 함께 실패시키면 무엇이 계량기를
             // 가렸는지가 흐려진다 — #305 에서 생성 실패를 덮어쓴 것은 InputJudge 였다.
-            if (CellModelRole.INPUT_SAFETY.component().equals(request.component())
-                    && judgeFailures.contains(request.userId())) {
+            if (inputJudge && judgeFailures.contains(request.userId())) {
                 throw new IllegalStateException("LLM complete error");
+            }
+            if (inputJudge && suspiciousJudgements.contains(request.userId())) {
+                return SUSPICIOUS_INPUT_JUDGE_JSON;
             }
             return delegate.completeJson(request);
         }
