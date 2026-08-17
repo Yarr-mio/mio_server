@@ -106,11 +106,14 @@ final class ContractComplianceReport {
         sb.append("          등급이 HIGH·MEDIUM 이면 앞 분기가 먼저 걸려 계약이 유지된다.\n");
         sb.append("      이탈③ 생성 본문 없음    %4d건  → ResponseContractValidator.notApplicable()%n"
                 .formatted(metrics.noBodyEscapes()));
-        sb.append("        ↑ 생성 실패 %d건 · 빈 응답 %d건. 본문이 없으면 계약 검사가 볼 것이 없어\n"
-                .formatted(metrics.generationFailures() + metrics.abortedCases(),
-                        metrics.emptyResponses()));
-        sb.append("          notApplicable() 을 돌려주고, 그 턴은 위반도 준수도 아닌 채 분모에서 빠진다.\n");
-        sb.append("          플래너 층 게이트(ContractEvalSetTest)는 생성을 돌리지 않아 이 경로를 못 본다.\n");
+        sb.append("        ↑ 본문이 없으면 계약 검사가 볼 것이 없어 notApplicable() 을 돌려주고, 그 턴은\n");
+        sb.append("          위반도 준수도 아닌 채 분모에서 빠진다. 플래너 층 게이트(ContractEvalSetTest)는\n");
+        sb.append("          생성을 돌리지 않아 이 경로를 못 본다.\n");
+        sb.append("""
+                ↑ 이탈은 분할이다 — 한 턴은 한 자리에만 든다. 계획 단계에서 이미 계약 밖이 된 턴(①②)의
+                  생성이 실패해도 그 턴은 ①② 에 남는다(먼저 이탈한 층이 원인이다). 생성 실패의 전체
+                  건수는 아래 [외부 실패] 의 '생성 호출 실패' 이고, 그 축은 따로 센다.
+        """);
         sb.append("      보안 거절          %4d건%n".formatted(metrics.securityRefusal()));
         appendEscapeAudit(sb, metrics);
         sb.append("    미검사          %4d건  ← 계약은 있으나 검사 지점이 없는 전달%n"
@@ -155,7 +158,13 @@ final class ContractComplianceReport {
               ↑ 한 턴이 두 가지로 실패할 수 있으므로 세 줄의 합은 외부 실패 턴 수보다 클 수 있다.
                 acceptance 라벨은 턴당 하나지만 이 집계는 라벨이 아니라 사실을 센다 — #305 실행은
                 생성 실패 25건 중 24건이 같은 턴의 판정 실패 라벨에 먹혀 1건으로 보고됐다.
+              ↑ 상한 하나가 위 두 실패 모드를 함께 다룬다. 생성 실패는 모집단을 줄이고 판정 실패는
+                행위 분포를 민다 — 대가가 다른데 문턱은 같다. 그 교환과 검토한 대안은 세트의
+                runValidity.singleThresholdTradeoff 에 사전 등록돼 있다 (팀 승인 대기).
         """);
+        sb.append("    CBT 분류 실패    %4d/%d회  ← 이 축에 넣지 않는다: 전달·수용 이후 호출이라%n"
+                .formatted(metrics.cbtClassifierFailures(), metrics.cbtClassifierCalls()));
+        sb.append("                            계약 분모도 행위 분포도 바꾸지 않는다 (보이게만 둔다)\n");
         if (!metrics.externalFailureWithinLimit()) {
             sb.append(("    ⚠ 외부 실패가 상한을 넘었다 — 이 실행의 위반율을 인용하지 않는다. "
                     + "남은 %d건은 무작위 표본이 아니다.%n")
@@ -408,6 +417,17 @@ final class ContractComplianceReport {
         extra.put("external_failure_breakdown", "생성 %d · 판정 %d · 케이스 중단 %d".formatted(
                 metrics.generationFailures(), metrics.judgeFailures(), metrics.abortedCases()));
         extra.put("external_failure_within_limit", String.valueOf(metrics.externalFailureWithinLimit()));
+        // 문턱이 어디에 사전 등록됐는지와, 그것이 실패 모드 둘을 한 값으로 다룬다는 사실을 같은
+        // manifest 에 싣는다 (P0-3 MEDIUM-3). 아카이브만 읽는 쪽도 그 교환을 알 수 있어야 한다.
+        extra.put("external_failure_threshold_registry", "%s (%s)".formatted(
+                ContractEvalSet.RUN_VALIDITY.version(), ContractEvalSet.RESOURCE));
+        extra.put("external_failure_threshold_tradeoff",
+                String.join(" / ", ContractEvalSet.RUN_VALIDITY.tradeoff()));
+        // CBT 분류 실패는 ExternalFailure 축에 넣지 않는다 (전달·수용 이후 호출). 그래도 그 축이
+        // 얼마나 안 재졌는지는 아카이브만 보고 알 수 있어야 한다 (P0-3 MEDIUM-2).
+        extra.put("cbt_classifier_failures", "%d/%d회 — %s".formatted(
+                metrics.cbtClassifierFailures(), metrics.cbtClassifierCalls(),
+                CBT_CLASSIFIER_SCOPE_NOTE));
         extra.putAll(costFields(result));
         extra.put("reporting_min_subgroup_n",
                 String.valueOf(LockedEvalSet.REPORTING.minSubgroupN()));
@@ -482,6 +502,17 @@ final class ContractComplianceReport {
                         suppressed.isEmpty() ? "없음" : String.join(" ", suppressed),
                         metrics.applicable(), metrics.violationRate().display());
     }
+
+    /**
+     * CBT 분류 실패가 외부 실패 축 <b>밖에</b> 있는 이유 (P0-3 MEDIUM-2).
+     *
+     * <p>경계를 manifest 에 같이 적는다. 값만 실으면 나중에 읽는 쪽이 "왜 이건 외부 실패에 안
+     * 들어갔나" 를 코드에서 되짚어야 한다.
+     */
+    static final String CBT_CLASSIFIER_SCOPE_NOTE =
+            "전달·수용 이후 호출이라 ExternalFailure 축에 넣지 않는다 (계약 분모·행위 분포를 "
+                    + "바꾸지 않고, 영향은 스스로 채점에서 빠지는 CBT 축 하나에 국한된다). "
+                    + "CellReport 와 같은 경계다";
 
     /** 이 실행이 무엇을 재구성했는지. 셀 벤치마크와 같은 경로를 돌되 세트만 다르다. */
     static final String SCOPE = "contract compliance (dev-gold) — "
