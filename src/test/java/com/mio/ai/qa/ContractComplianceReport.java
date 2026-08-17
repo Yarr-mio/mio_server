@@ -334,17 +334,23 @@ final class ContractComplianceReport {
     static Path archiveComparison(CellRunner.Result withRun, ContractComplianceMetrics with,
                                   ContractComplianceMetrics without, String report) {
         requireRealRun(withRun);
+        return EvalRunArchive.write("contract-compliance-ab",
+                manifest(withRun, with, comparisonExtra(with, without)), report);
+    }
+
+    /** A/B manifest 에만 실리는 항목. 두 팔의 수치를 한 값 안에서 맞댄다. */
+    static Map<String, String> comparisonExtra(ContractComplianceMetrics with,
+                                               ContractComplianceMetrics without) {
         Map<String, String> extra = new LinkedHashMap<>();
         extra.put("ab_arms", "%s / %s".formatted(with.arm().label(), without.arm().label()));
         extra.put("ab_applicable", "있음 %d / 없음 %d".formatted(with.applicable(), without.applicable()));
         extra.put("ab_violated", "있음 %d / 없음 %d".formatted(with.violated(), without.violated()));
         extra.put("ab_rate_with", with.violationRate().display());
         extra.put("ab_rate_without", without.violationRate().display());
-        extra.put("ab_external_failure", "있음 %d/%d · 없음 %d/%d — 두 팔의 유실이 다르면 페어링이 "
-                + "더 어긋난다".formatted(with.externalFailures(), with.cases(),
+        extra.put("ab_external_failure", ("있음 %d/%d · 없음 %d/%d — 두 팔의 유실이 다르면 페어링이 "
+                + "더 어긋난다").formatted(with.externalFailures(), with.cases(),
                         without.externalFailures(), without.cases()));
-        return EvalRunArchive.write("contract-compliance-ab",
-                manifest(withRun, with, extra), report);
+        return extra;
     }
 
     private static void requireRealRun(CellRunner.Result result) {

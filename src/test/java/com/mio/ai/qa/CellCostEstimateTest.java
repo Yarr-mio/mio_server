@@ -190,9 +190,17 @@ class CellCostEstimateTest {
         assertThat(estimate.hasReasoningModel()).isTrue();
         assertThat(estimate.withReasoningUsd())
                 .hasValueSatisfying(usd -> assertThat(usd).isGreaterThan(estimate.highUsd()));
-        assertThat(CellCostEstimator.render(projection))
+        String report = CellCostEstimator.render(projection);
+        assertThat(report)
                 .contains("추론 토큰 보정")
                 .contains("상한이 아니다");
+        assertThat(report)
+                .as("#473 과 같은 연산자 우선순위 버그 — formatted 가 마지막 리터럴에만 걸리면 "
+                        + "배수가 '×%%.1f' 리터럴로 남고 배수 값이 속성명 자리에 들어간다")
+                .doesNotContain("%.1f")
+                .doesNotContain("%s")
+                .contains("×%.1f 가정".formatted(CellCostEstimator.reasoningMultiplier()))
+                .contains("-D" + CellCostEstimator.REASONING_MULTIPLIER_PROPERTY);
     }
 
     @Test

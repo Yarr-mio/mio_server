@@ -441,9 +441,9 @@ final class CellCostEstimator {
         out.append("\n  [추론 토큰 보정 — 관측이 아니라 가정]\n");
         out.append("  ** o 계열·pro 계열은 내부 추론 토큰을 출력 단가로 과금한다. 스텁 견적에는 "
                 + "그 토큰이 통째로 없다. **\n");
-        out.append("  ** 그래서 추론 모델이 낀 셀의 금액은 상한이 아니다. 아래는 ×%.1f 가정을 "
+        out.append(("  ** 그래서 추론 모델이 낀 셀의 금액은 상한이 아니다. 아래는 ×%.1f 가정을 "
                 + "얹은 값이며, 실 실행 뒤에는 제공자 실측 토큰으로 대체한다 "
-                + "(-D%s 로 배수를 바꾼다). **%n"
+                + "(-D%s 로 배수를 바꾼다). **%n")
                 .formatted(reasoningMultiplier(), REASONING_MULTIPLIER_PROPERTY));
         withReasoning.forEach(estimate -> {
             out.append("    %-22s%n".formatted(estimate.variant().label()));
