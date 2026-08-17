@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +18,6 @@ import java.util.UUID;
 @Slf4j
 public class OutputJudge {
 
-    private static final String JUDGE_MODEL = "gpt-4o-mini";
     // JSON 판정 출력 상한.
     //
     // REWRITE 판정은 rewritten_content 에 <b>본문을 다시 써서</b> 돌려준다. 본문 자체가
@@ -49,12 +50,14 @@ public class OutputJudge {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+    private final ModelCatalog modelCatalog;
 
     public OutputJudgeResult judge(String aiResponse, OutputPreFilterResult preFilterResult,
                                     UUID userId, UUID sessionId) {
         try {
             String userContent = buildJudgePrompt(aiResponse, preFilterResult);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, userContent)
+            LlmRequest request = LlmRequest.of(modelCatalog.modelFor(ModelRole.OUTPUT_JUDGE),
+                            SYSTEM_PROMPT, userContent)
                     .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
                     .withAttribution("OUTPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);

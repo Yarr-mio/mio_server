@@ -29,6 +29,8 @@ import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.LlmUsage;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.memory.working.WorkingMessage;
@@ -98,7 +100,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class ConversationOrchestrator {
 
-    private static final String LLM_MODEL = "gpt-4o";
     // 출력 상한. 프롬프트가 "2-4문장"을 요구하고 실측 출력이 49~150 토큰이라 2.7배 여유다.
     // 상한이 없으면 폭주 응답 하나가 턴당 비용을 8.1배로 올린다 (기준선 문서 §5.7 R-1).
     private static final int LLM_MAX_COMPLETION_TOKENS = 400;
@@ -124,6 +125,7 @@ public class ConversationOrchestrator {
     private final ReactiveOntologyEligibility reactiveOntologyEligibility;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final CrisisFlowService crisisFlowService;
     private final CrisisFixedFlowCoordinator crisisFixedFlowCoordinator;
     private final SecurityRefusalTemplate securityRefusalTemplate;
@@ -390,7 +392,9 @@ public class ConversationOrchestrator {
                 List<WorkingMessage> historySlice = recentWorkingMessages.size() > 10
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
-                LlmRequest llmRequest = LlmRequest.of(LLM_MODEL, systemPrompt, historySlice, userMessage)
+                LlmRequest llmRequest = LlmRequest.of(
+                                modelCatalog.modelFor(ModelRole.GENERATION),
+                                systemPrompt, historySlice, userMessage)
                         .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS)
                         .withAttribution("MAIN_GENERATION", userId, sessionId);
                 StringBuilder contentBuilder = new StringBuilder();

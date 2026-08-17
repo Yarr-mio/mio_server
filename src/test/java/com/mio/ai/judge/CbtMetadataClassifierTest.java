@@ -32,7 +32,8 @@ class CbtMetadataClassifierTest {
                 }
                 ```
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                com.mio.ai.llm.ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "socratic_asked",
@@ -65,7 +66,8 @@ class CbtMetadataClassifierTest {
                   "reconstructed_thought": "최악은 아닐 수 있다"
                 }
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                com.mio.ai.llm.ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "completed",

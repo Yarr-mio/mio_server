@@ -144,6 +144,7 @@ class OutputJudgeTest {
                 return responseJson.get();
             }
         };
-        return new OutputJudge(llmClient, new ObjectMapper(), meterRegistry);
+        return new OutputJudge(llmClient, new ObjectMapper(), meterRegistry,
+                com.mio.ai.llm.ModelCatalog.defaults());
     }
 }

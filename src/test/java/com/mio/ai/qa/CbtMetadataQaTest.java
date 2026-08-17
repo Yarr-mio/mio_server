@@ -10,6 +10,7 @@ import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMessage;
 import com.mio.ai.policy.DecisionAction;
@@ -56,7 +57,7 @@ class CbtMetadataQaTest {
 
     @BeforeEach
     void setUp() {
-        classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(), ModelCatalog.defaults());
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         defaultProfile = new SafetyProfile(
                 "test_user", "default", Map.of(), List.of(), List.of(),

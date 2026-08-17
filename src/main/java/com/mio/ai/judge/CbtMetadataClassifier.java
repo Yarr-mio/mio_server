@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.memory.working.WorkingMessage;
 import com.mio.ai.safety.UserMessageSignal;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +20,6 @@ import java.util.UUID;
 @Slf4j
 public class CbtMetadataClassifier {
 
-    private static final String MODEL = "gpt-4o-mini";
     // JSON 분류 출력 상한. 예상 ~90 토큰.
     private static final int MAX_COMPLETION_TOKENS = 400;
 
@@ -46,6 +47,7 @@ public class CbtMetadataClassifier {
 
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
+    private final ModelCatalog modelCatalog;
 
     public CbtMetadataResult classify(
             String previousState,
@@ -63,7 +65,8 @@ public class CbtMetadataClassifier {
         }
 
         try {
-            LlmRequest request = LlmRequest.of(MODEL, SYSTEM_PROMPT, buildPrompt(
+            LlmRequest request = LlmRequest.of(modelCatalog.modelFor(ModelRole.CBT_CLASSIFIER),
+                    SYSTEM_PROMPT, buildPrompt(
                     previousState,
                     recentMessages,
                     userMessage,
