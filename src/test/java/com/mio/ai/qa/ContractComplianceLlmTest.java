@@ -24,6 +24,16 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 블록이 위반율을 실제로 낮추는지. 같은 케이스 목록·같은 {@link RunIdentity} 아래에서 두 팔을
  * 나란히 돌린다 — 실행을 나눠 돌린 결과는 비교할 수 없다.
  *
+ * <h2>두 팔이 각자 InputJudge 를 부르는 이유</h2>
+ *
+ * <p>한 팔의 판정과 계획을 계산해 두 팔이 재사용하면 <b>완전 페어링</b>이 되고 케이스당 판정
+ * 호출도 하나 줄어든다. 채점은 어차피 항상 실제 계획을 쓰므로 구조적으로도 어렵지 않다.
+ * 그런데도 각자 부르는 쪽을 택했다 — 프로덕션은 매 턴 판정을 부르고, 판정을 한 번만 불러
+ * 돌려쓰는 실행은 <b>프로덕션 경로를 재구성한 것이 아니다.</b> 이 평가의 전제는
+ * "셀 벤치마크와 같은 경로를 같은 자로 잰다" 이고, 그 전제를 깨서 얻는 페어링은 비교 가능성을
+ * 대가로 치른다. 그 대신 페어링이 완전하지 않다는 사실을 리포트가 명시하고, 행위별 n 을
+ * 팔마다 따로 싣는다.
+ *
  * <h2>왜 잠금 gold 가 아닌가</h2>
  *
  * <p>두 가지 이유가 각각 단독으로 결정적이며 {@link ContractEvalSet} 에 적혀 있다. 요약하면
@@ -107,8 +117,9 @@ class ContractComplianceLlmTest {
         metrics.forEach((arm, m) -> {
             assertThat(m.applicable())
                     .as("%s 팔에서 계약 적용 턴이 하한 미만이다 (%d) — P0-8 3단계와 같이 "
-                            + "건수만 인용할 수 있는 실행이 됐다. 세트가 아니라 라우팅이 바뀐 것인지 "
-                            + "먼저 확인한다 (위기 라우팅 %d · 계획 밖 %d)",
+                            + "건수만 인용할 수 있는 실행이 됐다. 룰 레이어는 전 케이스를 계약 "
+                            + "경로로 보내므로(ContractEvalSetTest), 원인은 Judge 판정이 만든 두 "
+                            + "이탈 중 하나다: 위기 승격 %d건 · 보안 의심 %d건",
                             arm.label(), m.applicable(), m.crisisRouted(), m.unplanned())
                     .isGreaterThanOrEqualTo(LockedEvalSet.REPORTING.minSubgroupN());
             assertThat(m.violationRate())

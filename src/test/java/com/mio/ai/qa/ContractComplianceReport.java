@@ -44,9 +44,19 @@ final class ContractComplianceReport {
 
         sb.append("\n  [모집단]\n");
         sb.append("    계약 적용       %4d건 / %d건%n".formatted(metrics.applicable(), metrics.cases()));
-        sb.append("    계약 밖         %4d건  (위기 라우팅 %d · 보안 거절 %d · 계획 밖 %d)%n"
-                .formatted(metrics.notApplicable(), metrics.crisisRouted(),
-                        metrics.securityRefusal(), metrics.unplanned()));
+        sb.append("    계약 밖         %4d건%n".formatted(metrics.notApplicable()));
+        sb.append("""
+              ↑ 룰 레이어는 전 케이스를 계약 경로로 보낸다 (ContractEvalSetTest). 여기 남는 것은
+                Judge 판정이 만든 이탈 둘뿐이며, 무과금으로 닫을 수 없는 것도 그 둘뿐이다.
+        """);
+        sb.append("      이탈① Judge 위기 승격    %4d건  → 고정 플로우%n"
+                .formatted(metrics.crisisRouted()));
+        sb.append("      이탈② Judge 보안 의심    %4d건  → GUARDED · 계획 범위 밖%n"
+                .formatted(metrics.unplanned()));
+        sb.append("        ↑ 룰이 CLEAN 이어도 Judge 가 non-CLEAN 이면 EffectiveSecurityResolver 가\n");
+        sb.append("          SUSPICIOUS 로 올리고, 등급이 LOW 이하면 planGeneration 이 unplanned 로 떨어진다.\n");
+        sb.append("          등급이 HIGH·MEDIUM 이면 앞 분기가 먼저 걸려 계약이 유지된다.\n");
+        sb.append("      보안 거절          %4d건%n".formatted(metrics.securityRefusal()));
         sb.append("    미검사          %4d건  ← 계약은 있으나 검사 지점이 없는 전달%n"
                 .formatted(metrics.unchecked()));
         sb.append("    생성 호출       %4d건  ·  외부 실패 %d건 · 빈 응답 %d건%n"
@@ -160,6 +170,12 @@ final class ContractComplianceReport {
     답 못 한다 두 팔의 계약 적용 모집단이 정확히 같지는 않다. 계획은 InputJudge 판정에서 나오고
              그 호출은 팔마다 따로 일어나므로, 같은 케이스가 팔마다 다른 행위로 계획될 수 있다.
              행위별 n 이 팔마다 다르면 그 차이도 함께 읽어야 한다.
+             (판정을 한 번만 부르고 두 팔이 재사용하면 완전 페어링이 되지만, 그러면 이 실행이
+              프로덕션 경로를 재구성한 것이 아니게 된다 — 프로덕션은 매 턴 판정을 부른다.
+              페어링을 얻는 대신 측정 대상이 프로덕션이 아니게 되는 교환이라 부르는 쪽을 택했다.)
+    답 못 한다 실제 사용자 표현으로의 일반화. 이 세트는 Mio 가 작성한 합성 발화이며 반말·이모지·
+             장문·멀티턴을 섞었어도 실제 트래픽 분포를 재현한 것이 아니다. 길이·질문 수 분포는
+             특히 문체에 민감하므로, 여기서 잰 변화폭을 그대로 프로덕션 수치로 옮기지 않는다.
 """);
         sb.append(LINE).append('\n');
         return sb.toString();

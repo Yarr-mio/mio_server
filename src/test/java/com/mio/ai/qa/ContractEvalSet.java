@@ -45,9 +45,16 @@ import java.util.Map;
  * 위기·보안 공격으로 확정한 턴은 고정 응답이라 계약 대상이 아니다.
  *
  * <p>그래서 이 세트는 <b>"룰이 Judge 로 올리되 위기·보안으로 확정하지 않는 턴"</b> 만 모은다.
- * 그 조건은 모델을 부르지 않고 검사할 수 있고({@link ContractEvalSetTest}), 그 조건을 만족하면
- * Judge 가 어떤 등급을 주더라도 — HIGH·MEDIUM·LOW 어느 쪽이든 — 세 계약 행위 중 하나가 계획된다.
- * 유일한 이탈은 Judge 가 {@code HARD_CRISIS} 로 올리는 경우이며, 그건 실행이 세어서 보고한다.
+ * 그 조건은 모델을 부르지 않고 검사할 수 있고, {@link ContractEvalSetTest} 가 합성
+ * {@code InputJudgeResult} 로 <b>실제</b> {@code PolicyEngine}·{@code ResponsePlanner} 를
+ * 등급 × 보안 판정 전 조합에 통과시켜 확인한다.
+ *
+ * <p><b>보장은 무조건이 아니라 "Judge 판정 modulo" 다.</b> 이탈이 정확히 둘 있고 둘 다 Judge 가
+ * 내리는 판정이라 무과금으로 닫을 수 없다 — (1) Judge 가 {@code HARD_CRISIS} 로 올리는 경우,
+ * (2) Judge 자신의 보안 판정이 non-CLEAN 이라 {@code EffectiveSecurityResolver} 가
+ * {@code SUSPICIOUS} 로 올리고 등급이 {@code LOW} 이하인 경우. 실행이 각각
+ * {@code crisis_routed}·{@code unplanned_turns} 로 세어 보고하며, <b>이름 없는 세 번째 이탈이
+ * 생기면 테스트가 실패한다.</b>
  *
  * <p><b>행위별</b> 분포는 그래도 실행 전에 확정할 수 없다 — 어느 행위가 계획되는지는 Judge
  * 판정이 정하기 때문이다. {@code expected.responseAct} 는 정답 라벨이 아니라 <b>설계 의도</b>이며,
