@@ -29,8 +29,7 @@ import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.LlmUsage;
-import com.mio.ai.llm.ModelCatalog;
-import com.mio.ai.llm.ModelRole;
+import com.mio.ai.llm.GenerationCanaryRouter;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.memory.working.WorkingMessage;
@@ -125,7 +124,7 @@ public class ConversationOrchestrator {
     private final ReactiveOntologyEligibility reactiveOntologyEligibility;
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
-    private final ModelCatalog modelCatalog;
+    private final GenerationCanaryRouter generationCanaryRouter;
     private final CrisisFlowService crisisFlowService;
     private final CrisisFixedFlowCoordinator crisisFixedFlowCoordinator;
     private final SecurityRefusalTemplate securityRefusalTemplate;
@@ -393,7 +392,7 @@ public class ConversationOrchestrator {
                         ? recentWorkingMessages.subList(recentWorkingMessages.size() - 10, recentWorkingMessages.size())
                         : recentWorkingMessages;
                 LlmRequest llmRequest = LlmRequest.of(
-                                modelCatalog.modelFor(ModelRole.GENERATION),
+                                generationCanaryRouter.modelFor(userId),
                                 systemPrompt, historySlice, userMessage)
                         .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS)
                         .withAttribution("MAIN_GENERATION", userId, sessionId);
