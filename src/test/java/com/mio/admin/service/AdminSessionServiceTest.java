@@ -8,6 +8,8 @@ import com.mio.common.audit.AuditLog;
 import com.mio.common.audit.AuditLogRepository;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.crisis.domain.CrisisEvent;
+import com.mio.session.domain.Message;
+import com.mio.session.domain.MessageRole;
 import com.mio.session.domain.Session;
 import com.mio.session.repository.MessageRepository;
 import com.mio.session.repository.SessionRepository;
@@ -109,5 +111,75 @@ class AdminSessionServiceTest {
         assertThat(response.timeline().get(0))
                 .containsEntry("type", "audit_log")
                 .containsEntry("action", "USER_WITHDRAW");
+    }
+
+    @Test
+    @DisplayName("위기 이벤트 이후에 메시지가 있으면 continued_engagement가 true다 (이슈 #475)")
+    void getTimeline_messageAfterCrisisEvent_continuedEngagementTrue() {
+        User user = User.builder().id(userId).build();
+        Session session = Session.builder().id(sessionId).user(user).build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        OffsetDateTime crisisAt = OffsetDateTime.now();
+        CrisisEvent crisisEvent = CrisisEvent.builder()
+                .id(UUID.randomUUID()).user(user).session(session)
+                .triggerType("keyword").severity(2).operatorReviewed(false)
+                .createdAt(crisisAt)
+                .build();
+        when(crisisEventRepository.findBySession_IdOrderByCreatedAtAsc(sessionId))
+                .thenReturn(List.of(crisisEvent));
+
+        Message afterMessage = Message.builder()
+                .id(UUID.randomUUID()).session(session).user(user)
+                .role(MessageRole.USER).contentCiphertext(new byte[]{1}).contentDekId("dek")
+                .createdAt(crisisAt.plusMinutes(1))
+                .build();
+        when(messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(afterMessage));
+        when(messageEncryptor.decrypt(any())).thenReturn("hi".getBytes());
+        when(aiPolicyDecisionRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of());
+        when(aiPolicyDecisionRepository.sumCostUsdBySessionId(sessionId)).thenReturn(BigDecimal.ZERO);
+        when(auditLogRepository.findByResourceIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
+
+        SessionTimelineResponse response = service.getTimeline(sessionId);
+
+        var crisisItem = response.timeline().stream()
+                .filter(item -> "crisis_event".equals(item.get("type")))
+                .findFirst().orElseThrow();
+        assertThat(crisisItem).containsEntry("continued_engagement", true);
+    }
+
+    @Test
+    @DisplayName("위기 이벤트 이후에 메시지가 없으면 continued_engagement가 false다 (이슈 #475)")
+    void getTimeline_noMessageAfterCrisisEvent_continuedEngagementFalse() {
+        User user = User.builder().id(userId).build();
+        Session session = Session.builder().id(sessionId).user(user).build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+
+        OffsetDateTime crisisAt = OffsetDateTime.now();
+        CrisisEvent crisisEvent = CrisisEvent.builder()
+                .id(UUID.randomUUID()).user(user).session(session)
+                .triggerType("keyword").severity(2).operatorReviewed(false)
+                .createdAt(crisisAt)
+                .build();
+        when(crisisEventRepository.findBySession_IdOrderByCreatedAtAsc(sessionId))
+                .thenReturn(List.of(crisisEvent));
+
+        Message beforeMessage = Message.builder()
+                .id(UUID.randomUUID()).session(session).user(user)
+                .role(MessageRole.USER).contentCiphertext(new byte[]{1}).contentDekId("dek")
+                .createdAt(crisisAt.minusMinutes(1))
+                .build();
+        when(messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of(beforeMessage));
+        when(messageEncryptor.decrypt(any())).thenReturn("hi".getBytes());
+        when(aiPolicyDecisionRepository.findBySessionIdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of());
+        when(aiPolicyDecisionRepository.sumCostUsdBySessionId(sessionId)).thenReturn(BigDecimal.ZERO);
+        when(auditLogRepository.findByResourceIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
+
+        SessionTimelineResponse response = service.getTimeline(sessionId);
+
+        var crisisItem = response.timeline().stream()
+                .filter(item -> "crisis_event".equals(item.get("type")))
+                .findFirst().orElseThrow();
+        assertThat(crisisItem).containsEntry("continued_engagement", false);
     }
 }

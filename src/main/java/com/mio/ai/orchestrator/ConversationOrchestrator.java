@@ -1032,6 +1032,16 @@ public class ConversationOrchestrator {
                         sessionId)
                 : CbtMetadataResult.none();
 
+        if (metadata.completionReason() != null) {
+            try {
+                // 운영자 반응신호 조회(이슈 #475)에서 쓰기 위해 세션에 남긴다 — 지금까지는
+                // DoneEvent SSE로만 나가고 DB에는 없어서 세션 종료 후에는 조회할 방법이 없었다.
+                sessionRepository.updateCbtCompletionReason(sessionId, metadata.completionReason());
+            } catch (Exception e) {
+                log.warn("Failed to persist cbtCompletionReason for sessionId={} — continuing", sessionId, e);
+            }
+        }
+
         UUID emotionScoreTargetId = null;
         if (metadata.shouldCreateEmotionScoreTarget()) {
             try {

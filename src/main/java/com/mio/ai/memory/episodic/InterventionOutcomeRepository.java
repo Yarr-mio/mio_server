@@ -15,4 +15,6 @@ public interface InterventionOutcomeRepository extends JpaRepository<Interventio
             LIMIT 20
             """)
     List<InterventionOutcome> findRecentByUserId(UUID userId);
+
+    List<InterventionOutcome> findBySessionId(UUID sessionId);
 }

@@ -143,6 +143,14 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
             @Param("lastMessageAt") OffsetDateTime lastMessageAt
     );
 
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("""
+            UPDATE Session s
+            SET s.cbtCompletionReason = :reason
+            WHERE s.id = :sessionId
+            """)
+    void updateCbtCompletionReason(@Param("sessionId") UUID sessionId, @Param("reason") String reason);
+
     /**
      * 사용자의 모든 세션 ID (이슈 #373).
      *

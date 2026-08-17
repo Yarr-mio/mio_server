@@ -1,8 +1,10 @@
 package com.mio.admin.controller;
 
 import com.mio.admin.dto.SessionCostResponse;
+import com.mio.admin.dto.SessionReactionsResponse;
 import com.mio.admin.dto.SessionTimelineResponse;
 import com.mio.admin.service.AdminSessionCostService;
+import com.mio.admin.service.AdminSessionReactionsService;
 import com.mio.admin.service.AdminSessionService;
 import com.mio.common.response.ApiResponse;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +29,7 @@ public class AdminSessionController {
 
     private final AdminSessionService adminSessionService;
     private final AdminSessionCostService adminSessionCostService;
+    private final AdminSessionReactionsService adminSessionReactionsService;
 
     @GetMapping("/{sessionId}")
     public ResponseEntity<ApiResponse<SessionTimelineResponse>> getTimeline(@PathVariable UUID sessionId) {
@@ -36,5 +39,10 @@ public class AdminSessionController {
     @GetMapping("/{sessionId}/cost")
     public ResponseEntity<ApiResponse<SessionCostResponse>> getCost(@PathVariable UUID sessionId) {
         return ResponseEntity.ok(ApiResponse.ok(adminSessionCostService.getCost(sessionId)));
+    }
+
+    @GetMapping("/{sessionId}/reactions")
+    public ResponseEntity<ApiResponse<SessionReactionsResponse>> getReactions(@PathVariable UUID sessionId) {
+        return ResponseEntity.ok(ApiResponse.ok(adminSessionReactionsService.getReactions(sessionId)));
     }
 }
