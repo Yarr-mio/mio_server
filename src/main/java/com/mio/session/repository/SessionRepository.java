@@ -152,6 +152,18 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
     void updateCbtCompletionReason(@Param("sessionId") UUID sessionId, @Param("reason") String reason);
 
     /**
+     * 리텐션 반응신호(이슈 #476) — {@code after}(보통 세션 endedAt) 뒤,
+     * {@code beforeOrEqual}(보통 endedAt + 7일) 안에 이 유저의 다른 세션이 시작됐는지.
+     */
+    @Query("""
+            SELECT COUNT(s) > 0 FROM Session s
+            WHERE s.user.id = :userId AND s.startedAt > :after AND s.startedAt <= :beforeOrEqual
+            """)
+    boolean existsSessionStartedInWindow(@Param("userId") UUID userId,
+                                         @Param("after") OffsetDateTime after,
+                                         @Param("beforeOrEqual") OffsetDateTime beforeOrEqual);
+
+    /**
      * 사용자의 모든 세션 ID (이슈 #373).
      *
      * <p>Redis 캐시 키가 {@code session:{sessionId}:*} 라 사용자 단위 purge 를 하려면

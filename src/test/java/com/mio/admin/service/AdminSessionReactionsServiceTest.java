@@ -96,6 +96,7 @@ class AdminSessionReactionsServiceTest {
         assertThat(response.emotionTrend().delta()).isEqualTo(25);
         assertThat(response.summaryViewed()).isTrue();
         assertThat(response.notifiedBeforeSession()).isNull();
+        assertThat(response.returnedWithin7d()).isNull();
     }
 
     @Test
@@ -166,6 +167,52 @@ class AdminSessionReactionsServiceTest {
         SessionReactionsResponse response = service.getReactions(sessionId);
 
         assertThat(response.notifiedBeforeSession()).isFalse();
+    }
+
+    @Test
+    @DisplayName("세션 종료 후 7일 안에 재방문했으면 returned_within_7d가 true다 (이슈 #476)")
+    void getReactions_returnedWithin7Days_true() {
+        User user = User.builder().id(userId).build();
+        OffsetDateTime endedAt = startedAt.plusMinutes(30);
+        Session session = Session.builder()
+                .id(sessionId).user(user).characterId("mio")
+                .startedAt(startedAt).endedAt(endedAt)
+                .summaryStatus(SummaryStatus.PENDING)
+                .build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(interventionOutcomeRepository.findBySessionId(sessionId)).thenReturn(List.of());
+        when(userMemoryPreferenceRepository.findByUserId(userId)).thenReturn(Optional.empty());
+        when(characterInteractionRepository.findByUserIdAndCharacterId(userId, "mio")).thenReturn(Optional.empty());
+        when(messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of());
+        when(proactiveCareLogRepository.findMostRecentBeforeSessionStart(eq(userId), any(), any(), any()))
+                .thenReturn(List.of());
+        when(sessionRepository.existsSessionStartedInWindow(userId, endedAt, endedAt.plusDays(7)))
+                .thenReturn(true);
+
+        SessionReactionsResponse response = service.getReactions(sessionId);
+
+        assertThat(response.returnedWithin7d()).isTrue();
+    }
+
+    @Test
+    @DisplayName("세션이 아직 종료 안 됐으면 returned_within_7d는 false가 아니라 null이다 (이슈 #476)")
+    void getReactions_sessionNotEnded_returnedWithin7dIsNull() {
+        User user = User.builder().id(userId).build();
+        Session session = Session.builder()
+                .id(sessionId).user(user).characterId("mio").startedAt(startedAt)
+                .summaryStatus(SummaryStatus.PENDING)
+                .build();
+        when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
+        when(interventionOutcomeRepository.findBySessionId(sessionId)).thenReturn(List.of());
+        when(userMemoryPreferenceRepository.findByUserId(userId)).thenReturn(Optional.empty());
+        when(characterInteractionRepository.findByUserIdAndCharacterId(userId, "mio")).thenReturn(Optional.empty());
+        when(messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId)).thenReturn(List.of());
+        when(proactiveCareLogRepository.findMostRecentBeforeSessionStart(eq(userId), any(), any(), any()))
+                .thenReturn(List.of());
+
+        SessionReactionsResponse response = service.getReactions(sessionId);
+
+        assertThat(response.returnedWithin7d()).isNull();
     }
 
     private Session sessionWithCbtCompletionReason(User user, String reason, SummaryStatus summaryStatus) {

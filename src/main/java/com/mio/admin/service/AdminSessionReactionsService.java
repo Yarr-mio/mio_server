@@ -48,6 +48,9 @@ public class AdminSessionReactionsService {
     /** 세션 시작 전 이 기간 안에 발송된 알림까지만 "이 세션을 유발했을 수 있다"고 본다. */
     private static final Duration NOTIFICATION_LOOKBACK = Duration.ofHours(24);
 
+    /** 이슈 #476 — 세션 종료 후 이 기간 안에 재방문했는지를 리텐션 신호로 본다. */
+    private static final int RETENTION_WINDOW_DAYS = 7;
+
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
     private final InterventionOutcomeRepository interventionOutcomeRepository;
@@ -71,7 +74,8 @@ public class AdminSessionReactionsService {
                 session.getCbtCompletionReason(),
                 emotionTrend(sessionId),
                 session.getSummaryStatus() == SummaryStatus.VIEWED,
-                notifiedBeforeSession(userId, session.getStartedAt())
+                notifiedBeforeSession(userId, session.getStartedAt()),
+                returnedWithin7Days(userId, session)
         );
     }
 
@@ -127,5 +131,17 @@ public class AdminSessionReactionsService {
             return null;
         }
         return ProactiveCareLog.STATUS_OPENED.equals(logs.get(0).getNotificationStatus());
+    }
+
+    /**
+     * @return 세션이 아직 안 끝났으면 {@code null}(신호 없음), 끝났으면 그 뒤 7일 안에 이
+     *         유저의 다른 세션이 시작됐는지(이슈 #476)
+     */
+    private Boolean returnedWithin7Days(UUID userId, Session session) {
+        if (session.getEndedAt() == null) {
+            return null;
+        }
+        return sessionRepository.existsSessionStartedInWindow(
+                userId, session.getEndedAt(), session.getEndedAt().plusDays(RETENTION_WINDOW_DAYS));
     }
 }
