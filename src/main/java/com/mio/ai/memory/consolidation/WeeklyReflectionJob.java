@@ -2,6 +2,8 @@ package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.domain.UserSelfModel;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.repository.UserSelfModelRepository;
@@ -53,6 +55,7 @@ public class WeeklyReflectionJob {
 
     private final JdbcTemplate jdbcTemplate;
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final UserSelfModelRepository selfModelRepository;
     private final ObjectMapper objectMapper;
     private final MemoryConsentChecker memoryConsentChecker;
@@ -194,7 +197,8 @@ public class WeeklyReflectionJob {
 
     private String generateText(String systemPrompt, String context, UUID userId) {
         try {
-            return llmClient.completeText(LlmRequest.of("gpt-4o-mini", systemPrompt, context)
+            return llmClient.completeText(LlmRequest.of(modelCatalog.modelFor(ModelRole.WEEKLY_REFLECTION),
+                    systemPrompt, context)
                     .withMaxCompletionTokens(REFLECTION_MAX_COMPLETION_TOKENS)
                     .withAttribution("WEEKLY_REFLECTION", userId, null));
         } catch (Exception e) {

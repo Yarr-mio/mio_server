@@ -1,5 +1,6 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -34,7 +35,7 @@ class SessionSummaryRendererTest {
     @BeforeEach
     void setUp() {
         llmClient = mock(LlmClient.class);
-        renderer = new SessionSummaryRenderer(llmClient);
+        renderer = new SessionSummaryRenderer(llmClient, ModelCatalog.defaults());
     }
 
     @Test

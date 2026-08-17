@@ -192,13 +192,17 @@ class GenerationCanaryRouterTest {
 
     private static ModelCatalog catalog(List<String> allowed, List<String> priced) {
         ModelCatalogProperties props = new ModelCatalogProperties();
-        props.setAllowed(allowed);
+        List<String> withEmbedding = new java.util.ArrayList<>(allowed);
+        withEmbedding.add(ModelRole.EMBEDDING.defaultModel());
+        props.setAllowed(withEmbedding);
         LlmPricingProperties pricing = new LlmPricingProperties();
         Map<String, LlmPricingProperties.ModelPrice> table = new LinkedHashMap<>();
         for (String model : priced) {
             table.put(model, new LlmPricingProperties.ModelPrice(
                     BigDecimal.ONE, null, BigDecimal.ONE));
         }
+        table.putIfAbsent(ModelRole.EMBEDDING.defaultModel(),
+                new LlmPricingProperties.ModelPrice(BigDecimal.ONE, null, BigDecimal.ONE));
         pricing.setModels(table);
         return new ModelCatalog(props, pricing);
     }

@@ -1,5 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -33,7 +35,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class SessionSummaryRenderer {
 
-    private static final String MODEL = "gpt-4o-mini";
     // 2~3문장 200자를 요구한다. 한국어 1자 ≈ 0.71 토큰이라 ~142 토큰, 2배 이상 여유를 둔다.
     private static final int MAX_COMPLETION_TOKENS = 400;
     private static final int MAX_LENGTH = 200;
@@ -79,6 +80,7 @@ public class SessionSummaryRenderer {
                     "분명(히|해요|합니다)|틀림없(이|어요)|당신은 .{0,12}(사람이|성격이)"));
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
 
     /**
      * @param internalSummary 내부용 요약({@code summary_text})
@@ -94,7 +96,7 @@ public class SessionSummaryRenderer {
         try {
             StringBuilder response = new StringBuilder();
             LlmStreamResult result = llmClient.stream(
-                    LlmRequest.of(MODEL, buildSystemPrompt(persona), "세션 기록:\n" + internalSummary)
+                    LlmRequest.of(modelCatalog.modelFor(ModelRole.SUMMARY_RENDERER), buildSystemPrompt(persona), "세션 기록:\n" + internalSummary)
                             .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
                             .withAttribution("SUMMARY_RENDER", userId, sessionId),
                     response::append);

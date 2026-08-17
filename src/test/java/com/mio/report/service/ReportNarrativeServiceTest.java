@@ -1,6 +1,7 @@
 package com.mio.report.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,7 @@ class ReportNarrativeServiceTest {
         LlmClient llmClient = mock(LlmClient.class);
         when(llmClient.completeJson(any(LlmRequest.class)))
                 .thenReturn("{\"narrative\":\"이번 주도 잘 해냈어요.\",\"coaching_direction\":\"작은 휴식을 이어가요.\"}");
-        ReportNarrativeService service = new ReportNarrativeService(llmClient, new ObjectMapper());
+        ReportNarrativeService service = new ReportNarrativeService(llmClient, ModelCatalog.defaults(), new ObjectMapper());
 
         ReportNarrativeService.NarrativeResult result = service.generate("이번 주", 2, 42.0, List.of(), null);
 

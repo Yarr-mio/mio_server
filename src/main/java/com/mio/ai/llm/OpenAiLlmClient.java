@@ -34,7 +34,6 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
 
     private static final String CHAT_URL = "https://api.openai.com/v1/chat/completions";
     private static final String EMBEDDINGS_URL = "https://api.openai.com/v1/embeddings";
-    private static final String EMBEDDING_MODEL = "text-embedding-3-small";
     private static final String DONE_MARKER = "data: [DONE]";
     private static final String DATA_PREFIX = "data: ";
 
@@ -78,6 +77,9 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
     private final MeterRegistry meterRegistry;
     private final LlmCostCalculator costCalculator;
     private final AiCostEventWriter costEventWriter;
+    // 임베딩 모델은 카탈로그의 기동 해석을 따른다 (#482). 채팅 모델과 달리 요청에 실려
+    // 오지 않으므로 여기서 한 번 해석해 둔다.
+    private final String embeddingModel;
 
     public OpenAiLlmClient(
             @Value("${openai.api-key}") String apiKey,
@@ -85,13 +87,15 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             ObjectMapper objectMapper,
             MeterRegistry meterRegistry,
             LlmCostCalculator costCalculator,
-            AiCostEventWriter costEventWriter) {
+            AiCostEventWriter costEventWriter,
+            ModelCatalog modelCatalog) {
         this.apiKey = apiKey;
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.meterRegistry = meterRegistry;
         this.costCalculator = costCalculator;
         this.costEventWriter = costEventWriter;
+        this.embeddingModel = modelCatalog.modelFor(ModelRole.EMBEDDING);
     }
 
     private static final int MAX_RETRIES = 4;
@@ -338,7 +342,7 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
         boolean terminalRecorded = false;
         try {
             String requestBody = objectMapper.writeValueAsString(
-                    Map.of("model", EMBEDDING_MODEL, "input", text));
+                    Map.of("model", embeddingModel, "input", text));
 
             HttpRequest httpRequest = HttpRequest.newBuilder()
                     .uri(URI.create(EMBEDDINGS_URL))
@@ -352,8 +356,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
                     httpRequest, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
+                recordOutcome(embeddingModel, MODE_EMBED, "error");
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(embeddingModel), component, userId, sessionId);
                 terminalRecorded = true;
                 throw new RuntimeException("OpenAI Embeddings API error: " + response.statusCode());
             }
@@ -361,8 +365,8 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode embeddingNode = root.path("data").path(0).path("embedding");
             if (embeddingNode.isMissingNode() || !embeddingNode.isArray()) {
-                recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
+                recordOutcome(embeddingModel, MODE_EMBED, "error");
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(embeddingModel), component, userId, sessionId);
                 terminalRecorded = true;
                 throw new RuntimeException("Unexpected embeddings response structure: " + response.body());
             }
@@ -372,27 +376,27 @@ public class OpenAiLlmClient implements LlmClient, EmbeddingClient {
             }
 
             // 임베딩도 과금 대상이다. 빼면 mio.llm.cost.usd 가 실제 지출보다 낮게 나온다.
-            LlmUsage usage = extractUsage(root, EMBEDDING_MODEL);
-            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "success");
-            recordUsage(MODE_EMBED, usage != null ? usage : LlmUsage.unresolved(EMBEDDING_MODEL),
+            LlmUsage usage = extractUsage(root, embeddingModel);
+            recordOutcome(embeddingModel, MODE_EMBED, "success");
+            recordUsage(MODE_EMBED, usage != null ? usage : LlmUsage.unresolved(embeddingModel),
                     component, userId, sessionId);
 
             return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "interrupted");
-            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
+            recordOutcome(embeddingModel, MODE_EMBED, "interrupted");
+            recordUsage(MODE_EMBED, LlmUsage.unresolved(embeddingModel), component, userId, sessionId);
             throw new RuntimeException("Embeddings request interrupted", e);
         } catch (RuntimeException e) {
             if (!terminalRecorded) {
-                recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "aborted");
-                recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
+                recordOutcome(embeddingModel, MODE_EMBED, "aborted");
+                recordUsage(MODE_EMBED, LlmUsage.unresolved(embeddingModel), component, userId, sessionId);
             }
             throw e;
         } catch (Exception e) {
             log.error("Embeddings API error: {}", e.getMessage());
-            recordOutcome(EMBEDDING_MODEL, MODE_EMBED, "error");
-            recordUsage(MODE_EMBED, LlmUsage.unresolved(EMBEDDING_MODEL), component, userId, sessionId);
+            recordOutcome(embeddingModel, MODE_EMBED, "error");
+            recordUsage(MODE_EMBED, LlmUsage.unresolved(embeddingModel), component, userId, sessionId);
             throw new RuntimeException("Embeddings request failed", e);
         }
     }

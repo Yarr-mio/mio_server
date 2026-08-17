@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -31,7 +32,7 @@ class TodoActionPersonalizerTest {
     @BeforeEach
     void setUp() {
         llmClient = mock(LlmClient.class);
-        personalizer = new TodoActionPersonalizer(llmClient, new ObjectMapper());
+        personalizer = new TodoActionPersonalizer(llmClient, ModelCatalog.defaults(), new ObjectMapper());
     }
 
     @Test

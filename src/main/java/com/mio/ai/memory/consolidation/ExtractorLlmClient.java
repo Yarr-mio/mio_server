@@ -1,6 +1,8 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -21,7 +23,6 @@ import java.util.UUID;
 @Slf4j
 public class ExtractorLlmClient {
 
-    private static final String MODEL = "gpt-4o-mini";
     // JSON 추출 출력 상한. 항목 최대 3개라 여유를 둔다.
     private static final int MAX_COMPLETION_TOKENS = 600;
 
@@ -91,6 +92,7 @@ public class ExtractorLlmClient {
             """;
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
 
     public ExtractorResult extract(String sessionSummary, UUID userId, UUID sessionId) {
@@ -101,7 +103,7 @@ public class ExtractorLlmClient {
         StringBuilder responseBuilder = new StringBuilder();
         try {
             LlmStreamResult result = llmClient.stream(
-                    LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary)
+                    LlmRequest.of(modelCatalog.modelFor(ModelRole.EPISODE_EXTRACTOR), SYSTEM_PROMPT, sessionSummary)
                             .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
                             .withAttribution("EXTRACTOR", userId, sessionId),
                     responseBuilder::append

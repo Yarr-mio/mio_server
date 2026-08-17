@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -30,7 +31,7 @@ class ExtractorLlmClientTruncationTest {
     @DisplayName("절단된 응답은 파싱 가능해도 비운다 — 누락 필드가 기본값으로 굳는 것을 막는다")
     void truncatedResponseYieldsEmptyResult() {
         ExtractorLlmClient client = new ExtractorLlmClient(
-                stubClient(TRUNCATED_BUT_PARSEABLE, true), new ObjectMapper());
+                stubClient(TRUNCATED_BUT_PARSEABLE, true), ModelCatalog.defaults(), new ObjectMapper());
 
         ExtractorResult result = client.extract("세션 요약 본문", null, null);
 
@@ -45,7 +46,7 @@ class ExtractorLlmClientTruncationTest {
     @DisplayName("같은 응답이 절단되지 않았다면 그대로 파싱한다 — 절단 여부만이 차이다")
     void sameResponseIsParsedWhenNotTruncated() {
         ExtractorLlmClient client = new ExtractorLlmClient(
-                stubClient(TRUNCATED_BUT_PARSEABLE, false), new ObjectMapper());
+                stubClient(TRUNCATED_BUT_PARSEABLE, false), ModelCatalog.defaults(), new ObjectMapper());
 
         ExtractorResult result = client.extract("세션 요약 본문", null, null);
 

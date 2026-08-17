@@ -236,7 +236,8 @@ final class CellRunner {
         return new CellRunner(variant, registry, new CellTokenLedger(),
                 (ledger, pricing) -> new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(),
                         new ObjectMapper(), ledger.meterRegistry(),
-                        new LlmCostCalculator(pricing.asProperties()), ledger.writer()),
+                        new LlmCostCalculator(pricing.asProperties()), ledger.writer(),
+                        ModelCatalog.defaults()),
                 false);
     }
 

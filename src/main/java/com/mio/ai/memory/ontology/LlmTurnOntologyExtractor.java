@@ -2,6 +2,8 @@ package com.mio.ai.memory.ontology;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +21,6 @@ import java.util.UUID;
 @Slf4j
 public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
 
-    private static final String MODEL = "gpt-4o-mini";
     // JSON 추출 출력 상한. 예상 ~40 토큰. 잘리면 파싱 실패로 추출이 비어 반환된다.
     private static final int MAX_COMPLETION_TOKENS = 400;
     private static final String SYSTEM_PROMPT = """
@@ -34,6 +35,7 @@ public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
             """;
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -42,7 +44,7 @@ public class LlmTurnOntologyExtractor implements TurnOntologyExtractor {
             return TurnOntologySignal.empty();
         }
         try {
-            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
+            String response = llmClient.completeJson(LlmRequest.of(modelCatalog.modelFor(ModelRole.ONTOLOGY_EXTRACTOR), SYSTEM_PROMPT, userMessage)
                     .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
                     .withAttribution("ONTOLOGY_EXTRACTOR", userId, sessionId));
             JsonNode node = objectMapper.readTree(stripCodeFence(response));

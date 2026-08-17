@@ -10,7 +10,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -161,6 +163,41 @@ class CellModelRegistryTest {
         assertThatThrownBy(() -> BenchmarkCell.parse("A,Z"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("알 수 없는 셀 이름");
+    }
+
+    /**
+     * 이 sweep 은 <b>쉬운 실수 방지용</b>이다 — 상수 복붙으로 모델 리터럴이 되살아나는 것을
+     * 잡는다. 문자열 연결({@code "gp" + "t-..."}) 같은 의도적 우회는 못 잡고, 코드 라인 뒤
+     * 인라인 주석에 인용부호로 모델을 언급하면 오탐한다. 그 수준의 회피·언급은 리뷰 몫이다.
+     */
+    @Test
+    @DisplayName("프로덕션 소스 전체에 모델 리터럴이 카탈로그 밖에 없다 — #482 이후 두 개의 진실 금지")
+    void noModelLiteralsOutsideTheCatalog() throws IOException {
+        Path main = LockedEvalContaminationScanner.findRepoRoot().resolve("src/main/java");
+        Pattern literal = Pattern.compile("\"(gpt-|text-embedding-|o3|o4-mini)");
+
+        try (var files = Files.walk(main)) {
+            List<String> offenders = files
+                    .filter(p -> p.toString().endsWith(".java"))
+                    .filter(p -> !p.endsWith("ModelRole.java"))
+                    .filter(p -> {
+                        try {
+                            return Files.readAllLines(p, StandardCharsets.UTF_8).stream()
+                                    .map(String::trim)
+                                    // 주석은 모델을 언급할 수 있다 — 코드 라인만 본다
+                                    .filter(line -> !line.startsWith("//") && !line.startsWith("*")
+                                            && !line.startsWith("/*"))
+                                    .anyMatch(line -> literal.matcher(line).find());
+                        } catch (IOException e) {
+                            throw new UncheckedIOException(e);
+                        }
+                    })
+                    .map(p -> main.relativize(p).toString())
+                    .toList();
+            assertThat(offenders)
+                    .as("모델 ID 하드코딩이 남은 파일 — ModelRole 에 역할을 추가하고 카탈로그를 주입할 것")
+                    .isEmpty();
+        }
     }
 
     private static String sourceOf(Path root, String file) {
