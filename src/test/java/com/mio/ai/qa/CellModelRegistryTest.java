@@ -165,6 +165,11 @@ class CellModelRegistryTest {
                 .hasMessageContaining("알 수 없는 셀 이름");
     }
 
+    /**
+     * 이 sweep 은 <b>쉬운 실수 방지용</b>이다 — 상수 복붙으로 모델 리터럴이 되살아나는 것을
+     * 잡는다. 문자열 연결({@code "gp" + "t-..."}) 같은 의도적 우회는 못 잡고, 코드 라인 뒤
+     * 인라인 주석에 인용부호로 모델을 언급하면 오탐한다. 그 수준의 회피·언급은 리뷰 몫이다.
+     */
     @Test
     @DisplayName("프로덕션 소스 전체에 모델 리터럴이 카탈로그 밖에 없다 — #482 이후 두 개의 진실 금지")
     void noModelLiteralsOutsideTheCatalog() throws IOException {

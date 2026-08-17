@@ -7,11 +7,13 @@ import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.ModelCatalogProperties;
+import com.mio.ai.llm.ModelRole;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,11 +76,17 @@ class ModelRoutingWiringTest {
     private static ModelCatalog catalogWith(String roleKey) {
         ModelCatalogProperties props = new ModelCatalogProperties();
         props.setRoles(Map.of(roleKey, OVERRIDE_MODEL));
-        props.setAllowed(List.of("gpt-4o", "gpt-4o-mini", OVERRIDE_MODEL));
+
+        // 검증 대상이 아닌 역할 기본값(임베딩 포함)도 allowlist·단가 검증을 통과해야
+        // 카탈로그가 생성된다 — 전 역할 기본값을 깔고 override 모델만 얹는다.
+        List<String> models = new java.util.ArrayList<>(
+                Arrays.stream(ModelRole.values()).map(ModelRole::defaultModel).distinct().toList());
+        models.add(OVERRIDE_MODEL);
+        props.setAllowed(models);
 
         LlmPricingProperties pricing = new LlmPricingProperties();
         Map<String, LlmPricingProperties.ModelPrice> table = new LinkedHashMap<>();
-        for (String model : List.of("gpt-4o", "gpt-4o-mini", OVERRIDE_MODEL)) {
+        for (String model : models) {
             table.put(model, new LlmPricingProperties.ModelPrice(
                     BigDecimal.ONE, null, BigDecimal.ONE));
         }
