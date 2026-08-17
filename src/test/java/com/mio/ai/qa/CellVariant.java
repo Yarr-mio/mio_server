@@ -25,17 +25,43 @@ import java.util.Set;
  * {@code -PcellModels} 로 핀한 값을 쓰고, 핀이 없으면 fail-closed 로 막힌다.
  *
  * @param frontierCandidate 이 변형이 상위 모델 역할 전부에 쓸 후보 ID. {@code null} 이면 기존 핀
+ * @param contractArm       프롬프트에 {@code [응답 계약]} 블록을 넣는가 (이슈 #305). 계약 지시의
+ *                          효과는 <b>같은 실행 안에서</b> 재야 하므로 후보와 같은 축에 둔다 —
+ *                          실행을 나눠 재면 {@link RunIdentity} 가 비교를 거부한다
  */
-record CellVariant(BenchmarkCell cell, String frontierCandidate) {
+record CellVariant(BenchmarkCell cell, String frontierCandidate, ContractPromptArm contractArm) {
+
+    CellVariant {
+        if (contractArm == null) {
+            throw new IllegalArgumentException(
+                    "contractArm 이 없다 — 어느 프롬프트 조건에서 낸 수치인지 모르는 변형은 만들지 않는다");
+        }
+    }
+
+    /** 기존 호출부 형태. 계약 팔은 현행(프롬프트에 계약 블록 있음)이다. */
+    CellVariant(BenchmarkCell cell, String frontierCandidate) {
+        this(cell, frontierCandidate, ContractPromptArm.WITH_CONTRACT_BLOCK);
+    }
 
     /** 후보 스크리닝이 아닌 단일 변형. */
     static CellVariant of(BenchmarkCell cell) {
         return new CellVariant(cell, null);
     }
 
-    /** 리포트·아카이브·manifest 가 쓰는 이름. 후보가 다르면 이름이 다르다. */
+    /** 계약 A/B 의 한쪽 팔. 셀·후보는 그대로 두고 프롬프트 조건만 바꾼다. */
+    static CellVariant of(BenchmarkCell cell, ContractPromptArm arm) {
+        return new CellVariant(cell, null, arm);
+    }
+
+    /**
+     * 리포트·아카이브·manifest 가 쓰는 이름. 후보가 다르면 이름이 다르다.
+     *
+     * <p>계약 팔은 <b>기본값이 아닐 때만</b> 이름에 붙인다. 현행 벤치마크의 라벨이 한 글자도
+     * 바뀌지 않아야 과거 실행 기록과 나란히 읽을 수 있다.
+     */
     String label() {
-        return frontierCandidate == null ? cell.name() : cell.name() + "/" + frontierCandidate;
+        String base = frontierCandidate == null ? cell.name() : cell.name() + "/" + frontierCandidate;
+        return contractArm.isDefault() ? base : base + "/" + contractArm.fileToken();
     }
 
     /** 파일명 조각. {@code /} 는 경로 구분자라 그대로 쓸 수 없다. */
@@ -49,9 +75,10 @@ record CellVariant(BenchmarkCell cell, String frontierCandidate) {
 
     /** manifest 의 {@code cell} 값. 후보까지 포함해 기록만 보고도 어느 후보인지 알 수 있게 한다. */
     String manifestValue() {
-        return frontierCandidate == null
+        String base = frontierCandidate == null
                 ? cell.manifestValue()
                 : "%s [상위 모델 후보 %s]".formatted(cell.manifestValue(), frontierCandidate);
+        return contractArm.isDefault() ? base : "%s [%s]".formatted(base, contractArm.label());
     }
 
     /**

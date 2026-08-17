@@ -354,7 +354,7 @@ final class CellRunner {
                 false, null, false, false, false, false, false,
                 CellCaseOutcome.CbtDeliveryJudgment.NOT_JUDGED,
                 false,
-                ContractOutcome.NOT_APPLICABLE, List.of(),
+                ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
                 Acceptance.REJECTED_EXTERNAL_FAILURE, timedOut,
                 timedOut ? caseTimeout().toMillis() : 0L, 0L,
                 calls.size(),
@@ -498,15 +498,35 @@ final class CellRunner {
      */
     private record Delivery(Exposure exposure, boolean generationCalled, boolean escalated,
                             boolean outputJudgeCalled, boolean truncated, ContractOutcome contract,
-                            List<String> contractViolations, Acceptance acceptance,
+                            List<String> contractViolations,
+                            int responseSentences, int responseQuestions,
+                            Acceptance acceptance,
                             String deliveredText, long firstSubstantiveMs) {
 
         /** 모델을 부르지 않은 경로(위기 고정·보안 거절·가드)의 전달 결과. */
         static Delivery withoutGeneration(Exposure exposure, Acceptance acceptance,
                                           long firstSubstantiveMs) {
             return new Delivery(exposure, false, false, false, false,
-                    ContractOutcome.NOT_APPLICABLE, List.of(), acceptance, null, firstSubstantiveMs);
+                    ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0, acceptance, null,
+                    firstSubstantiveMs);
         }
+    }
+
+    /**
+     * 계약 검사가 읽은 본문의 문장·질문 수 (이슈 #305).
+     *
+     * <p>계수기는 {@code ResponseContractValidator} 의 것을 그대로 쓴다. 하네스가 정규식을
+     * 다시 쓰면 분포와 상한 판정이 다른 자로 잰 값이 된다.
+     */
+    private record TextShape(int sentences, int questions) {
+        static final TextShape NONE = new TextShape(0, 0);
+    }
+
+    private TextShape shapeOf(String text) {
+        return text == null
+                ? TextShape.NONE
+                : new TextShape(contractValidator.countSentences(text),
+                        contractValidator.countQuestions(text));
     }
 
     /**
@@ -541,7 +561,7 @@ final class CellRunner {
         long firstSubstantiveMs = generated.firstSubstantiveMs();
         if (generated.failed()) {
             return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
-                    ContractOutcome.NOT_APPLICABLE, List.of(),
+                    ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
                     Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
         }
         if (isEmpty(generated.text())) {
@@ -553,15 +573,16 @@ final class CellRunner {
                 outputPreFilter.checkWithCrisisContext(generated.text(), inputHadRiskSignal);
         ResponseContractResult contract = contractValidator.validate(plan, generated.text());
         ContractOutcome contractOutcome = outcomeOf(contract);
+        TextShape shape = shapeOf(generated.text());
 
         boolean needsSecondLook = !preFilter.passed() || contractOutcome == ContractOutcome.VIOLATED;
         if (!needsSecondLook) {
             return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
-                    contractOutcome, contract.violations(), Acceptance.ACCEPTED, generated.text(),
-                    firstSubstantiveMs);
+                    contractOutcome, contract.violations(), shape.sentences(), shape.questions(),
+                    Acceptance.ACCEPTED, generated.text(), firstSubstantiveMs);
         }
         return secondLook(decision, plan, userMessage, priorTurns, caseKey, generated,
-                preFilter, contract, firstSubstantiveMs, startNanos);
+                preFilter, contract, shape, firstSubstantiveMs, startNanos);
     }
 
     /**
@@ -579,8 +600,8 @@ final class CellRunner {
     private Delivery emptyResponse(PolicyDecision decision, Generated generated,
                                    long firstSubstantiveMs) {
         return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
-                ContractOutcome.NOT_APPLICABLE, List.of(), Acceptance.REJECTED_EMPTY_RESPONSE,
-                null, firstSubstantiveMs);
+                ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
+                Acceptance.REJECTED_EMPTY_RESPONSE, null, firstSubstantiveMs);
     }
 
     /** 공백만 있는 응답도 빈 응답이다 — 사용자가 보는 것이 없다는 점에서 다르지 않다. */
@@ -600,16 +621,16 @@ final class CellRunner {
     private Delivery secondLook(PolicyDecision decision, ResponsePlan plan, String userMessage,
                                 List<WorkingMessage> priorTurns, UUID caseKey, Generated generated,
                                 OutputPreFilterResult preFilter, ResponseContractResult contract,
-                                long firstSubstantiveMs, long startNanos) {
+                                TextShape shape, long firstSubstantiveMs, long startNanos) {
         ContractOutcome contractOutcome = outcomeOf(contract);
         if (variant.cell().harness().escalationEnabled()) {
-            return escalate(decision, plan, userMessage, priorTurns, caseKey, contract,
+            return escalate(decision, plan, userMessage, priorTurns, caseKey, contract, shape,
                     generated.truncated(), firstSubstantiveMs, startNanos);
         }
         if (!variant.cell().harness().outputJudgeEnabled()) {
             // 중복 Judge 제거 셀 — 결정론적 검사 결과가 최종이다.
             return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
-                    contractOutcome, contract.violations(),
+                    contractOutcome, contract.violations(), shape.sentences(), shape.questions(),
                     contractOutcome == ContractOutcome.VIOLATED
                             ? Acceptance.REJECTED_CONTRACT
                             : Acceptance.REJECTED_OUTPUT_JUDGE,
@@ -626,6 +647,7 @@ final class CellRunner {
         return new Delivery(judged.action() == OutputJudgeAction.CRISIS_FLOW
                 ? Exposure.CRISIS_FLOW : exposureOf(decision),
                 true, false, true, generated.truncated(), contractOutcome, contract.violations(),
+                shape.sentences(), shape.questions(),
                 acceptance, acceptance == Acceptance.ACCEPTED ? generated.text() : null,
                 firstSubstantiveMs);
     }
@@ -633,7 +655,8 @@ final class CellRunner {
     /** 난례를 상위(또는 지정된) 모델로 한 번 다시 생성한다. 회복하지 못하면 수용이 아니다. */
     private Delivery escalate(PolicyDecision decision, ResponsePlan plan, String userMessage,
                               List<WorkingMessage> priorTurns, UUID caseKey,
-                              ResponseContractResult contract, boolean firstPassTruncated,
+                              ResponseContractResult contract, TextShape firstPassShape,
+                              boolean firstPassTruncated,
                               long firstSubstantiveMs, long startNanos) {
         CellModelRole role = registry.has(CellModelRole.ESCALATION)
                 ? CellModelRole.ESCALATION
@@ -644,21 +667,24 @@ final class CellRunner {
         if (retry.failed()) {
             return new Delivery(exposureOf(decision), true, true, false, truncated,
                     outcomeOf(contract), contract.violations(),
+                    firstPassShape.sentences(), firstPassShape.questions(),
                     Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
         }
         if (isEmpty(retry.text())) {
             // 재생성이 빈 본문이면 회복이 아니다. "escalation 을 돌렸다" 는 사실이 전달을
             // 만들어 주지 않는다.
             return new Delivery(exposureOf(decision), true, true, false, truncated,
-                    ContractOutcome.NOT_APPLICABLE, List.of(),
+                    ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
                     Acceptance.REJECTED_EMPTY_RESPONSE, null, firstSubstantiveMs);
         }
         ResponseContractResult retryContract = contractValidator.validate(plan, retry.text());
         ContractOutcome retryOutcome = outcomeOf(retryContract);
+        // 보고되는 계약 결과가 재생성 본문의 것이므로 문장·질문 수도 같은 본문에서 센다.
+        TextShape retryShape = shapeOf(retry.text());
         boolean recovered = outputPreFilter.check(retry.text()).passed()
                 && retryOutcome != ContractOutcome.VIOLATED;
         return new Delivery(exposureOf(decision), true, true, false, truncated, retryOutcome,
-                retryContract.violations(),
+                retryContract.violations(), retryShape.sentences(), retryShape.questions(),
                 recovered ? Acceptance.ACCEPTED : Acceptance.REJECTED_CONTRACT,
                 recovered ? retry.text() : null, firstSubstantiveMs);
     }
@@ -673,8 +699,11 @@ final class CellRunner {
     private Generated callGeneration(PolicyDecision decision, ResponsePlan plan, String userMessage,
                                      List<WorkingMessage> priorTurns, UUID caseKey,
                                      CellModelRole role, long startNanos) {
+        // 계약 A/B 는 프롬프트에 넘기는 계획만 가른다 (이슈 #305). 검사에 쓰는 plan 은
+        // 호출부가 그대로 들고 있으므로, 두 팔이 같은 자로 채점된다.
         String systemPrompt = promptBuilder.buildSystemPrompt(decision.generationMode(),
-                decision.interventionHints(), null, DEFAULT_CHARACTER_ID, null, plan);
+                decision.interventionHints(), null, DEFAULT_CHARACTER_ID, null,
+                variant.contractArm().promptPlan(plan));
         String model = registry.modelFor(role);
         LlmRequest request = LlmRequest.of(model, systemPrompt, priorTurns, userMessage)
                 .withMaxCompletionTokens(registry.maxCompletionTokensFor(model))
@@ -750,6 +779,7 @@ final class CellRunner {
                         cbt.called(), cbt.failed(), cbt.interventionObserved()),
                 delivery.truncated(),
                 delivery.contract(), delivery.contractViolations(),
+                delivery.responseSentences(), delivery.responseQuestions(),
                 judgeResult != null && judgeResult.failed()
                         ? Acceptance.REJECTED_JUDGE_FAILURE : delivery.acceptance(),
                 false, totalMs, firstSubstantiveMs, calls.size(),

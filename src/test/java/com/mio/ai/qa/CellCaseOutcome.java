@@ -62,6 +62,19 @@ record CellCaseOutcome(
 
         ContractOutcome contract,
         List<String> contractViolations,
+        /**
+         * 계약 검사가 읽은 본문의 문장 수 (이슈 #305).
+         *
+         * <p>위반 여부와 다른 물음에 답하기 위한 값이다 — 계약 지시가 응답을 짧게·딱딱하게
+         * 만들었는가는 위반이 0 이어도 물어야 한다. {@code ResponseContractValidator} 의
+         * 계수기를 그대로 쓰므로 상한 판정과 같은 자로 잰 값이다.
+         *
+         * <p>본문이 없는 턴(고정 응답·빈 응답·외부 실패)은 0 이다. 0 은 "짧았다" 가 아니라
+         * "센 본문이 없다" 는 뜻이므로, 분포를 낼 때는 {@link #generationCalled()} 와 함께 읽는다.
+         */
+        int responseSentences,
+        /** 계약 검사가 읽은 본문의 질문 수 (이슈 #305). {@link #responseSentences} 와 같은 규칙. */
+        int responseQuestions,
         Acceptance acceptance,
         /**
          * 케이스 타임아웃으로 끝났는가.
