@@ -58,7 +58,13 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@link ResponsePlanner} 를 통과시킨다 — 등급({@code HARD_CRISIS·HIGH·MEDIUM·LOW·CLEAR_LOW})
  * × Judge 보안 판정({@code CLEAN·SUSPICIOUS}) + 호출 실패, 총 11칸.
  *
- * <h2>보장의 실제 범위 — 이탈은 <b>둘</b>이다</h2>
+ * <h2>보장의 실제 범위 — <b>플래너 층까지</b>이고, 그 층의 이탈은 둘이다</h2>
+ *
+ * <p><b>이 테스트가 검사하는 층을 먼저 적는다.</b> 여기서 도는 것은 정규화 → 보안 룰 →
+ * SafetyL1 → 신호 결합 → (합성 Judge) → {@link PolicyEngine} → {@link ResponsePlanner} 까지다.
+ * <b>생성은 돌지 않는다.</b> 그래서 이 테스트의 소진성 증명은 "계획이 계약 행위로 가는가" 에
+ * 대한 것이고, "그 계획으로 생성한 응답이 계약 검사까지 도달하는가" 는 다루지 않는다.
+ * 그 구별은 {@code #305} 실행이 실제로 요구했다 — 아래 "이 테스트가 볼 수 없는 이탈" 을 본다.
  *
  * <p>Judge 가 위기로 올리지도 의심하지도 않으면({@link JudgeCell#benign()}) 전 케이스가 세 계약
  * 행위 중 하나로 간다.
@@ -80,9 +86,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       로 센다. (등급이 HIGH·MEDIUM 이면 5·6번 분기가 먼저 걸려 계약이 유지된다.)</li>
  * </ol>
  *
- * <p>그래서 이 세트의 보장은 <b>"Judge 의 위기 승격과 보안 판정 modulo"</b> 다. 무조건적 보장이
- * 아니다. 대신 {@link #theJudgeMatrixHasExactlyTwoNamedEscapes()} 가 <b>이름 없는 세 번째 이탈이
- * 생기면 실패</b>하므로, 분기 순서가 바뀌어 보장이 조용히 좁아지는 일은 막는다.
+ * <p>그래서 이 세트의 보장은 <b>"플래너 층까지, Judge 의 위기 승격과 보안 판정 modulo"</b> 다.
+ * 무조건적 보장이 아니다. 대신 {@link #theJudgeMatrixHasExactlyTwoNamedEscapes()} 가 <b>플래너
+ * 층에 이름 없는 이탈이 생기면 실패</b>하므로, 분기 순서가 바뀌어 이 층의 보장이 조용히 좁아지는
+ * 일은 막는다.
+ *
+ * <h2>이 테스트가 볼 수 없는 이탈 — 이탈③ 생성 본문 없음 (P0-3)</h2>
+ *
+ * <p>이 테스트는 생성을 돌리지 않으므로, 계획까지 정상으로 갔다가 <b>생성이 본문을 내지 못해</b>
+ * 모집단에서 빠지는 이탈을 <b>구조적으로</b> 잡을 수 없다. 본문이 없으면
+ * {@code ResponseContractValidator} 가 {@code notApplicable()} 을 돌려주고 그 턴은 위반도 준수도
+ * 아닌 채 분모에서 사라진다. 이것은 이 테스트의 결함이 아니라 <b>범위</b>다 — 생성을 돌리려면
+ * 모델을 불러야 하고, 그러면 이 테스트는 "지불 전 게이트" 가 아니게 된다.
+ *
+ * <p>{@code #305} 유료 실행의 대조군이 정확히 그 상태였다. {@code 계약 밖 25건} 을 찍었는데
+ * 리포트가 그 25건을 설명하는 세 줄이 모두 0 이었고, 25건 전부가 생성 호출 실패였다. 그래서
+ * <b>실행 쪽</b>이 그 이탈에 이름을 붙여 세고({@code no_body_escapes}) 이탈 합계를 계약 밖
+ * 건수와 검산한다({@code ContractComplianceMetrics.unexplainedEscapes}). 이 테스트가 보장하는
+ * 것과 실행이 관측해야 하는 것을 이렇게 나눠 둔다 — 여기서 "세 번째 이탈이 없다" 를 주장하면
+ * 그 주장은 생성 층에 대해 근거가 없다.
  *
  * <p>행위별 분포는 여전히 보장하지 않는다 — 그것은 Judge 판정이 정하며, 하한 미달 행위의
  * 비율은 {@link ReportableRate} 가 막는다.
@@ -124,10 +146,14 @@ class ContractEvalSetTest {
     // ── 실행 가능한 소진성 증명 ─────────────────────────────────────
 
     /**
-     * 케이스 하나가 한 Judge 판정에서 도달하는 자리.
+     * 케이스 하나가 한 Judge 판정에서 도달하는 <b>플래너 층</b>의 자리.
      *
-     * <p>{@link #OTHER} 가 하나라도 나오면 이 세트의 모집단 논증에 <b>이름 없는 이탈</b>이
-     * 생겼다는 뜻이다. 그때 고쳐야 하는 것은 테스트가 아니라 논증이다.
+     * <p>{@link #OTHER} 가 하나라도 나오면 이 세트의 모집단 논증에 <b>플래너 층의 이름 없는
+     * 이탈</b>이 생겼다는 뜻이다. 그때 고쳐야 하는 것은 테스트가 아니라 논증이다.
+     *
+     * <p>여기 없는 이탈이 하나 더 있다 — 생성이 본문을 내지 못해 분모에서 빠지는 이탈③. 이
+     * enum 은 생성을 돌지 않는 층의 어휘라 그 값을 담지 않는다. 실행 쪽이
+     * {@code no_body_escapes} 로 센다 (P0-3, 클래스 javadoc).
      */
     private enum PlanOutcome {
         /** 세 계약 행위 중 하나로 계획됐고 계약 검사가 걸린다. */
@@ -186,7 +212,7 @@ class ContractEvalSetTest {
     }
 
     @Test
-    @DisplayName("등급×보안판정 전 조합을 실제 PolicyEngine·ResponsePlanner 에 통과시킨다 — 이탈은 딱 둘뿐이다")
+    @DisplayName("등급×보안판정 전 조합을 실제 PolicyEngine·ResponsePlanner 에 통과시킨다 — 플래너 층의 이탈은 딱 둘뿐이다")
     void theJudgeMatrixHasExactlyTwoNamedEscapes() {
         List<JudgeCell> matrix = judgeMatrix();
         Map<PlanOutcome, Integer> census = new EnumMap<>(PlanOutcome.class);
@@ -212,8 +238,9 @@ class ContractEvalSetTest {
         escapeCells.forEach(cell -> System.out.printf("  이탈 칸: %s%n", cell));
 
         assertThat(unexplained)
-                .as("논증에 이름이 없는 이탈 경로가 생겼다. PolicyEngine·ResponsePlanner 의 분기 "
-                        + "순서가 바뀌었을 가능성이 높고, 그러면 '지불 전 보장' 문장을 먼저 고쳐야 한다:%n  %s",
+                .as("플래너 층 논증에 이름이 없는 이탈 경로가 생겼다. PolicyEngine·ResponsePlanner 의 "
+                        + "분기 순서가 바뀌었을 가능성이 높고, 그러면 '지불 전 보장' 문장을 먼저 고쳐야 "
+                        + "한다. (생성 층의 이탈③은 이 테스트의 범위가 아니다 — 클래스 javadoc):%n  %s",
                         unexplained)
                 .isEmpty();
         assertThat(census.getOrDefault(PlanOutcome.ESCAPE_JUDGE_HARD_CRISIS, 0))

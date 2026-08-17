@@ -30,6 +30,7 @@ import com.mio.ai.policy.PolicyEngine;
 import com.mio.ai.prompt.PromptBuilder;
 import com.mio.ai.qa.CellCaseOutcome.Acceptance;
 import com.mio.ai.qa.CellCaseOutcome.ContractOutcome;
+import com.mio.ai.qa.CellCaseOutcome.ExternalFailure;
 import com.mio.ai.qa.CellCaseOutcome.Exposure;
 import com.mio.ai.qa.LockedEvalSet.LockedCase;
 import com.mio.ai.qa.LockedEvalSet.Turn;
@@ -355,7 +356,7 @@ final class CellRunner {
                 CellCaseOutcome.CbtDeliveryJudgment.NOT_JUDGED,
                 false,
                 ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
-                Acceptance.REJECTED_EXTERNAL_FAILURE, timedOut,
+                Acceptance.REJECTED_EXTERNAL_FAILURE, ExternalFailure.ofCaseAbort(), timedOut,
                 timedOut ? caseTimeout().toMillis() : 0L, 0L,
                 calls.size(),
                 calls.stream().mapToLong(CellTokenLedger.Call::promptTokens).sum(),
@@ -492,6 +493,10 @@ final class CellRunner {
     /**
      * 전달 결과.
      *
+     * @param externalFailure 이 전달 경로에서 관측된 외부 실패 사실 (P0-3). {@code acceptance} 와
+     *                        나눠 들고 다니는 이유는 {@code assemble()} 이 acceptance 를 판정 실패
+     *                        라벨로 덮어쓰기 때문이다 — 라벨에서 사실을 되읽으면 그 순간 덮어쓴
+     *                        만큼이 계량기에서 사라진다
      * @param deliveredText 사용자에게 전달된 본문. CBT 분류기 입력으로만 쓰고
      *                      {@link CellCaseOutcome} 에는 싣지 않는다 — 결과 타입에 본문이 들어가면
      *                      리포트·아카이브로 새어 나갈 경로가 생긴다
@@ -500,15 +505,15 @@ final class CellRunner {
                             boolean outputJudgeCalled, boolean truncated, ContractOutcome contract,
                             List<String> contractViolations,
                             int responseSentences, int responseQuestions,
-                            Acceptance acceptance,
+                            Acceptance acceptance, ExternalFailure externalFailure,
                             String deliveredText, long firstSubstantiveMs) {
 
         /** 모델을 부르지 않은 경로(위기 고정·보안 거절·가드)의 전달 결과. */
         static Delivery withoutGeneration(Exposure exposure, Acceptance acceptance,
                                           long firstSubstantiveMs) {
             return new Delivery(exposure, false, false, false, false,
-                    ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0, acceptance, null,
-                    firstSubstantiveMs);
+                    ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0, acceptance,
+                    ExternalFailure.NONE, null, firstSubstantiveMs);
         }
     }
 
@@ -562,7 +567,8 @@ final class CellRunner {
         if (generated.failed()) {
             return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
                     ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
-                    Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
+                    Acceptance.REJECTED_EXTERNAL_FAILURE, ExternalFailure.ofGeneration(), null,
+                    firstSubstantiveMs);
         }
         if (isEmpty(generated.text())) {
             return emptyResponse(decision, generated, firstSubstantiveMs);
@@ -579,7 +585,7 @@ final class CellRunner {
         if (!needsSecondLook) {
             return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
                     contractOutcome, contract.violations(), shape.sentences(), shape.questions(),
-                    Acceptance.ACCEPTED, generated.text(), firstSubstantiveMs);
+                    Acceptance.ACCEPTED, ExternalFailure.NONE, generated.text(), firstSubstantiveMs);
         }
         return secondLook(decision, plan, userMessage, priorTurns, caseKey, generated,
                 preFilter, contract, shape, firstSubstantiveMs, startNanos);
@@ -599,9 +605,11 @@ final class CellRunner {
      */
     private Delivery emptyResponse(PolicyDecision decision, Generated generated,
                                    long firstSubstantiveMs) {
+        // 빈 응답은 외부 실패가 아니다 — 호출은 성공했고 모델이 정상 응답으로 본문을 내지
+        // 않았다. 외부 실패로 세면 10% 가드가 모델 행동을 네트워크 장애로 읽는다.
         return new Delivery(exposureOf(decision), true, false, false, generated.truncated(),
                 ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
-                Acceptance.REJECTED_EMPTY_RESPONSE, null, firstSubstantiveMs);
+                Acceptance.REJECTED_EMPTY_RESPONSE, ExternalFailure.NONE, null, firstSubstantiveMs);
     }
 
     /** 공백만 있는 응답도 빈 응답이다 — 사용자가 보는 것이 없다는 점에서 다르지 않다. */
@@ -634,7 +642,7 @@ final class CellRunner {
                     contractOutcome == ContractOutcome.VIOLATED
                             ? Acceptance.REJECTED_CONTRACT
                             : Acceptance.REJECTED_OUTPUT_JUDGE,
-                    null, firstSubstantiveMs);
+                    ExternalFailure.NONE, null, firstSubstantiveMs);
         }
 
         OutputJudgeResult judged = outputJudge.judge(generated.text(), preFilter, caseKey, caseKey);
@@ -648,7 +656,10 @@ final class CellRunner {
                 ? Exposure.CRISIS_FLOW : exposureOf(decision),
                 true, false, true, generated.truncated(), contractOutcome, contract.violations(),
                 shape.sentences(), shape.questions(),
-                acceptance, acceptance == Acceptance.ACCEPTED ? generated.text() : null,
+                // OutputJudge 호출 실패도 외부 실패다. acceptance 는 판정 실패로 라벨되지만,
+                // 그 라벨이 사실을 대신하지 않는다.
+                acceptance, judged.failed() ? ExternalFailure.ofJudge() : ExternalFailure.NONE,
+                acceptance == Acceptance.ACCEPTED ? generated.text() : null,
                 firstSubstantiveMs);
     }
 
@@ -668,14 +679,16 @@ final class CellRunner {
             return new Delivery(exposureOf(decision), true, true, false, truncated,
                     outcomeOf(contract), contract.violations(),
                     firstPassShape.sentences(), firstPassShape.questions(),
-                    Acceptance.REJECTED_EXTERNAL_FAILURE, null, firstSubstantiveMs);
+                    Acceptance.REJECTED_EXTERNAL_FAILURE, ExternalFailure.ofGeneration(), null,
+                    firstSubstantiveMs);
         }
         if (isEmpty(retry.text())) {
             // 재생성이 빈 본문이면 회복이 아니다. "escalation 을 돌렸다" 는 사실이 전달을
             // 만들어 주지 않는다.
             return new Delivery(exposureOf(decision), true, true, false, truncated,
                     ContractOutcome.NOT_APPLICABLE, List.of(), 0, 0,
-                    Acceptance.REJECTED_EMPTY_RESPONSE, null, firstSubstantiveMs);
+                    Acceptance.REJECTED_EMPTY_RESPONSE, ExternalFailure.NONE, null,
+                    firstSubstantiveMs);
         }
         ResponseContractResult retryContract = contractValidator.validate(plan, retry.text());
         ContractOutcome retryOutcome = outcomeOf(retryContract);
@@ -686,7 +699,7 @@ final class CellRunner {
         return new Delivery(exposureOf(decision), true, true, false, truncated, retryOutcome,
                 retryContract.violations(), retryShape.sentences(), retryShape.questions(),
                 recovered ? Acceptance.ACCEPTED : Acceptance.REJECTED_CONTRACT,
-                recovered ? retry.text() : null, firstSubstantiveMs);
+                ExternalFailure.NONE, recovered ? retry.text() : null, firstSubstantiveMs);
     }
 
     /**
@@ -759,11 +772,27 @@ final class CellRunner {
         return result.passed() ? ContractOutcome.PASSED : ContractOutcome.VIOLATED;
     }
 
+    /**
+     * 케이스 결과 조립.
+     *
+     * <h2>라벨은 하나, 사실은 여럿 (P0-3)</h2>
+     *
+     * <p>{@code acceptance} 는 턴당 하나여야 한다 — 리포트의 거절 사유 분포가 그 라벨을 세고,
+     * 한 턴이 두 사유로 세어지면 합이 모집단을 넘는다. 그래서 InputJudge 가 실패하면 여기서
+     * {@link Acceptance#REJECTED_JUDGE_FAILURE} 로 <b>덮어쓴다</b>. 그 의미론은 그대로 둔다.
+     *
+     * <p><b>바뀐 것은 계량기가 그 라벨을 읽지 않는다는 것이다.</b> {@code #305} 유료 실행에서
+     * 생성 실패 25건 중 24건이 같은 턴의 InputJudge 도 실패해 이 덮어쓰기에 먹혔고, 외부 실패
+     * 집계가 25 대신 1 을 보고했다. 10% 가드는 16.3% 를 0.65% 로 읽고 통과했다. 이제 외부 실패
+     * 사실은 {@link ExternalFailure} 로 별도 필드에 실려 나가며, 판정 실패 사실은 그 필드에
+     * <b>더해진다</b>({@link ExternalFailure#withJudge}) — 지우지 않는다.
+     */
     private CellCaseOutcome assemble(LockedCase lockedCase, UUID caseKey, PolicyDecision decision,
                                      Delivery delivery, boolean judgeCalled,
                                      InputJudgeResult judgeResult, CbtClassification cbt,
                                      long firstSubstantiveMs, long totalMs) {
         List<CellTokenLedger.Call> calls = ledger.callsFor(caseKey);
+        boolean inputJudgeFailed = judgeResult != null && judgeResult.failed();
         return new CellCaseOutcome(
                 lockedCase.id(), lockedCase.subgroup(), lockedCase.axis(),
                 lockedCase.deterministicLayer(), caseKey,
@@ -780,8 +809,8 @@ final class CellRunner {
                 delivery.truncated(),
                 delivery.contract(), delivery.contractViolations(),
                 delivery.responseSentences(), delivery.responseQuestions(),
-                judgeResult != null && judgeResult.failed()
-                        ? Acceptance.REJECTED_JUDGE_FAILURE : delivery.acceptance(),
+                inputJudgeFailed ? Acceptance.REJECTED_JUDGE_FAILURE : delivery.acceptance(),
+                delivery.externalFailure().withJudge(inputJudgeFailed),
                 false, totalMs, firstSubstantiveMs, calls.size(),
                 calls.stream().mapToLong(CellTokenLedger.Call::promptTokens).sum(),
                 calls.stream().mapToLong(CellTokenLedger.Call::completionTokens).sum());

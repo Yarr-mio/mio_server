@@ -49,12 +49,26 @@ import java.util.Map;
  * {@code InputJudgeResult} 로 <b>실제</b> {@code PolicyEngine}·{@code ResponsePlanner} 를
  * 등급 × 보안 판정 전 조합에 통과시켜 확인한다.
  *
- * <p><b>보장은 무조건이 아니라 "Judge 판정 modulo" 다.</b> 이탈이 정확히 둘 있고 둘 다 Judge 가
- * 내리는 판정이라 무과금으로 닫을 수 없다 — (1) Judge 가 {@code HARD_CRISIS} 로 올리는 경우,
- * (2) Judge 자신의 보안 판정이 non-CLEAN 이라 {@code EffectiveSecurityResolver} 가
- * {@code SUSPICIOUS} 로 올리고 등급이 {@code LOW} 이하인 경우. 실행이 각각
- * {@code crisis_routed}·{@code unplanned_turns} 로 세어 보고하며, <b>이름 없는 세 번째 이탈이
- * 생기면 테스트가 실패한다.</b>
+ * <p><b>보장은 무조건이 아니라 "플래너 층까지, Judge 판정 modulo" 다.</b> 그 층의 이탈이 정확히
+ * 둘 있고 둘 다 Judge 가 내리는 판정이라 무과금으로 닫을 수 없다 — (1) Judge 가
+ * {@code HARD_CRISIS} 로 올리는 경우, (2) Judge 자신의 보안 판정이 non-CLEAN 이라
+ * {@code EffectiveSecurityResolver} 가 {@code SUSPICIOUS} 로 올리고 등급이 {@code LOW} 이하인
+ * 경우. 실행이 각각 {@code crisis_routed}·{@code unplanned_turns} 로 세어 보고하며,
+ * <b>플래너 층에 이름 없는 이탈이 생기면 테스트가 실패한다.</b>
+ *
+ * <h2>보장이 닿지 않는 곳 — 이탈③ 생성 본문 없음 (P0-3)</h2>
+ *
+ * <p><b>위 보장은 플래너 층에 한정된다.</b> {@link ContractEvalSetTest} 는 룰·정책·플래너만
+ * 돌리고 생성은 돌리지 않으므로, 계획까지 정상으로 갔다가 <b>생성이 본문을 내지 못해</b>
+ * 모집단에서 빠지는 이탈을 구조적으로 볼 수 없다. 본문이 없으면
+ * {@code ResponseContractValidator} 가 {@code notApplicable()} 을 돌려주고 그 턴은 위반도 준수도
+ * 아닌 채 분모에서 사라진다.
+ *
+ * <p>{@code #305} 유료 실행의 대조군이 그것이었다 — {@code 계약 밖 25건} 을 찍었는데 그것을
+ * 설명하는 세 줄(위기 승격·보안 의심·보안 거절)이 모두 0 이었다. 25건 전부가 생성 호출 실패였다.
+ * 그래서 실행 리포트가 이 이탈을 {@code no_body_escapes} 로 <b>이름을 붙여 세고</b> 이탈 합계를
+ * 계약 밖 건수와 검산한다({@code ContractComplianceMetrics.unexplainedEscapes}). 지불 전에 닫히는
+ * 것은 여전히 ①②뿐이고, ③은 실행 후에만 보인다 — 그것이 이 보장의 실제 범위다.
  *
  * <p><b>행위별</b> 분포는 그래도 실행 전에 확정할 수 없다 — 어느 행위가 계획되는지는 Judge
  * 판정이 정하기 때문이다. {@code expected.responseAct} 는 정답 라벨이 아니라 <b>설계 의도</b>이며,
@@ -125,6 +139,67 @@ final class ContractEvalSet {
         ROOT.path("distribution").fields()
                 .forEachRemaining(e -> out.put(e.getKey(), e.getValue().asInt()));
         return Map.copyOf(out);
+    }
+
+    /**
+     * 실행 유효성 상한의 <b>사전 등록</b> ({@code runValidity}, P0-3 MEDIUM-3).
+     *
+     * <p>{@code go-no-go}·{@code screening-elimination} 과 같은 규율을 쓴다 — 문턱은 데이터에
+     * 등록하고, 실행 결과를 보고 값을 고치는 것은 상한이 아니라 사후 합리화다.
+     * {@link ContractComplianceMetrics#MAX_EXTERNAL_FAILURE_SHARE} 가 이 값을 읽으므로 가드와
+     * 사전 등록이 갈라질 수 없다.
+     *
+     * @param maxExternalFailureShare 외부 실패 턴 비율의 상한
+     * @param tradeoff                이 문턱이 실패 모드 둘을 한 값으로 다룬다는 사실과 검토했으나
+     *                                채택하지 않은 대안. 비어 있으면 로딩이 실패한다 — 문턱을
+     *                                근거 없이 바꾸지 못하게 하는 것이 이 필드의 목적이다
+     */
+    record RunValidity(String version, double maxExternalFailureShare, String rationale,
+                       List<String> tradeoff) {
+
+        RunValidity {
+            tradeoff = List.copyOf(tradeoff);
+            if (maxExternalFailureShare <= 0 || maxExternalFailureShare > 1) {
+                throw new IllegalStateException(
+                        "외부 실패 상한이 비율이 아니다: " + maxExternalFailureShare);
+            }
+            if (rationale.isBlank() || tradeoff.isEmpty()) {
+                throw new IllegalStateException(
+                        "사전 등록 문턱에 근거·교환 기록이 없다 — 근거 없이 바꿀 수 있는 문턱은 문턱이 아니다");
+            }
+        }
+    }
+
+    static final RunValidity RUN_VALIDITY = readRunValidity();
+
+    private static RunValidity readRunValidity() {
+        JsonNode node = ROOT.path("runValidity");
+        List<String> tradeoff = new ArrayList<>();
+        node.path("singleThresholdTradeoff").forEach(v -> tradeoff.add(v.asText()));
+        return new RunValidity(
+                text(node, "version"),
+                node.path("maxExternalFailureShare").asDouble(),
+                text(node, "rationale"),
+                tradeoff);
+    }
+
+    /**
+     * 세트가 <b>선언한</b> 모집단 이탈 목록 ({@code reporting.escapes}).
+     *
+     * <p>P0-3 이 읽기 시작했다. 이 목록은 지금까지 아무도 읽지 않는 산문이었고, 그래서 실행이
+     * 실제로 세는 이탈과 세트가 선언한 이탈이 <b>조용히 갈릴 수 있었다</b>. #305 실행에서
+     * 정확히 그 일이 일어났다 — 세트는 "이탈은 둘" 이라고 적었고 실행은 세 번째 이탈로 25건을
+     * 잃었다. 이제 {@code ContractComplianceHarnessTest} 가 이 값을 리포트가 이름 붙이는 이탈
+     * 수와 맞대므로, 한쪽만 바뀌면 무과금 테스트가 실패한다.
+     */
+    static List<String> declaredEscapes() {
+        List<String> escapes = new ArrayList<>();
+        ROOT.path("reporting").path("escapes").forEach(node -> escapes.add(node.asText()));
+        if (escapes.isEmpty()) {
+            throw new IllegalStateException(
+                    "세트가 이탈을 하나도 선언하지 않았다 — 모집단 논증이 없는 세트는 실행에 쓰지 않는다");
+        }
+        return List.copyOf(escapes);
     }
 
     /** 실행 manifest 의 {@code extra} 에 실을 세트 출처 항목. */
