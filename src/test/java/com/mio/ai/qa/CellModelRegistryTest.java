@@ -90,17 +90,21 @@ class CellModelRegistryTest {
     }
 
     @Test
-    @DisplayName("메인 생성 호출부가 카탈로그의 GENERATION 해석을 읽는다 — canary 가 갈아끼울 바로 그 자리다")
-    void orchestratorReadsGenerationFromCatalog() {
+    @DisplayName("메인 생성 호출부가 canary 라우터를 거쳐 카탈로그의 GENERATION 해석을 읽는다")
+    void orchestratorReadsGenerationThroughCanaryRouter() {
         // ConversationOrchestrator 는 의존 그래프가 커서 판정 클래스들처럼 요청 캡처
-        // 단위 테스트(ModelRoutingWiringTest)를 만들 수 없다. 대신 소스에서 카탈로그
-        // 조회가 유일한 모델 출처인지 고정한다 — 위 테스트가 상수 부활을 막고,
-        // 이 테스트가 조회 자체의 존재를 못박는다.
-        String source = sourceOf(LockedEvalContaminationScanner.findRepoRoot(),
-                "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java");
-        assertThat(source)
-                .contains("modelCatalog.modelFor(ModelRole.GENERATION)")
+        // 단위 테스트(ModelRoutingWiringTest)를 만들 수 없다. 대신 소스에서 라우팅 체인
+        // (orchestrator → canary router → catalog)이 유일한 모델 출처인지 고정한다 —
+        // 위 테스트가 상수 부활을 막고, 이 테스트가 조회 자체의 존재를 못박는다.
+        Path root = LockedEvalContaminationScanner.findRepoRoot();
+        assertThat(sourceOf(root,
+                "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java"))
+                .contains("generationCanaryRouter.modelFor(userId)")
                 .doesNotContain("\"gpt-4o\"");
+        assertThat(sourceOf(root,
+                "src/main/java/com/mio/ai/llm/GenerationCanaryRouter.java"))
+                .as("라우터의 기본 팔은 카탈로그 해석이어야 한다 — 여기가 끊기면 canary 미설정 시 모델 출처가 사라진다")
+                .contains("modelCatalog.modelFor(ModelRole.GENERATION)");
     }
 
     @Test

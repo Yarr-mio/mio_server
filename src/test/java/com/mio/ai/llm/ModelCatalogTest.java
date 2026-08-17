@@ -124,6 +124,19 @@ class ModelCatalogTest {
                 .hasMessageContaining("gpt-4o-mini");
     }
 
+    @Test
+    @DisplayName("allowlist·단가 멤버십을 노출한다 — canary 라우터(#480)가 후보를 검증하는 데 쓴다")
+    void exposesAllowlistAndPricingMembership() {
+        ModelCatalog catalog = new ModelCatalog(
+                properties(Map.of(), List.of("gpt-4o", "gpt-4o-mini", "gpt-4.1-nano")),
+                pricing("gpt-4o", "gpt-4o-mini"));
+
+        assertThat(catalog.isAllowed("gpt-4.1-nano")).isTrue();
+        assertThat(catalog.isAllowed("model-nobody-approved")).isFalse();
+        assertThat(catalog.isPriced("gpt-4o")).isTrue();
+        assertThat(catalog.isPriced("gpt-4.1-nano")).isFalse();
+    }
+
     // ── 픽스처 ─────────────────────────────────────────────────────
 
     private static ModelCatalogProperties properties(Map<String, String> roles,

@@ -31,6 +31,8 @@ import java.util.stream.Collectors;
 public class ModelCatalog {
 
     private final Map<ModelRole, String> models;
+    private final Set<String> allowed;
+    private final Set<String> priced;
 
     public ModelCatalog(ModelCatalogProperties properties, LlmPricingProperties pricing) {
         Map<ModelRole, String> resolved = new EnumMap<>(ModelRole.class);
@@ -40,13 +42,29 @@ public class ModelCatalog {
         for (Map.Entry<String, String> entry : properties.getRoles().entrySet()) {
             resolved.put(ModelRole.fromConfigKey(entry.getKey()), entry.getValue());
         }
-        requireAllowed(resolved, effectiveAllowlist(properties));
+        Set<String> allowlist = effectiveAllowlist(properties);
+        requireAllowed(resolved, allowlist);
         requirePriced(resolved, pricing);
         this.models = Map.copyOf(resolved);
+        this.allowed = allowlist;
+        this.priced = pricing.getModels().entrySet().stream()
+                .filter(entry -> entry.getValue() != null && entry.getValue().isValid())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     public String modelFor(ModelRole role) {
         return models.get(role);
+    }
+
+    /** 이 모델로 라우팅해도 되는가. 기동 검증과 같은 allowlist 를 런타임 라우팅(#480)도 본다. */
+    public boolean isAllowed(String model) {
+        return allowed.contains(model);
+    }
+
+    /** 이 모델의 단가가 등록돼 있는가. 미등록 모델로 라우팅하면 비용이 '미상'으로 쌓인다. */
+    public boolean isPriced(String model) {
+        return priced.contains(model);
     }
 
     /** 설정 없는 기본 카탈로그. 테스트가 프로덕션과 같은 기본 해석을 쓸 때 사용한다. */
