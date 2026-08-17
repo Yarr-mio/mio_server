@@ -142,6 +142,13 @@ final class CellReport {
                 population.cbtInterventionComplianceRate().display(),
                 population.cbtDeliveryJudged()));
         out.append("      ↑ %s%n".formatted(CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
+        // 준수율 바로 다음 줄이다. 떨어뜨려 두면 "높은 준수율 + 높은 실패율" 조합이 보이지 않고,
+        // 그 조합이야말로 이 지표가 거짓말을 하고 있는 정확한 모양이다.
+        out.append("    분류기 실패      %d/%d회 (%.1f%%)  ·  채점 대상 중 미채점 %d건 (%.1f%%)%n"
+                .formatted(population.cbtClassifierFailures(), population.cbtClassifierCalls(),
+                        population.cbtClassifierFailureRatePercent(),
+                        population.cbtDeliveryUnscoreable(), population.cbtUnscoreableRatePercent()));
+        out.append("      ↑ %s%n".formatted(CellMetrics.CBT_CLASSIFIER_FAILURE_NOTE));
         out.append("    공감·도움도      %s%n".formatted(CellMetrics.EMPATHY_NOT_MEASURED));
         out.append("    수용률           %s%n".formatted(population.acceptanceRate().display()));
         appendAcceptance(out, population);
@@ -281,6 +288,15 @@ final class CellReport {
         extra.put("cbt_intervention_compliance", "%s — %s".formatted(
                 metrics.modelDiscriminating().cbtInterventionComplianceRate().display(),
                 CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
+        // 준수율과 <같은 manifest 에> 실린다. 아카이브를 나중에 읽는 도구가 준수율만 집어
+        // 가더라도, 이 키가 없어서 못 본 것이 아니게 된다.
+        extra.put("cbt_classifier_failures", "%d/%d회 (%.1f%%) · 채점 대상 중 미채점 %d건 (%.1f%%) — %s"
+                .formatted(metrics.modelDiscriminating().cbtClassifierFailures(),
+                        metrics.modelDiscriminating().cbtClassifierCalls(),
+                        metrics.modelDiscriminating().cbtClassifierFailureRatePercent(),
+                        metrics.modelDiscriminating().cbtDeliveryUnscoreable(),
+                        metrics.modelDiscriminating().cbtUnscoreableRatePercent(),
+                        CellMetrics.CBT_CLASSIFIER_FAILURE_NOTE));
         extra.put("failure_case_ids", String.join(" ", metrics.failureCaseIds(result.outcomes())));
         extra.put("elapsed", "%dm %ds".formatted(
                 metrics.elapsed().toMinutes(), metrics.elapsed().toSecondsPart()));

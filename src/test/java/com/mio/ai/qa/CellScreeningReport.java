@@ -126,14 +126,17 @@ final class CellScreeningReport {
         // 플래너의 값이라 후보마다 같은 숫자가 찍혔고, 그 자리에 있다는 이유만으로 생성 품질로
         // 읽혔다. 그 열은 CBT 개입 금지 준수율(분류기 판정)로 바꾸고, 플래너 값은 상세 블록의
         // '탐지·계획' 줄로 옮겼다.
-        out.append("\n  %-20s %6s %9s %9s %5s %5s %5s %8s %8s %14s%n".formatted(
-                "변형", "케이스", "수용률", "CBT준수", "미탐", "위기FP", "계약", "p95", "첫토큰p95",
-                "수용응답당 원가"));
+        // CBT준수 바로 옆에 분류실패 열을 둔다. 두 값이 떨어져 있으면 "준수율은 높은데 실은
+        // 한 번도 채점되지 않았다" 를 표에서 볼 수 없고, 그것이 이 지표가 거짓말하는 모양이다.
+        out.append("\n  %-20s %6s %9s %9s %9s %5s %5s %5s %8s %8s %14s%n".formatted(
+                "변형", "케이스", "수용률", "CBT준수", "분류실패", "미탐", "위기FP", "계약",
+                "p95", "첫토큰p95", "수용응답당 원가"));
         rows.forEach(row -> {
             CellMetrics.Population p = row.population();
-            out.append("  %-20s %6d %9s %9s %5d %5d %5d %8d %8d %14s%n".formatted(
+            out.append("  %-20s %6d %9s %9s %9s %5d %5d %5d %8d %8d %14s%n".formatted(
                     row.variant().label(), p.size(),
                     percentOf(p.acceptanceRate()), percentOf(p.cbtInterventionComplianceRate()),
+                    "%.1f%%".formatted(p.cbtClassifierFailureRatePercent()),
                     p.falseNegatives(), p.crisisFalsePositives(), p.contractViolated(),
                     row.latencyMeasured() ? p.p95LatencyMs() : -1,
                     row.latencyMeasured() ? p.p95FirstSubstantiveMs() : -1,
@@ -142,6 +145,7 @@ final class CellScreeningReport {
         out.append("    ↑ CBT준수 = %s. %s%n"
                 .formatted(CellMetrics.CBT_INTERVENTION_COMPLIANCE,
                         CellMetrics.CBT_CLASSIFIER_JUDGED_NOTE));
+        out.append("    ↑ 분류실패 = %s%n".formatted(CellMetrics.CBT_CLASSIFIER_FAILURE_NOTE));
     }
 
     /** 축을 전부 펼친다. 표에서 잘린 값 때문에 사람이 다시 원본 리포트를 뒤지지 않게 한다. */
@@ -165,6 +169,12 @@ final class CellScreeningReport {
                             percentOf(p.cbtInterventionComplianceRate()),
                             p.cbtDeliveryJudged(), p.contractViolated(), p.contractApplicable(),
                             p.contraindicationViolations()));
+            out.append(("      분류기   실패 %d/%d회 (%.1f%%) · 채점 대상 중 미채점 %d건 (%.1f%%)%s%n")
+                    .formatted(p.cbtClassifierFailures(), p.cbtClassifierCalls(),
+                            p.cbtClassifierFailureRatePercent(), p.cbtDeliveryUnscoreable(),
+                            p.cbtUnscoreableRatePercent(),
+                            p.cbtClassifierFailures() > 0
+                                    ? "  ← 채점되지 못한 턴은 준수로 세지 않는다" : ""));
             out.append("      전달     빈 응답 %d건 · 생성 절단 %d/%d턴 (%.1f%%)%s%n"
                     .formatted(p.emptyResponses(), p.truncatedGenerations(), p.generationCalls(),
                             p.truncationRatePercent(),
@@ -200,7 +210,7 @@ final class CellScreeningReport {
         CandidateElimination.Thresholds thresholds = CandidateElimination.thresholds(stage);
         out.append("\n  [탈락 계산 — 사전 등록 %s (%s)]\n"
                 .formatted(thresholds.version(), thresholds.registeredOn()));
-        out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v2.json)은 따로이고 더 엄격하다. **\n");
+        out.append("  ** 이것은 '좁히는' 규칙이다. 채택 문턱(go-no-go-v3.json)은 따로이고 더 엄격하다. **\n");
         out.append("  ** 통과가 '안전하다' 는 뜻이 아니다 — 표본 실행은 어떤 안전 주장도 지지하지 않는다. **\n");
         out.append("  ** %s **\n".formatted(CELL_B_CANNOT_DISCRIMINATE));
         rows.stream().filter(row -> !row.isBaseline()).forEach(row -> {

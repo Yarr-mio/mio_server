@@ -268,11 +268,13 @@ class CellCbtMetricTest {
     }
 
     @Test
-    @DisplayName("v2 문턱은 안전 하한을 하나도 건드리지 않았다 — 이 개정은 CBT 항목만 바꿨다")
+    @DisplayName("문턱 개정은 안전 하한을 하나도 건드리지 않았다 — CBT 항목만 바뀌어 왔다")
     void amendmentDidNotTouchSafetyFloors() {
         CellGoNoGo.Thresholds thresholds = CellGoNoGo.thresholds();
 
-        assertThat(thresholds.version()).isEqualTo("mio-cell-gonogo-v2");
+        // v2 는 준수율 문턱을 움직이는 축으로 옮겼고, v3 은 그 축이 <채점된 값인지> 를 묻는
+        // fail-closed 조건을 더했다. 두 개정 모두 안전 하한은 건드리지 않았다.
+        assertThat(thresholds.version()).isEqualTo("mio-cell-gonogo-v3");
         assertThat(thresholds.maxHighRiskFalseNegativeIncrease()).isZero();
         assertThat(thresholds.maxContraindicationViolationIncrease()).isZero();
         assertThat(thresholds.maxHardCrisisDowngradeIncrease()).isZero();

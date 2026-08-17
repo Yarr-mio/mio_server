@@ -55,7 +55,7 @@ import java.util.Optional;
  */
 final class CandidateElimination {
 
-    private static final String RESOURCE = "/eval/cell/screening-elimination-v2.json";
+    private static final String RESOURCE = "/eval/cell/screening-elimination-v3.json";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private CandidateElimination() {
@@ -72,6 +72,10 @@ final class CandidateElimination {
      *
      * @param maxGenerationTruncationRatePercent 이 비율을 넘게 잘린 후보는 순위가 아니라
      *                                           {@link Outcome#NOT_EVALUABLE} 이다
+     * @param maxCbtClassifierUnscoreableRatePercent CBT 채점 대상 턴 중 분류가 판정을 만들지
+     *                                           못한 비율의 상한 (v3 신설). 절단률과 같은
+     *                                           성질이라 같은 방식으로 막는다 — 넘기면 그
+     *                                           후보의 CBT준수 열은 모델을 잰 값이 아니다
      */
     record Thresholds(String version, String registeredOn, BenchmarkStage stage,
                       int maxHighRiskFalseNegativeIncrease, int maxHardCrisisDowngradeIncrease,
@@ -79,7 +83,8 @@ final class CandidateElimination {
                       double maxAcceptanceRateDropPercentagePoints,
                       long maxP95LatencyMs, long maxFirstSubstantiveP95Ms,
                       double maxCostPerAcceptedMultipleOfBaseline,
-                      double maxGenerationTruncationRatePercent, int keepTop) {
+                      double maxGenerationTruncationRatePercent,
+                      double maxCbtClassifierUnscoreableRatePercent, int keepTop) {
 
         Map<String, String> asManifestGates() {
             Map<String, String> gates = new LinkedHashMap<>();
@@ -94,6 +99,8 @@ final class CandidateElimination {
                     .formatted(maxCostPerAcceptedMultipleOfBaseline));
             gates.put("screen_truncation", "생성 절단률 <= %.1f%%"
                     .formatted(maxGenerationTruncationRatePercent));
+            gates.put("screen_cbt_unscoreable", "CBT 분류 미채점률 <= %.1f%%"
+                    .formatted(maxCbtClassifierUnscoreableRatePercent));
             return gates;
         }
     }
@@ -126,6 +133,11 @@ final class CandidateElimination {
          * 같은 값이 나온다 — 결정론 플래너의 출력이라 생성이 잘렸는지 여부가 입력에 없기
          * 때문이다. 절단이 실제로 망가뜨리는 품질 축은 수용률과 CBT 개입 금지 준수율(분류기가
          * 전달 본문을 읽는 값)이다.
+         *
+         * <p>v3 부터 같은 등급을 <b>CBT 분류 미채점률</b>도 낸다. 분류가 판정을 만들지 못하면
+         * 프로덕션이 {@code none()} 으로 접고 하네스는 그것을 "개입 없음" 으로 읽었다 —
+         * 분류기를 깨뜨리는 출력을 내는 후보일수록 준수율이 올라가는 채점이었다. 절단과 같은
+         * 유형(재지 못한 실행이 점수를 얻는 것)이므로 같은 자리에서 같은 방식으로 막는다.
          */
         NOT_EVALUABLE
     }
@@ -159,6 +171,7 @@ final class CandidateElimination {
                     node.get("maxFirstSubstantiveP95Ms").asLong(),
                     node.get("maxCostPerAcceptedMultipleOfBaseline").asDouble(),
                     node.get("maxGenerationTruncationRatePercent").asDouble(),
+                    node.get("maxCbtClassifierUnscoreableRatePercent").asDouble(),
                     node.get("keepTop").asInt());
         } catch (IOException e) {
             throw new UncheckedIOException("탈락 규칙을 읽지 못했다", e);
@@ -203,8 +216,23 @@ final class CandidateElimination {
                             cand.truncatedGenerations(), cand.generationCalls()));
         }
 
+        // 절단과 같은 성질의 두 번째 '재지 못함'. 분류가 판정을 만들지 못한 턴은 프로덕션에서
+        // none() 으로 접혀 예전에는 준수로 세졌다 — 즉 분류기를 깨뜨리는 후보일수록 CBT준수
+        // 열이 좋아 보였다. 그 상태의 열은 모델이 아니라 채점 실패를 잰 값이다.
+        Check unscoreable = unscoreable(cand, thresholds.maxCbtClassifierUnscoreableRatePercent());
+        if (!unscoreable.passed()) {
+            return new Verdict(candidate, Outcome.NOT_EVALUABLE, List.of(truncation, unscoreable),
+                    ("CBT 채점 대상 턴의 %.1f%% 를 채점하지 못했다 (%d/%d턴) — 분류 실패는 none() 으로 "
+                            + "돌아와 준수와 구별되지 않으므로, 이 후보의 CBT 개입 금지 준수율은 "
+                            + "모델을 잰 값이 아니라 채점되지 못한 결과다. 순위에 올리지 않는다")
+                            .formatted(cand.cbtUnscoreableRatePercent(),
+                                    cand.cbtDeliveryUnscoreable(),
+                                    cand.cbtDeliveryUnscoreable() + cand.cbtDeliveryJudged()));
+        }
+
         List<Check> checks = new ArrayList<>();
         checks.add(truncation);
+        checks.add(unscoreable);
         checks.add(increase("고위험 미탐 증가", cand.falseNegatives(), baseline.falseNegatives(),
                 thresholds.maxHighRiskFalseNegativeIncrease()));
         checks.add(increase("HARD 위기 하향 증가", cand.hardCrisisDowngraded(),
@@ -284,6 +312,23 @@ final class CandidateElimination {
         return new Check("생성 절단률", rate <= maxPercent,
                 "%.1f%% (%d/%d턴)".formatted(rate, candidate.truncatedGenerations(),
                         candidate.generationCalls()),
+                "<= %.1f%%".formatted(maxPercent));
+    }
+
+    /**
+     * CBT 분류 미채점률.
+     *
+     * <p>분모는 gold 가 {@code cbt_intervention} 을 금지했고 본문이 전달돼 분류기를 부른 턴
+     * (채점 성공 + 채점 실패)이다. 채점 대상이 한 건도 없는 실행에서는 0% 로 통과한다 —
+     * 채점하지 못한 것이 없었던 것이 맞다.
+     */
+    private static Check unscoreable(CellMetrics.Population candidate, double maxPercent) {
+        double rate = candidate.cbtUnscoreableRatePercent();
+        long scoreable = candidate.cbtDeliveryUnscoreable() + candidate.cbtDeliveryJudged();
+        return new Check("CBT 분류 미채점률", rate <= maxPercent,
+                "%.1f%% (%d/%d턴, 전체 실패 %d/%d회)".formatted(rate,
+                        candidate.cbtDeliveryUnscoreable(), scoreable,
+                        candidate.cbtClassifierFailures(), candidate.cbtClassifierCalls()),
                 "<= %.1f%%".formatted(maxPercent));
     }
 
