@@ -1,5 +1,6 @@
 package com.mio.ai.qa;
 
+import com.mio.ai.llm.ModelRole;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
@@ -10,8 +11,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,11 +25,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("[QA] A~E 셀 모델 registry")
 class CellModelRegistryTest {
 
-    /** 프로덕션 모델 상수의 위치. 상수가 private 이라 소스에서 읽는다. */
-    private static final Map<String, String> PRODUCTION_CONSTANTS = Map.of(
-            "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java", "LLM_MODEL",
-            "src/main/java/com/mio/ai/judge/InputJudge.java", "JUDGE_MODEL",
-            "src/main/java/com/mio/ai/judge/OutputJudge.java", "JUDGE_MODEL");
+    /**
+     * 벤치마크 역할 → 프로덕션 역할. 프로덕션 기본값의 진실의 원천이 호출부 상수에서
+     * {@link ModelRole} 로 옮겨졌다 (#479) — 소스 정규식 파싱 대신 enum 을 직접 읽는다.
+     * 프로덕션이 기본 모델을 바꾸면 이 대응을 통해 여기서 깨진다.
+     */
+    private static final Map<CellModelRole, ModelRole> PRODUCTION_ROLES = Map.of(
+            CellModelRole.GENERATION, ModelRole.GENERATION,
+            CellModelRole.INPUT_SAFETY, ModelRole.INPUT_JUDGE,
+            CellModelRole.OUTPUT_JUDGE, ModelRole.OUTPUT_JUDGE);
 
     @Test
     @DisplayName("상위 모델을 핀하지 않으면 셀 B·D·E 실행이 막히고, 메시지가 핀 방법을 알려준다")
@@ -59,18 +62,45 @@ class CellModelRegistryTest {
     }
 
     @Test
-    @DisplayName("운영 기본값이 프로덕션 상수와 같다 — 프로덕션이 모델을 바꾸면 여기서 깨진다")
+    @DisplayName("운영 기본값이 프로덕션 기본값과 같다 — 프로덕션이 모델을 바꾸면 여기서 깨진다")
     void operationalDefaultsTrackProductionConstants() {
         CellModelRegistry registry = CellModelRegistry.resolve(BenchmarkCell.A, Map.of());
-        Path root = LockedEvalContaminationScanner.findRepoRoot();
 
-        assertThat(registry.modelFor(CellModelRole.GENERATION)).isEqualTo(constant(root,
-                "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java", "LLM_MODEL"));
-        assertThat(registry.modelFor(CellModelRole.INPUT_SAFETY)).isEqualTo(constant(root,
-                "src/main/java/com/mio/ai/judge/InputJudge.java", "JUDGE_MODEL"));
-        assertThat(registry.modelFor(CellModelRole.OUTPUT_JUDGE)).isEqualTo(constant(root,
-                "src/main/java/com/mio/ai/judge/OutputJudge.java", "JUDGE_MODEL"));
-        assertThat(PRODUCTION_CONSTANTS).hasSize(3);
+        PRODUCTION_ROLES.forEach((cellRole, productionRole) ->
+                assertThat(registry.modelFor(cellRole))
+                        .as("벤치마크 %s 기본값이 프로덕션 %s 기본값과 어긋났다",
+                                cellRole, productionRole)
+                        .isEqualTo(productionRole.defaultModel()));
+        assertThat(PRODUCTION_ROLES).hasSize(3);
+    }
+
+    @Test
+    @DisplayName("프로덕션 4역할에는 하드코딩된 모델 상수가 남아 있지 않다 — #479 이후의 진실의 원천은 ModelRole 이다")
+    void productionCallSitesCarryNoModelConstants() {
+        Path root = LockedEvalContaminationScanner.findRepoRoot();
+        for (String file : new String[]{
+                "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java",
+                "src/main/java/com/mio/ai/judge/InputJudge.java",
+                "src/main/java/com/mio/ai/judge/OutputJudge.java",
+                "src/main/java/com/mio/ai/judge/CbtMetadataClassifier.java"}) {
+            assertThat(sourceOf(root, file))
+                    .as("%s 에 모델 리터럴이 되살아나면 카탈로그와 두 개의 진실이 생긴다", file)
+                    .doesNotContainPattern("static final String \\w*MODEL\\w*\\s*=\\s*\"gpt-");
+        }
+    }
+
+    @Test
+    @DisplayName("메인 생성 호출부가 카탈로그의 GENERATION 해석을 읽는다 — canary 가 갈아끼울 바로 그 자리다")
+    void orchestratorReadsGenerationFromCatalog() {
+        // ConversationOrchestrator 는 의존 그래프가 커서 판정 클래스들처럼 요청 캡처
+        // 단위 테스트(ModelRoutingWiringTest)를 만들 수 없다. 대신 소스에서 카탈로그
+        // 조회가 유일한 모델 출처인지 고정한다 — 위 테스트가 상수 부활을 막고,
+        // 이 테스트가 조회 자체의 존재를 못박는다.
+        String source = sourceOf(LockedEvalContaminationScanner.findRepoRoot(),
+                "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java");
+        assertThat(source)
+                .contains("modelCatalog.modelFor(ModelRole.GENERATION)")
+                .doesNotContain("\"gpt-4o\"");
     }
 
     @Test
@@ -129,17 +159,9 @@ class CellModelRegistryTest {
                 .hasMessageContaining("알 수 없는 셀 이름");
     }
 
-    private static String constant(Path root, String file, String name) {
+    private static String sourceOf(Path root, String file) {
         try {
-            String source = Files.readString(root.resolve(file), StandardCharsets.UTF_8);
-            Matcher matcher = Pattern
-                    .compile("static final String " + name + "\\s*=\\s*\"([^\"]+)\"")
-                    .matcher(source);
-            assertThat(matcher.find())
-                    .as("%s 에서 상수 %s 를 찾지 못했다 — 프로덕션이 바뀌면 이 검사부터 고쳐야 한다",
-                            file, name)
-                    .isTrue();
-            return matcher.group(1);
+            return Files.readString(root.resolve(file), StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }

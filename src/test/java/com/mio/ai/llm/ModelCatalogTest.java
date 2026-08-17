@@ -56,6 +56,20 @@ class ModelCatalogTest {
     }
 
     @Test
+    @DisplayName("환경 변수 relaxed binding 이 만드는 점 표기 키도 역할로 해석된다")
+    void envVarDottedKeysResolveToRoles() {
+        // MIO_AI_MODELS_ROLES_INPUT_JUDGE 는 Spring 이 맵 키 'input.judge' 로 바인딩한다.
+        // 운영 배포 수단이 환경 변수(.env·docker-compose)이므로 이 표기가 막히면
+        // canary 롤백 중 기동 실패로 이어진다.
+        ModelCatalog catalog = new ModelCatalog(
+                properties(Map.of("input.judge", "gpt-4o"),
+                        List.of("gpt-4o", "gpt-4o-mini")),
+                pricing("gpt-4o", "gpt-4o-mini"));
+
+        assertThat(catalog.modelFor(ModelRole.INPUT_JUDGE)).isEqualTo("gpt-4o");
+    }
+
+    @Test
     @DisplayName("모르는 역할 키는 기동을 실패시킨다 — 오타가 조용히 무시되면 안 된다")
     void unknownRoleKeyFailsStartup() {
         assertThatThrownBy(() -> new ModelCatalog(

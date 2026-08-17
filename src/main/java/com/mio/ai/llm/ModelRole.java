@@ -43,14 +43,17 @@ public enum ModelRole {
     }
 
     /**
-     * 설정 키 → 역할. kebab-case 외에 Spring relaxed binding 이 만들 수 있는
-     * 표기(camelCase, snake_case)도 받는다.
+     * 설정 키 → 역할. kebab-case 외에 Spring relaxed binding 이 만들 수 있는 표기를 받는다:
+     * camelCase, snake_case, 그리고 환경 변수 경로의 점 표기. 두 단어 역할을
+     * {@code MIO_AI_MODELS_ROLES_INPUT_JUDGE} 로 넘기면 relaxed binding 이 맵 키를
+     * {@code input.judge} 로 만들기 때문에 {@code .} 도 정규화한다 — 운영자가 canary 롤백
+     * 중에 bracket 표기를 알아내야 기동하는 상황을 만들지 않는다.
      *
      * @throws IllegalStateException 어느 역할도 아니면 — 오타가 조용히 무시되면
      *                               존재하지 않는 보호를 설정했다고 믿게 된다
      */
     static ModelRole fromConfigKey(String key) {
-        String normalized = key.replace("-", "").replace("_", "").toLowerCase();
+        String normalized = key.replace("-", "").replace("_", "").replace(".", "").toLowerCase();
         return Arrays.stream(values())
                 .filter(role -> role.name().replace("_", "").toLowerCase().equals(normalized))
                 .findFirst()
