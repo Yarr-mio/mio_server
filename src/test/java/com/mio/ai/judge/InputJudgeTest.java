@@ -1,5 +1,6 @@
 package com.mio.ai.judge;
 
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.moderation.ModerationResult;
@@ -168,7 +169,8 @@ class InputJudgeTest {
             }
         };
         return new InputJudge(llmClient, new com.fasterxml.jackson.databind.ObjectMapper(),
-                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                ModelCatalog.defaults());
     }
 
     /**

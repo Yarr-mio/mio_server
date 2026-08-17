@@ -7,6 +7,7 @@ import com.mio.ai.judge.InputJudge;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmPricingProperties;
 import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.moderation.ModerationResult;
@@ -149,7 +150,7 @@ class CrisisDetectionFullPathQaTest {
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
                         new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
                         mock(AiCostEventWriter.class)),
-                new ObjectMapper(), new SimpleMeterRegistry());
+                new ObjectMapper(), new SimpleMeterRegistry(), ModelCatalog.defaults());
     }
 
     @Test

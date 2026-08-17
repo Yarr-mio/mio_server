@@ -5,6 +5,7 @@ import com.mio.ai.judge.CbtInterventionState;
 import com.mio.ai.judge.CbtMetadataClassifier;
 import com.mio.ai.judge.CbtMetadataResult;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
 import com.mio.ai.qa.LockedEvalSet.LockedCase;
@@ -391,7 +392,7 @@ class CellClassifierFailureTest {
     @DisplayName("프로덕션이 예외를 삼킨다는 전제 자체를 고정한다 — 이것이 이 PR 의 출발점이다")
     void productionSwallowsClassifierExceptionsAndReturnsNone() {
         CbtMetadataClassifier classifier = new CbtMetadataClassifier(
-                new FixedJsonLlmClient(null, true), new ObjectMapper());
+                new FixedJsonLlmClient(null, true), new ObjectMapper(), ModelCatalog.defaults());
 
         CbtMetadataResult real = classifier.classify(null, List.of(), "사용자 발화",
                 "전달된 응답 본문", null, 0, false, UUID.randomUUID(), UUID.randomUUID());
@@ -406,7 +407,7 @@ class CellClassifierFailureTest {
     /** fixture 를 <b>프로덕션 분류기의 실경로</b>에 태운다. 리플렉션 없이 공개 API 만 쓴다. */
     private static CbtMetadataResult classifyThroughProduction(String classifierResponse) {
         CbtMetadataClassifier classifier = new CbtMetadataClassifier(
-                new FixedJsonLlmClient(classifierResponse, false), new ObjectMapper());
+                new FixedJsonLlmClient(classifierResponse, false), new ObjectMapper(), ModelCatalog.defaults());
         return classifier.classify(null, List.of(), "사용자 발화", "전달된 응답 본문",
                 null, 0, false, UUID.randomUUID(), UUID.randomUUID());
     }

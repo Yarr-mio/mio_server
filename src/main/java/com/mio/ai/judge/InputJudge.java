@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.policy.DeliveryMode;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.profile.SafetyProfile;
@@ -23,7 +25,6 @@ import java.util.UUID;
 @Slf4j
 public class InputJudge {
 
-    private static final String JUDGE_MODEL = "gpt-4o-mini";
     // JSON 판정 출력 상한. 예상 ~130 토큰이지만 여유를 크게 둔다 — JSON 은 잘리면 파싱이
     // 통째로 실패하고, 그러면 안전 판정이 사라진다 (fallback CLEAR_LOW + failed).
     private static final int JUDGE_MAX_COMPLETION_TOKENS = 500;
@@ -81,6 +82,7 @@ public class InputJudge {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meterRegistry;
+    private final ModelCatalog modelCatalog;
 
     public boolean shouldCallJudge(CombinedSignal combined, SafetyProfile profile) {
         return combined.requiresJudge();
@@ -90,7 +92,8 @@ public class InputJudge {
                                    UUID userId, UUID sessionId) {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
-            LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt)
+            LlmRequest request = LlmRequest.of(modelCatalog.modelFor(ModelRole.INPUT_JUDGE),
+                            SYSTEM_PROMPT, contextPrompt)
                     .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
                     .withAttribution("INPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);

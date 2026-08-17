@@ -1,6 +1,7 @@
 package com.mio.ai.judge;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -144,6 +145,7 @@ class OutputJudgeTest {
                 return responseJson.get();
             }
         };
-        return new OutputJudge(llmClient, new ObjectMapper(), meterRegistry);
+        return new OutputJudge(llmClient, new ObjectMapper(), meterRegistry,
+                ModelCatalog.defaults());
     }
 }

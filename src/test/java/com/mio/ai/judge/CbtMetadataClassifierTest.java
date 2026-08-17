@@ -1,6 +1,7 @@
 package com.mio.ai.judge;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.safety.UserMessageSignal;
@@ -32,7 +33,8 @@ class CbtMetadataClassifierTest {
                 }
                 ```
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "socratic_asked",
@@ -65,7 +67,8 @@ class CbtMetadataClassifierTest {
                   "reconstructed_thought": "최악은 아닐 수 있다"
                 }
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "completed",

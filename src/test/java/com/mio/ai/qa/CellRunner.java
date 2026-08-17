@@ -13,6 +13,7 @@ import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilter;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -219,12 +220,15 @@ final class CellRunner {
         this.llmClient = new RoleModelRewritingLlmClient(
                 clientFactory.create(ledger, registry.pricing()), registry.componentToModel());
         ObjectMapper mapper = new ObjectMapper();
-        this.inputJudge = new InputJudge(llmClient, mapper, ledger.meterRegistry());
-        this.outputJudge = new OutputJudge(llmClient, mapper, ledger.meterRegistry());
+        this.inputJudge = new InputJudge(llmClient, mapper, ledger.meterRegistry(),
+                ModelCatalog.defaults());
+        this.outputJudge = new OutputJudge(llmClient, mapper, ledger.meterRegistry(),
+                ModelCatalog.defaults());
         // 분류기에게만 프로브를 씌운다. 다른 역할의 호출은 그대로 지나가고, 분류기 자신의
         // 동작도 바뀌지 않는다 — 프로브는 예외를 다시 던지고 본문도 손대지 않는다.
         this.cbtClassifierProbe = new CbtClassifierProbe(llmClient);
-        this.cbtClassifier = new CbtMetadataClassifier(cbtClassifierProbe, mapper);
+        this.cbtClassifier = new CbtMetadataClassifier(cbtClassifierProbe, mapper,
+                ModelCatalog.defaults());
     }
 
     /** 실 LLM 실행. 과금된다. */
