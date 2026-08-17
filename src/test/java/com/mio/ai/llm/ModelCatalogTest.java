@@ -28,6 +28,40 @@ class ModelCatalogTest {
         assertThat(catalog.modelFor(ModelRole.INPUT_JUDGE)).isEqualTo("gpt-4o-mini");
         assertThat(catalog.modelFor(ModelRole.OUTPUT_JUDGE)).isEqualTo("gpt-4o-mini");
         assertThat(catalog.modelFor(ModelRole.CBT_CLASSIFIER)).isEqualTo("gpt-4o-mini");
+
+        // #482 로 편입된 잔여 역할 — 기본값은 편입 전 각 호출부의 상수와 같다.
+        assertThat(catalog.modelFor(ModelRole.EMBEDDING)).isEqualTo("text-embedding-3-small");
+        for (ModelRole role : new ModelRole[]{ModelRole.ONTOLOGY_EXTRACTOR,
+                ModelRole.SESSION_SUMMARY, ModelRole.SUMMARY_RENDERER, ModelRole.CHECKPOINT,
+                ModelRole.TODO_PERSONALIZER, ModelRole.EPISODE_EXTRACTOR,
+                ModelRole.WEEKLY_REFLECTION, ModelRole.REPORT_NARRATIVE,
+                ModelRole.CHECKIN_RESPONSE}) {
+            assertThat(catalog.modelFor(role)).isEqualTo("gpt-4o-mini");
+        }
+    }
+
+    @Test
+    @DisplayName("역할 키 정규화는 경계 인지다 — 기형 키가 해석되면 오타가 보호를 가장한다 (#483 리뷰 이월)")
+    void separatorNormalizationIsBoundaryAware() {
+        // 받아야 하는 표기: kebab(yml) · snake · dot(환경 변수 relaxed binding) · camelCase
+        for (String valid : new String[]{"input-judge", "input_judge", "input.judge",
+                "inputJudge", "INPUT_JUDGE"}) {
+            ModelCatalog catalog = new ModelCatalog(
+                    properties(Map.of(valid, "gpt-4o"), List.of("gpt-4o", "gpt-4o-mini")),
+                    pricing("gpt-4o", "gpt-4o-mini"));
+            assertThat(catalog.modelFor(ModelRole.INPUT_JUDGE))
+                    .as("정당한 표기 '%s' 는 해석돼야 한다", valid)
+                    .isEqualTo("gpt-4o");
+        }
+        // 거부해야 하는 표기: 구분자가 단어 경계 밖에 있는 기형 키
+        for (String malformed : new String[]{"gener.ation", "in.put.judge", "input..judge",
+                "i-nput-judge", "gener_ation"}) {
+            assertThatThrownBy(() -> new ModelCatalog(
+                    properties(Map.of(malformed, "gpt-4o"), List.of("gpt-4o", "gpt-4o-mini")),
+                    pricing("gpt-4o", "gpt-4o-mini")))
+                    .as("기형 키 '%s' 는 기동을 실패시켜야 한다", malformed)
+                    .isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Test
@@ -143,7 +177,14 @@ class ModelCatalogTest {
                                                      List<String> allowed) {
         ModelCatalogProperties props = new ModelCatalogProperties();
         props.setRoles(roles);
-        props.setAllowed(allowed);
+        if (!allowed.isEmpty()) {
+            // 픽스처 편의 — 검증 대상이 아닌 EMBEDDING 기본값이 allowlist 검사에 걸리지 않게 한다.
+            List<String> withEmbedding = new java.util.ArrayList<>(allowed);
+            withEmbedding.add(ModelRole.EMBEDDING.defaultModel());
+            props.setAllowed(withEmbedding);
+        } else {
+            props.setAllowed(allowed);
+        }
         return props;
     }
 
@@ -154,6 +195,8 @@ class ModelCatalogTest {
             table.put(model, new LlmPricingProperties.ModelPrice(
                     BigDecimal.ONE, null, BigDecimal.TEN));
         }
+        table.putIfAbsent(ModelRole.EMBEDDING.defaultModel(),
+                new LlmPricingProperties.ModelPrice(BigDecimal.ONE, null, BigDecimal.TEN));
         props.setModels(table);
         return props;
     }

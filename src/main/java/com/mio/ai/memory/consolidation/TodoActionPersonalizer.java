@@ -2,6 +2,8 @@ package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.memory.ontology.BehaviorTemplate;
@@ -30,7 +32,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class TodoActionPersonalizer {
 
-    private static final String MODEL = "gpt-4o-mini";
     // 템플릿 개인화 출력 상한. 템플릿 수만큼 문장을 만들어야 해 여유를 둔다.
     private static final int MAX_COMPLETION_TOKENS = 600;
     private static final int MAX_ACTION_LENGTH = 120;
@@ -79,6 +80,7 @@ public class TodoActionPersonalizer {
                     + "|순간에|상황에|도중에|중에|탓에|때문에|이라서|라서)(?:,|\\s))");
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
 
     /**
@@ -95,7 +97,7 @@ public class TodoActionPersonalizer {
         try {
             StringBuilder response = new StringBuilder();
             llmClient.stream(
-                    LlmRequest.of(MODEL, SYSTEM_PROMPT, buildUserMessage(sessionSummary, triggerTags, templates))
+                    LlmRequest.of(modelCatalog.modelFor(ModelRole.TODO_PERSONALIZER), SYSTEM_PROMPT, buildUserMessage(sessionSummary, triggerTags, templates))
                             .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
                             .withAttribution("TODO_PERSONALIZER", userId, sessionId),
                     response::append

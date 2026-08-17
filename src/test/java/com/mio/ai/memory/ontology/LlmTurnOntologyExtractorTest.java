@@ -1,6 +1,7 @@
 package com.mio.ai.memory.ontology;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +20,7 @@ class LlmTurnOntologyExtractorTest {
                 {"distortionCode":"mind_reading","beliefKind":"null","polarity":null}
                 ```
                 """);
-        LlmTurnOntologyExtractor extractor = new LlmTurnOntologyExtractor(llmClient, new ObjectMapper());
+        LlmTurnOntologyExtractor extractor = new LlmTurnOntologyExtractor(llmClient, ModelCatalog.defaults(), new ObjectMapper());
 
         TurnOntologySignal signal = extractor.extract("다들 나를 싫어하는 것 같아", null, null);
 

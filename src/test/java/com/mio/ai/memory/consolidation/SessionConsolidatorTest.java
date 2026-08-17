@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.crisis.CrisisTodoDecision;
 import com.mio.ai.crisis.CrisisTodoSafetyGate;
@@ -121,6 +122,7 @@ class SessionConsolidatorTest {
                 beliefRepository,
                 evidenceAccumulator,
                 extractorLlmClient,
+                ModelCatalog.defaults(),
                 llmClient,
                 messageEncryptor,
                 beliefIdentityHasher,

@@ -529,7 +529,8 @@ class OpenAiLlmClientTest {
 
     private OpenAiLlmClient client(HttpClient httpClient, AiCostEventWriter costEventWriter) {
         return new OpenAiLlmClient("test-key", httpClient, new ObjectMapper(),
-                meterRegistry, new LlmCostCalculator(pricing), costEventWriter);
+                meterRegistry, new LlmCostCalculator(pricing), costEventWriter,
+                ModelCatalog.defaults());
     }
 
     private AiCostEventWriter rejectingCostEventWriter() {

@@ -1,6 +1,8 @@
 package com.mio.ai.memory.consolidation;
 
 import com.mio.ai.AiCacheKeys;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -39,7 +41,6 @@ import java.util.UUID;
 public class ConversationCheckpointService {
 
     static final int CHECKPOINT_INTERVAL = 20;
-    private static final String CHECKPOINT_MODEL = "gpt-4o-mini";
     // 체크포인트 요약 출력 상한. 프롬프트가 200자를 요구한다 (~142 토큰).
     private static final int CHECKPOINT_MAX_COMPLETION_TOKENS = 400;
     private static final String CHECKPOINT_SYSTEM_PROMPT = """
@@ -63,6 +64,7 @@ public class ConversationCheckpointService {
     private final SessionCheckpointRepository checkpointRepository;
     private final UserRepository userRepository;
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final MessageEncryptor messageEncryptor;
     private final JdbcTemplate jdbcTemplate;
     private final StringRedisTemplate redisTemplate;
@@ -168,7 +170,7 @@ public class ConversationCheckpointService {
         StringBuilder sb = new StringBuilder();
         try {
             LlmStreamResult result = llmClient.stream(
-                    LlmRequest.of(CHECKPOINT_MODEL, CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines))
+                    LlmRequest.of(modelCatalog.modelFor(ModelRole.CHECKPOINT), CHECKPOINT_SYSTEM_PROMPT, String.join("\n", lines))
                             .withMaxCompletionTokens(CHECKPOINT_MAX_COMPLETION_TOKENS)
                             .withAttribution("CHECKPOINT_SUMMARY", userId, sessionId),
                     sb::append

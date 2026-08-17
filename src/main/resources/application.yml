@@ -150,6 +150,7 @@ mio:
       allowed:
         - gpt-4o
         - gpt-4o-mini
+        - text-embedding-3-small
 
 logging:
   level:

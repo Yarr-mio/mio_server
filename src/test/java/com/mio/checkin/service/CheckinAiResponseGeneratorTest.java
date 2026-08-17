@@ -1,5 +1,6 @@
 package com.mio.checkin.service;
 
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,7 @@ class CheckinAiResponseGeneratorTest {
         UUID checkinId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         when(llmClient.completeText(any(LlmRequest.class))).thenReturn("오늘도 잘 버텼어요.");
-        CheckinAiResponseGenerator generator = new CheckinAiResponseGenerator(llmClient, jdbcTemplate);
+        CheckinAiResponseGenerator generator = new CheckinAiResponseGenerator(llmClient, ModelCatalog.defaults(), jdbcTemplate);
 
         generator.generateAndSave(checkinId, "anxious", 3, "morning", userId);
 

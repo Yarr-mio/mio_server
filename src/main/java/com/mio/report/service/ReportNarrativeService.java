@@ -1,6 +1,8 @@
 package com.mio.report.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.report.dto.ReportCommonDto.DistortionDto;
@@ -16,7 +18,6 @@ import java.util.UUID;
 @Slf4j
 public class ReportNarrativeService {
 
-    private static final String MODEL = "gpt-4o-mini";
     // 리포트 서술 출력 상한. 프롬프트가 3문장·100자를 요구한다.
     private static final int MAX_COMPLETION_TOKENS = 400;
 
@@ -32,6 +33,7 @@ public class ReportNarrativeService {
             """;
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
 
     public record NarrativeResult(String narrative, String coachingDirection) {
@@ -44,7 +46,7 @@ public class ReportNarrativeService {
                                     List<DistortionDto> distortionTop3, UUID userId) {
         String userMessage = buildUserMessage(periodLabel, checkinCount, avgEmotionScore, distortionTop3);
         try {
-            String response = llmClient.completeJson(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
+            String response = llmClient.completeJson(LlmRequest.of(modelCatalog.modelFor(ModelRole.REPORT_NARRATIVE), SYSTEM_PROMPT, userMessage)
                     .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
                     .withAttribution("REPORT_NARRATIVE", userId, null));
             return parseResponse(response);

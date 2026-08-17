@@ -7,6 +7,8 @@ import com.mio.ai.domain.MemoryEmbedding;
 import com.mio.ai.crisis.CrisisEpisodePromoter;
 import com.mio.ai.crisis.CrisisTodoDecision;
 import com.mio.ai.crisis.CrisisTodoSafetyGate;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.memory.ontology.OntologyValidator;
 import com.mio.ai.llm.LlmRequest;
@@ -65,7 +67,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class SessionConsolidator {
 
-    private static final String SUMMARY_MODEL = "gpt-4o-mini";
     // 요약 출력 상한. 프롬프트가 500자를 요구하고 한국어 1자 ≈ 0.71 토큰이라 ~355 토큰,
     // 2배 이상 여유를 둔다. 잘리면 세션 요약이 문장 중간에서 끊긴 채 저장된다.
     private static final int SUMMARY_MAX_COMPLETION_TOKENS = 800;
@@ -93,6 +94,7 @@ public class SessionConsolidator {
     private final UserBeliefRepository beliefRepository;
     private final BeliefEvidenceAccumulator evidenceAccumulator;
     private final ExtractorLlmClient extractorLlmClient;
+    private final ModelCatalog modelCatalog;
     private final LlmClient llmClient;
     private final MessageEncryptor messageEncryptor;
     private final BeliefIdentityHasher beliefIdentityHasher;
@@ -520,7 +522,7 @@ public class SessionConsolidator {
     private String generateSummary(String conversationText, UUID userId, UUID sessionId) {
         StringBuilder sb = new StringBuilder();
         LlmStreamResult result = llmClient.stream(
-                LlmRequest.of(SUMMARY_MODEL, SUMMARY_SYSTEM_PROMPT, conversationText)
+                LlmRequest.of(modelCatalog.modelFor(ModelRole.SESSION_SUMMARY), SUMMARY_SYSTEM_PROMPT, conversationText)
                         .withMaxCompletionTokens(SUMMARY_MAX_COMPLETION_TOKENS)
                         .withAttribution("SESSION_SUMMARY", userId, sessionId),
                 sb::append

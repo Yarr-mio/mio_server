@@ -1,6 +1,7 @@
 package com.mio.ai.qa;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmPricingProperties;
@@ -40,7 +41,8 @@ class ExtractorLlmScaleTest {
         extractor = new ExtractorLlmClient(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
                         new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
-                        mock(AiCostEventWriter.class)),
+                        mock(AiCostEventWriter.class), ModelCatalog.defaults()),
+                ModelCatalog.defaults(),
                 new ObjectMapper()
         );
     }
