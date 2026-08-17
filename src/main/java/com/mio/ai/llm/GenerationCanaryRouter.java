@@ -36,7 +36,6 @@ public class GenerationCanaryRouter {
 
     static final String CANARY_KEY = "mio:ai:canary:generation";
     private static final String METRIC = "mio.model.canary";
-    private static final int BUCKETS = 100;
 
     private final ModelCatalog modelCatalog;
     private final StringRedisTemplate redisTemplate;
@@ -59,14 +58,14 @@ public class GenerationCanaryRouter {
             return defaultModel;
         }
 
-        Canary canary = parse(raw);
+        ModelTrafficSplit canary = ModelTrafficSplit.parse(raw);
         if (canary == null || !modelCatalog.isAllowed(canary.model())
                 || !modelCatalog.isPriced(canary.model())) {
             count("invalid_config");
             log.warn("canary 설정이 유효하지 않아 기본 모델로 라우팅: '{}'", raw);
             return defaultModel;
         }
-        if (bucketOf(userId) < canary.percent()) {
+        if (canary.selects(userId)) {
             count("candidate");
             return canary.model();
         }
@@ -74,34 +73,7 @@ public class GenerationCanaryRouter {
         return defaultModel;
     }
 
-    /** {@code "<모델> <percent>"}. 그 외 모양은 전부 무효 — 관대한 파싱은 오타를 삼킨다. */
-    private static Canary parse(String raw) {
-        String[] parts = raw.trim().split("\\s+");
-        if (parts.length != 2) {
-            return null;
-        }
-        try {
-            int percent = Integer.parseInt(parts[1]);
-            if (percent < 0 || percent > BUCKETS) {
-                return null;
-            }
-            return new Canary(parts[0], percent);
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /**
-     * 사용자의 안정 버킷 [0, 100). {@link String#hashCode()} 는 명세에 고정된 알고리즘이라
-     * JVM·재시작·인스턴스 간에 같은 사용자가 항상 같은 버킷을 받는다.
-     */
-    private static int bucketOf(UUID userId) {
-        return Math.floorMod(userId.toString().hashCode(), BUCKETS);
-    }
-
     private void count(String outcome) {
         meterRegistry.counter(METRIC, "outcome", outcome).increment();
     }
-
-    private record Canary(String model, int percent) {}
 }

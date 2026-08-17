@@ -37,6 +37,22 @@ public class AiConfig {
         return executor;
     }
 
+    /**
+     * shadow 생성 전용 (#481). 의도적으로 작게 잡는다 — shadow 는 관측용 부하라 밀리면
+     * 버려야 하고(포화 시 TaskRejectedException → 러너가 rejected 로 계측), 본 트래픽의
+     * 리소스를 다투면 안 된다.
+     */
+    @Bean(name = "shadowGenerationExecutor")
+    public Executor shadowGenerationExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(1);
+        executor.setMaxPoolSize(2);
+        executor.setQueueCapacity(10);
+        executor.setThreadNamePrefix("shadow-generation-");
+        executor.initialize();
+        return executor;
+    }
+
     @Bean(name = "aiDecisionLoggerExecutor")
     public Executor aiDecisionLoggerExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

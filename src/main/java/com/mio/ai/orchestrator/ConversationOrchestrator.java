@@ -125,6 +125,7 @@ public class ConversationOrchestrator {
     private final PromptBuilder promptBuilder;
     private final LlmClient llmClient;
     private final GenerationCanaryRouter generationCanaryRouter;
+    private final ShadowGenerationRunner shadowGenerationRunner;
     private final CrisisFlowService crisisFlowService;
     private final CrisisFixedFlowCoordinator crisisFixedFlowCoordinator;
     private final SecurityRefusalTemplate securityRefusalTemplate;
@@ -396,6 +397,9 @@ public class ConversationOrchestrator {
                                 systemPrompt, historySlice, userMessage)
                         .withMaxCompletionTokens(LLM_MAX_COMPLETION_TOKENS)
                         .withAttribution("MAIN_GENERATION", userId, sessionId);
+                // shadow (#481): 샘플이면 같은 입력을 후보 모델에 비동기 복제한다.
+                // 제출뿐이라 본 턴 지연에 영향이 없고, 어떤 실패도 여기로 전파되지 않는다.
+                shadowGenerationRunner.maybeShadow(llmRequest);
                 StringBuilder contentBuilder = new StringBuilder();
 
                 DeliveryMode deliveryMode = decision.deliveryMode();

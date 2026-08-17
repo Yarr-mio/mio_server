@@ -102,6 +102,7 @@ class CellModelRegistryTest {
         assertThat(sourceOf(root,
                 "src/main/java/com/mio/ai/orchestrator/ConversationOrchestrator.java"))
                 .contains("generationCanaryRouter.modelFor(userId)")
+                .contains("shadowGenerationRunner.maybeShadow(llmRequest)")
                 .doesNotContain("\"gpt-4o\"");
         assertThat(sourceOf(root,
                 "src/main/java/com/mio/ai/llm/GenerationCanaryRouter.java"))
