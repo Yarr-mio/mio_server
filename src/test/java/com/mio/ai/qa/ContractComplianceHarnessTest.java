@@ -20,11 +20,14 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.assertj.core.api.Assertions.within;
 
 /**
  * 계약 준수 하네스 자체 검사 (이슈 #305). 모델을 부르지 않는다.
@@ -208,6 +211,269 @@ class ContractComplianceHarnessTest {
                 .isEqualTo(EvalRunManifest.TuningExposure.USED_FOR_TUNING.attestation());
         assertThat(metadata.get("dataset")).isEqualTo(ContractEvalSet.VERSION);
         assertThat(metadata.get("scope")).contains("contract compliance (dev-gold)");
+    }
+
+    // ── P0-3: 외부 실패 계량기가 판정 실패에 가려지지 않는다 ──────────
+
+    /**
+     * {@code #305} 유료 실행이 실제로 낸 실패 모양 (아카이브 {@code RUN-NOTES.md} 3번).
+     *
+     * <p>대조군 153건 중 <b>생성 호출 25건</b>이 실패했고(관측 서명 {@code LLM streaming error}),
+     * 그중 <b>24건</b>은 같은 턴의 InputJudge 호출도 실패했다({@code LLM complete error}).
+     * 이 모양을 그대로 재구성한다 — 숫자를 맞추는 것이 목적이 아니라, 저 실행에서 계량기가
+     * 무엇을 놓쳤는지가 이 모양에서만 드러나기 때문이다.
+     */
+    private static final int GENERATION_FAILURES = 25;
+    private static final int JUDGE_FAILURES_AMONG_THEM = 24;
+
+    /** {@code #305} 대조군 세트 크기. 이 값이 곧 외부 실패 비율의 분모다. */
+    private static final int RUN_CASES = 153;
+
+    @Test
+    @DisplayName("P0-3: 판정 실패가 생성 실패를 덮어써도 외부 실패 계량기는 25건을 센다 — #305 재구성")
+    void externalFailureTallySurvivesTheJudgeFailureLabel() {
+        assertThat(ContractEvalSet.CASES)
+                .as("#305 실행과 같은 분모여야 16.3% 를 재구성할 수 있다")
+                .hasSize(RUN_CASES);
+
+        ContractComplianceMetrics metrics = metricsOf(runWithFailureShape());
+
+        // ── 사실: 두 실패가 서로를 지우지 않는다 ──────────────────────
+        assertThat(metrics.generationFailures())
+                .as("생성 호출 실패 사실이 판정 실패 라벨에 먹히면 안 된다")
+                .isEqualTo(GENERATION_FAILURES);
+        assertThat(metrics.judgeFailures())
+                .as("판정 호출 실패도 같은 턴에서 따로 세어져야 한다")
+                .isEqualTo(JUDGE_FAILURES_AMONG_THEM);
+        assertThat(metrics.externalFailures())
+                .as("한 턴에서 두 실패가 겹쳐도 그 턴은 한 번 세고, 겹침 때문에 사라지지는 않는다")
+                .isEqualTo(GENERATION_FAILURES);
+
+        // ── 비율: 0.65% 가 아니라 16.3% 로 읽힌다 ─────────────────────
+        assertThat(metrics.externalFailureShare() * 100)
+                .as("#305 manifest 는 external_failure_calls=1 → 0.65%% 로 읽고 통과했다. "
+                        + "실제 유실은 %d/%d = 16.3%% 다",
+                        GENERATION_FAILURES, RUN_CASES)
+                .isCloseTo(16.3, within(0.1));
+        assertThat((double) (GENERATION_FAILURES - JUDGE_FAILURES_AMONG_THEM) / RUN_CASES * 100)
+                .as("예전 계량기가 읽던 값을 못 박아 둔다 — 25 − 24 = 1 → 0.65%%")
+                .isCloseTo(0.65, within(0.01));
+
+        // ── 가드: 같은 데이터에서 이제 거절한다 ────────────────────────
+        assertThat(metrics.externalFailureWithinLimit())
+                .as("외부 실패 %.1f%% 가 상한 %.0f%% 를 넘었는데 가드가 통과시키면 P0-3 이 그대로 남는다",
+                        metrics.externalFailureShare() * 100,
+                        ContractComplianceMetrics.MAX_EXTERNAL_FAILURE_SHARE * 100)
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("P0-3: acceptance 는 여전히 턴당 하나 — 판정 실패 라벨이 우선한다")
+    void acceptanceStillCarriesExactlyOneLabelPerTurn() {
+        List<CellCaseOutcome> outcomes = runWithFailureShape().outcomes();
+
+        // 라벨 의미론은 바뀌지 않았다. 바뀐 것은 계량기가 라벨을 읽지 않는다는 것뿐이다.
+        assertThat(outcomes).filteredOn(o ->
+                        o.acceptance() == CellCaseOutcome.Acceptance.REJECTED_JUDGE_FAILURE)
+                .as("판정이 실패한 턴은 여전히 REJECTED_JUDGE_FAILURE 로 라벨된다")
+                .hasSize(JUDGE_FAILURES_AMONG_THEM);
+        assertThat(outcomes).filteredOn(o ->
+                        o.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EXTERNAL_FAILURE)
+                .as("라벨만 세면 25건 중 1건만 남는다 — 이 값이 #305 manifest 의 1 이다")
+                .hasSize(GENERATION_FAILURES - JUDGE_FAILURES_AMONG_THEM);
+
+        // 두 라벨의 턴 모두 외부 실패 사실을 들고 있다.
+        assertThat(outcomes).filteredOn(CellCaseOutcome::externalFailureObserved)
+                .as("라벨이 무엇이든 외부 실패가 일어난 턴은 사실을 들고 있어야 한다")
+                .hasSize(GENERATION_FAILURES)
+                .allSatisfy(o -> assertThat(o.externalFailure().generation()).isTrue());
+    }
+
+    @Test
+    @DisplayName("P0-3: 계약 밖 25건이 이탈③으로 이름을 얻고 합계가 검산된다")
+    void theThirdEscapeIsNamedAndAudited() {
+        CellRunner.Result result = runWithFailureShape();
+        ContractComplianceMetrics metrics = metricsOf(result);
+
+        assertThat(metrics.notApplicable())
+                .as("#305 대조군의 '계약 밖 25건' 을 재구성한다")
+                .isEqualTo(GENERATION_FAILURES);
+        assertThat(metrics.crisisRouted()).as("이탈① 은 0 이었다").isZero();
+        assertThat(metrics.unplanned()).as("이탈② 는 0 이었다").isZero();
+        assertThat(metrics.securityRefusal()).as("보안 거절도 0 이었다").isZero();
+        assertThat(metrics.noBodyEscapes())
+                .as("설명 줄이 모두 0 인데 계약 밖 25건이 남는 상태를 이탈③ 이 메운다")
+                .isEqualTo(GENERATION_FAILURES);
+        assertThat(metrics.unexplainedEscapes())
+                .as("이탈 합계가 계약 밖 건수와 맞지 않으면 또 이름 없는 이탈이 있다는 뜻이다")
+                .isZero();
+
+        String report = ContractComplianceReport.render(result, metrics);
+        System.out.print(report);
+        assertThat(report)
+                .as("리포트가 세 번째 이탈을 이름으로 찍어야 '계약 밖 N건' 이 다시 미설명으로 남지 않는다")
+                .contains("이탈③ 생성 본문 없음")
+                .contains("이탈 합계 ①+②+③+보안거절");
+        assertThat(report)
+                .as("무과금 게이트의 보장 범위가 플래너 층이라는 것을 리포트가 스스로 적어야 한다")
+                .contains("플래너 층에 한정");
+        assertThat(report)
+                .as("상한을 넘긴 실행은 리포트가 인용 금지를 찍어야 한다")
+                .contains("외부 실패가 상한을 넘었다");
+    }
+
+    @Test
+    @DisplayName("P0-3: manifest 가 외부 실패를 턴 단위·내역과 함께 싣는다")
+    void manifestCarriesTheHonestExternalFailureTally() {
+        CellRunner.Result result = runWithFailureShape();
+        Map<String, String> metadata = ContractComplianceReport
+                .manifest(result, metricsOf(result), Map.of()).toMetadata();
+
+        assertThat(metadata.get("external_failure_turns"))
+                .as("#305 manifest 는 이 자리에 1 을 적었다")
+                .isEqualTo(String.valueOf(GENERATION_FAILURES));
+        assertThat(metadata.get("external_failure_share")).startsWith("0.1634");
+        assertThat(metadata.get("external_failure_within_limit")).isEqualTo("false");
+        assertThat(metadata.get("external_failure_breakdown"))
+                .isEqualTo("생성 %d · 판정 %d · 케이스 중단 0"
+                        .formatted(GENERATION_FAILURES, JUDGE_FAILURES_AMONG_THEM));
+        assertThat(metadata.get("no_body_escapes")).isEqualTo(String.valueOf(GENERATION_FAILURES));
+        assertThat(metadata)
+                .as("단위가 '호출' 이 아니었던 옛 키를 남겨 두면 같은 이름이 두 정의를 갖는다")
+                .doesNotContainKey("external_failure_calls");
+    }
+
+    // ── P0-3: reporting_unit 은 보고 대상 세트를 말한다 ────────────────
+
+    @Test
+    @DisplayName("P0-3: reporting_unit 이 잠금 세트의 고정 문구를 쓰지 않는다")
+    void reportingUnitDescribesTheContractSet() {
+        CellRunner.Result result = run(ContractPromptArm.WITH_CONTRACT_BLOCK, new PromptSpy());
+        ContractComplianceMetrics metrics = metricsOf(result);
+        Map<String, String> metadata = ContractComplianceReport
+                .manifest(result, metrics, Map.of()).toMetadata();
+
+        String unit = metadata.get("reporting_unit");
+        assertThat(unit)
+                .as("이 세트의 하위 그룹은 51건씩이라 하한 30 을 넘는다 — 잠금 세트 문구는 거짓이 된다")
+                .doesNotContain(LockedEvalSet.REPORTING.reportableUnit())
+                .doesNotContain("어느 하위 그룹도");
+        assertThat(unit)
+                .as("보고 대상 세트와 이번 실행의 관측값을 말해야 한다")
+                .contains(ContractEvalSet.VERSION)
+                .contains("CLARIFY_CONTEXT=" + ContractEvalSet.CASES.size());
+        assertThat(metadata.get("reporting_min_subgroup_n"))
+                .as("하한 자체는 두 세트가 공유한다")
+                .isEqualTo(String.valueOf(LockedEvalSet.REPORTING.minSubgroupN()));
+        assertThat(ContractEvalSet.intendedDistribution().values())
+                .as("선언 하위 그룹이 모두 하한을 넘는다는 전제가 이 문구의 근거다")
+                .allSatisfy(n -> assertThat(n)
+                        .isGreaterThanOrEqualTo(LockedEvalSet.REPORTING.minSubgroupN()));
+    }
+
+    // ── P0-3: 원가가 리포트·manifest 에 실린다 ─────────────────────────
+
+    @Test
+    @DisplayName("P0-3: 리포트와 manifest 가 토큰·원가를 싣는다 — 견적 대비 실비를 답할 수 있다")
+    void costIsRenderedSoEstimateVersusActualIsAnswerable() {
+        CellRunner.Result result = run(ContractPromptArm.WITH_CONTRACT_BLOCK, new PromptSpy());
+        ContractComplianceMetrics metrics = metricsOf(result);
+
+        assertThat(ContractComplianceReport.render(result, metrics))
+                .as("#305 는 이 줄이 없어 실비를 어디에서도 확인할 수 없었다")
+                .contains("[토큰·원가")
+                .contains("총 원가")
+                .contains("단가 미등록 호출");
+
+        Map<String, String> metadata = ContractComplianceReport
+                .manifest(result, metrics, Map.of()).toMetadata();
+        assertThat(metadata)
+                .as("CellReport 와 같은 키를 써야 두 아카이브를 같은 도구로 읽을 수 있다")
+                .containsKeys("llm_calls", "prompt_tokens", "completion_tokens",
+                        "cost_total_usd", "unpriced_calls", "usage_missing_calls");
+        assertThat(Long.parseLong(metadata.get("prompt_tokens"))).isPositive();
+        assertThat(metadata.get("cost_total_usd"))
+                .as("단가를 아는 실행이면 금액이, 모르면 '미상' 이 나온다 — 0 은 나오지 않는다")
+                .isNotEqualTo("$0.000000");
+    }
+
+    @Test
+    @DisplayName("P0-3: 세트가 선언한 이탈과 리포트가 이름 붙이는 이탈이 같은 수다")
+    void declaredEscapesMatchWhatTheReportNames() {
+        // 세트의 산문과 실행의 집계가 갈리는 것이 P0-3 의 본질이었다. 한쪽만 고치면 여기서 깨진다.
+        assertThat(ContractEvalSet.declaredEscapes())
+                .as("리포트는 이탈① ② ③ 을 이름으로 찍는다 — 세트 선언도 셋이어야 한다")
+                .hasSize(3)
+                .anySatisfy(e -> assertThat(e).startsWith("JUDGE_HARD_CRISIS"))
+                .anySatisfy(e -> assertThat(e).startsWith("JUDGE_SECURITY"))
+                .anySatisfy(e -> assertThat(e).startsWith("NO_BODY"));
+        assertThat(ContractEvalSet.declaredEscapes())
+                .as("이탈③ 이 어느 필드로 세어지는지 세트가 스스로 적어야 한다")
+                .anySatisfy(e -> assertThat(e).contains("no_body_escapes"));
+    }
+
+    /**
+     * {@code #305} 대조군의 실패 모양으로 스텁 실행을 돌린다.
+     *
+     * <p>앞 {@value #GENERATION_FAILURES} 건의 생성 호출을 실패시키고, 그중 앞
+     * {@value #JUDGE_FAILURES_AMONG_THEM} 건은 InputJudge 호출도 실패시킨다. 실패시키는 방법은
+     * 프로덕션이 실제로 받는 것과 같다 — 클라이언트가 {@link RuntimeException} 을 던지고,
+     * {@code CellRunner} 와 {@code InputJudge} 가 각자 그것을 잡는다.
+     */
+    private static CellRunner.Result runWithFailureShape() {
+        CellTokenLedger keys = new CellTokenLedger();
+        List<UUID> failing = ContractEvalSet.CASES.stream()
+                .limit(GENERATION_FAILURES)
+                .map(c -> keys.keyFor(c.id()))
+                .toList();
+        Set<UUID> generationFailures = Set.copyOf(failing);
+        Set<UUID> judgeFailures = Set.copyOf(failing.subList(0, JUDGE_FAILURES_AMONG_THEM));
+
+        CellVariant variant = CellVariant.of(BenchmarkCell.A, ContractPromptArm.WITHOUT_CONTRACT_BLOCK);
+        try {
+            return CellRunner.withClientFactory(variant,
+                    CellModelRegistry.resolveForEstimate(BenchmarkCell.A, Map.of()),
+                    (ledger, pricing) -> new FailingLlmClient(
+                            new StubLlmClient(ledger, pricing), generationFailures, judgeFailures))
+                    .run(ContractEvalSet.CASES, false, IDENTITY);
+        } catch (Exception e) {
+            throw new IllegalStateException("실패 모양 재구성 실행이 죽었다", e);
+        }
+    }
+
+    /**
+     * 지정한 케이스에서 외부 호출을 실패시키는 클라이언트.
+     *
+     * <p>실패 서명을 {@code #305} 실행의 로그와 같게 둔다 — {@code LLM streaming error} 는 생성
+     * 스트리밍, {@code LLM complete error} 는 판정 호출이었다. 케이스 귀속은
+     * {@code LlmRequest.userId}(= caseKey) 로 하며, 이는 원장이 쓰는 것과 같은 키다.
+     */
+    private record FailingLlmClient(LlmClient delegate, Set<UUID> generationFailures,
+                                    Set<UUID> judgeFailures) implements LlmClient {
+
+        @Override
+        public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
+            if (generationFailures.contains(request.userId())) {
+                throw new IllegalStateException("LLM streaming error");
+            }
+            return delegate.stream(request, chunkHandler);
+        }
+
+        @Override
+        public String completeText(LlmRequest request) {
+            return delegate.completeText(request);
+        }
+
+        @Override
+        public String completeJson(LlmRequest request) {
+            // InputJudge 만 실패시킨다. OutputJudge·CBT 분류까지 함께 실패시키면 무엇이 계량기를
+            // 가렸는지가 흐려진다 — #305 에서 생성 실패를 덮어쓴 것은 InputJudge 였다.
+            if (CellModelRole.INPUT_SAFETY.component().equals(request.component())
+                    && judgeFailures.contains(request.userId())) {
+                throw new IllegalStateException("LLM complete error");
+            }
+            return delegate.completeJson(request);
+        }
     }
 
     // ── 실행 도우미 ────────────────────────────────────────────────
