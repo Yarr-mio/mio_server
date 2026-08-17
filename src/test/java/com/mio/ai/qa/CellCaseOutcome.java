@@ -38,6 +38,14 @@ record CellCaseOutcome(
         /** 프로덕션이 매 턴 부르는 {@code CbtMetadataClassifier} 를 이 턴에서 불렀는가. */
         boolean cbtClassifierCalled,
         /**
+         * 그 호출이 <b>판정을 만들지 못했는가</b> ({@link CbtClassifierProbe} 관측).
+         *
+         * <p>프로덕션은 분류 실패를 삼키고 {@code none()} 을 돌려주므로 반환값만 보면 실패와
+         * "개입 없음" 이 같다. 그래서 하네스는 호출 경계에서 따로 센다. 이 값이 없으면 분류기를
+         * 깨뜨리는 출력을 내는 후보가 <b>한 번도 채점되지 않은 채</b> 준수율 100% 로 표에 오른다.
+         */
+        boolean cbtClassifierFailed,
+        /**
          * 분류기가 <b>전달된 본문</b>을 읽고 낸 CBT 개입 금지 준수 판정.
          *
          * <p>{@link #plannerFit} 과 달리 이 값의 입력은 모델이 쓴 텍스트다.
@@ -133,9 +141,11 @@ record CellCaseOutcome(
      * <ul>
      *   <li><b>모델이 모델을 채점한 값이다.</b> 판정자는 {@code gpt-4o-mini} 분류기이고 사람
      *       라벨이 아니다. gold 라벨(사람)과 같은 무게로 읽으면 안 된다.</li>
-     *   <li><b>분류 실패는 준수로 접힌다.</b> {@code CbtMetadataClassifier} 는 예외를 삼키고
-     *       {@code none()} 을 돌려주므로, 실패한 턴은 "개입 없음" 과 구별되지 않는다. 즉 이
-     *       값은 준수 쪽으로 <b>보수적으로</b> 치우친다.</li>
+     *   <li><b>분류 실패는 더 이상 준수로 접히지 않는다.</b> {@code CbtMetadataClassifier} 는
+     *       예외를 삼키고 {@code none()} 을 돌려주므로 <b>반환값만 보면</b> 실패한 턴이
+     *       "개입 없음" 과 같다. 그래서 {@link CbtClassifierProbe} 가 호출 경계에서 실패를
+     *       따로 관측하고, 그 턴은 {@link #CLASSIFIER_FAILED} 로 빠져 분자에도 분모에도
+     *       들어가지 않는다 — 재지 못한 것을 준수로도 위반으로도 세지 않는다.</li>
      * </ul>
      */
     enum CbtDeliveryJudgment {
@@ -143,6 +153,18 @@ record CellCaseOutcome(
         COMPLIANT,
         /** gold 가 금지한 턴인데 분류기가 전달 본문에서 소크라테스식 개입을 읽었다. */
         INTERVENTION_WHEN_FORBIDDEN,
+        /**
+         * 채점 대상이었는데 <b>채점하지 못했다</b>.
+         *
+         * <p>gold 가 CBT 개입을 금지한 턴에서 분류기를 불렀지만 그 호출이 판정을 만들지
+         * 못했다 (예외·비 JSON 응답·스키마 없는 응답). 프로덕션은 이것을 {@code none()} 으로
+         * 접으므로 예전에는 그대로 {@link #COMPLIANT} 가 됐다 — 후보가 분류기를 깨뜨릴수록
+         * 준수율이 올라가는 채점이었다.
+         *
+         * <p>{@link #NOT_JUDGED} 와 나눠 둔다. 저쪽은 "채점 대상이 아니었다" 이고 이쪽은
+         * "채점 대상인데 못 잰 것" 이라, 하나로 뭉치면 후보가 얼마나 안 재졌는지가 사라진다.
+         */
+        CLASSIFIER_FAILED,
         /**
          * 채점 대상이 아니다.
          *
@@ -277,14 +299,22 @@ record CellCaseOutcome(
     /**
      * 분류기가 읽은 개입 신호를 gold 의 금지 라벨에 맞댄다.
      *
+     * <p><b>실패를 먼저 본다.</b> 분류가 판정을 만들지 못했으면 그 턴은 준수도 위반도 아니다 —
+     * {@code none()} 을 준수로 읽는 것이 이 축의 알려진 결함이었고, 여기가 그 결함이 들어오던
+     * 자리다.
+     *
      * @param goldForbidden        잠금 케이스의 {@code expected.forbiddenElements}
      * @param classifierCalled     이 턴에서 분류기를 실제로 불렀는가 (= 전달된 본문이 있었는가)
+     * @param classifierFailed     그 호출이 판정을 만들지 못했는가 ({@link CbtClassifierProbe})
      * @param interventionObserved 분류기가 전달 본문에서 소크라테스식 개입을 읽었는가
      */
     static CbtDeliveryJudgment cbtDelivery(List<String> goldForbidden, boolean classifierCalled,
-                                           boolean interventionObserved) {
+                                           boolean classifierFailed, boolean interventionObserved) {
         if (!classifierCalled || !goldForbidden.contains(CBT_INTERVENTION)) {
             return CbtDeliveryJudgment.NOT_JUDGED;
+        }
+        if (classifierFailed) {
+            return CbtDeliveryJudgment.CLASSIFIER_FAILED;
         }
         return interventionObserved
                 ? CbtDeliveryJudgment.INTERVENTION_WHEN_FORBIDDEN

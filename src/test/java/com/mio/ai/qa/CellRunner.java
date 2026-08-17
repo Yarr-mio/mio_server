@@ -205,6 +205,8 @@ final class CellRunner {
     private final InputJudge inputJudge;
     private final OutputJudge outputJudge;
     private final CbtMetadataClassifier cbtClassifier;
+    /** 분류 실패를 호출 경계에서 관측한다. 프로덕션은 그것을 삼켜 {@code none()} 으로 접는다. */
+    private final CbtClassifierProbe cbtClassifierProbe;
 
     private CellRunner(CellVariant variant, CellModelRegistry registry, CellTokenLedger ledger,
                        ClientFactory clientFactory, boolean stubMode) {
@@ -218,7 +220,10 @@ final class CellRunner {
         ObjectMapper mapper = new ObjectMapper();
         this.inputJudge = new InputJudge(llmClient, mapper, ledger.meterRegistry());
         this.outputJudge = new OutputJudge(llmClient, mapper, ledger.meterRegistry());
-        this.cbtClassifier = new CbtMetadataClassifier(llmClient, mapper);
+        // 분류기에게만 프로브를 씌운다. 다른 역할의 호출은 그대로 지나가고, 분류기 자신의
+        // 동작도 바뀌지 않는다 — 프로브는 예외를 다시 던지고 본문도 손대지 않는다.
+        this.cbtClassifierProbe = new CbtClassifierProbe(llmClient);
+        this.cbtClassifier = new CbtMetadataClassifier(cbtClassifierProbe, mapper);
     }
 
     /** 실 LLM 실행. 과금된다. */
@@ -346,7 +351,7 @@ final class CellRunner {
                 CellCaseOutcome.grade(lockedCase.expected().safetyTruth(), Exposure.GUARDED),
                 lockedCase.expected().responseAct(), null,
                 CellCaseOutcome.plannerFit(lockedCase.expected().responseAct(), null),
-                false, null, false, false, false, false,
+                false, null, false, false, false, false, false,
                 CellCaseOutcome.CbtDeliveryJudgment.NOT_JUDGED,
                 false,
                 ContractOutcome.NOT_APPLICABLE, List.of(),
@@ -395,11 +400,16 @@ final class CellRunner {
      * <p>예전에는 {@code classify(...)} 의 반환값을 그대로 버리고 {@code called} 만 남겼다.
      * 그래서 하네스는 <b>모델에 따라 변하는</b> 유일한 CBT 신호에 매 턴 돈을 쓰면서 그것을
      * 기록하지 않았고, 리포트의 "CBT" 칸은 생성보다 먼저 계산되는 플래너 값이 차지했다.
+     *
+     * <p>{@code failed} 는 <b>재지 못했음</b>을 남긴다. 프로덕션은 분류 실패를 삼키고
+     * {@code none()} 을 돌려주므로 {@code interventionObserved=false} 가 되고, 그것은 "개입이
+     * 없었다" 와 반환값에서 구별되지 않는다. 그 구별이 없으면 분류기를 깨뜨리는 출력을 내는
+     * 후보가 준수율 100% 를 얻는다 — 빈 응답으로 수용률 100% 를 얻었던 것과 같은 유형이다.
      */
-    private record CbtClassification(boolean called, boolean interventionObserved) {
+    private record CbtClassification(boolean called, boolean interventionObserved, boolean failed) {
 
         static CbtClassification notCalled() {
-            return new CbtClassification(false, false);
+            return new CbtClassification(false, false, false);
         }
     }
 
@@ -426,9 +436,15 @@ final class CellRunner {
         if (!deliveredGeneration) {
             return CbtClassification.notCalled();
         }
+        // 관측 표식을 지우고 → 프로덕션 분류기를 그대로 부르고 → 같은 스레드에서 결과를 읽는다.
+        // 분류 1회 = completeJson 1회라 이 짝짓기는 이 턴에 정확히 대응한다.
+        cbtClassifierProbe.beginObservation();
         CbtMetadataResult result = cbtClassifier.classify(null, priorTurns, userMessage,
                 delivery.deliveredText(), signal, 0, false, caseKey, caseKey);
-        return new CbtClassification(true, CellCaseOutcome.interventionObserved(result));
+        boolean failed = cbtClassifierProbe.lastClassificationFailed();
+        // 실패했으면 개입 관측값은 쓰지 않는다. 그 값은 none() 에서 나온 false 이지 판정이 아니다.
+        return new CbtClassification(true,
+                !failed && CellCaseOutcome.interventionObserved(result), failed);
     }
 
     /** 생성 프롬프트에 실을 이전 턴. 멀티턴 케이스의 맥락이 셀 사이에서 달라지면 안 된다. */
@@ -729,9 +745,9 @@ final class CellRunner {
                 CellCaseOutcome.plannerFit(lockedCase.expected().responseAct(),
                         decision.responsePlan().responseAct()),
                 judgeCalled, decision.judgeStatus(), delivery.generationCalled(),
-                delivery.escalated(), delivery.outputJudgeCalled(), cbt.called(),
+                delivery.escalated(), delivery.outputJudgeCalled(), cbt.called(), cbt.failed(),
                 CellCaseOutcome.cbtDelivery(lockedCase.expected().forbiddenElements(),
-                        cbt.called(), cbt.interventionObserved()),
+                        cbt.called(), cbt.failed(), cbt.interventionObserved()),
                 delivery.truncated(),
                 delivery.contract(), delivery.contractViolations(),
                 judgeResult != null && judgeResult.failed()

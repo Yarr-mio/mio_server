@@ -516,7 +516,7 @@ class CellBenchmarkHarnessTest {
         CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
                 new CandidateElimination.Thresholds(registered.version(),
                         registered.registeredOn(), BenchmarkStage.SCREEN,
-                        999, 999, 999, 999, 99.0, 99_000L, 99_000L, 99.0, 100.0, 6),
+                        999, 999, 999, 999, 99.0, 99_000L, 99_000L, 99.0, 100.0, 100.0, 6),
                 CellVariant.of(BenchmarkCell.B), batchMetrics.modelDiscriminating(),
                 batchMetrics.modelDiscriminating(), false);
         assertThat(verdict.outcome())
@@ -613,7 +613,7 @@ class CellBenchmarkHarnessTest {
         CandidateElimination.Verdict verdict = CandidateElimination.evaluate(
                 new CandidateElimination.Thresholds(thresholds.version(),
                         thresholds.registeredOn(), BenchmarkStage.SCREEN,
-                        99, 99, 99, 99, 99.0, -1L, -1L, 99.0, 100.0, 6),
+                        99, 99, 99, 99, 99.0, -1L, -1L, 99.0, 100.0, 100.0, 6),
                 CellVariant.of(BenchmarkCell.B), population, population);
 
         assertThat(verdict.outcome())
@@ -669,6 +669,7 @@ class CellBenchmarkHarnessTest {
                 base.riskPositives(), base.falseNegatives() + 1, base.crisisFalsePositives(),
                 base.guardFalsePositives(), base.plannerScoreable(), base.plannerMatched(),
                 base.cbtDeliveryJudged(), base.cbtDeliveryCompliant(),
+                base.cbtDeliveryUnscoreable(), base.cbtClassifierFailures(),
                 base.contractApplicable(), base.contractViolated(),
                 base.contraindicationViolations(), base.acceptance(), base.inputJudgeCalls(),
                 base.generationCalls(), base.escalations(), base.outputJudgeCalls(),
