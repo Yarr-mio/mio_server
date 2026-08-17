@@ -26,6 +26,12 @@ import java.util.TreeMap;
  * {@code NOT_APPLICABLE}(계획 밖·고정 응답·본문 없음)과 {@code UNCHECKED}(검사 지점 없는 전달)을
  * 분모에 넣으면 위반율이 실제보다 낮아 보인다.
  *
+ * <p><b>이탈은 셋이며 셋을 모두 이름으로 센다</b> (P0-3). ① Judge 위기 승격
+ * ({@link #crisisRouted}), ② Judge 보안 의심({@link #unplanned}), ③ 생성 본문 없음
+ * ({@link #noBodyEscapes}). ①②는 플래너 층 이탈이라 무과금 게이트({@code ContractEvalSetTest})
+ * 가 소진성을 증명하지만, ③은 <b>생성 층</b>이라 그 게이트가 구조적으로 볼 수 없다.
+ * {@code #305} 대조군이 {@code 계약 밖 25건} 을 찍고 설명 줄이 모두 0 이었던 것이 ③이다.
+ *
  * <p>비율은 전부 {@link ReportableRate} 를 지난다. 하한({@code minSubgroupN=30}) 미달 행위는
  * <b>비율이 계산되지 않는다</b> — P0-8 3단계가 n=12 로 겪은 상황을 다시 만들지 않기 위해서가
  * 아니라, 그 상황이 오더라도 수치가 인용되지 않게 하기 위해서다.
@@ -43,8 +49,30 @@ record ContractComplianceMetrics(
         int securityRefusal,
         /** 계획 범위 밖으로 남은 턴. 룰이 Judge 로 올렸는데도 여기 오면 설계 가정이 틀린 것이다. */
         int unplanned,
+        /**
+         * 외부 실패가 <b>일어난</b> 턴 수 — {@code acceptance} 라벨과 독립이다 (P0-3).
+         *
+         * <p>{@code #305} 유료 실행은 이 값을 {@code acceptance == REJECTED_EXTERNAL_FAILURE} 로
+         * 셌고, 생성 실패 25건 중 24건이 같은 턴의 판정 실패 라벨에 먹혀 <b>1</b> 을 보고했다.
+         * 지금은 {@link CellCaseOutcome#externalFailureObserved()} 를 센다.
+         */
         int externalFailures,
+        /** 그중 생성(또는 escalation 재생성) 호출이 실패한 턴. 이 턴들이 분모를 빼앗아 간다. */
+        int generationFailures,
+        /** 그중 판정 호출이 실패한 턴. 분모는 남기지만 계획된 행위를 EMOTION_CHECK 쪽으로 민다. */
+        int judgeFailures,
+        /** 그중 타임아웃·예외로 케이스 자체가 중단된 턴. */
+        int abortedCases,
         int emptyResponses,
+        /**
+         * 이탈③ — 생성 본문이 없어 계약 검사가 {@code notApplicable()} 을 돌려준 턴 (P0-3).
+         *
+         * <p>{@code ContractEvalSetTest} 의 "전 케이스가 계약 경로로 간다" 보장은 <b>플래너
+         * 층</b>에 한정된다. 그 테스트는 생성을 돌리지 않으므로 이 이탈을 구조적으로 볼 수 없다.
+         * {@code #305} 대조군의 {@code 계약 밖 25건} 이 정확히 이것이었고, 리포트가 그 25건을
+         * 설명하는 세 줄이 모두 0 이었다.
+         */
+        int noBodyEscapes,
         Map<ResponseAct, ActStats> byAct,
         Map<String, Integer> violationTypes,
         Shape shape) {
@@ -54,9 +82,55 @@ record ContractComplianceMetrics(
         violationTypes = Map.copyOf(violationTypes);
     }
 
+    /**
+     * 외부 실패 상한 (비율). 넘으면 이 실행의 수치를 쓰지 않는다.
+     *
+     * <p>실패한 턴은 계약 모집단에 들어오지 않는다. 실패가 많으면 남은 모집단이 실패하지 않은
+     * 쪽으로 치우쳐, 위반율이 네트워크 사정을 재는 값이 된다.
+     *
+     * <p>가드와 하네스 자체 검사가 <b>같은 상수</b>를 읽는다. 값을 두 곳에 적으면 한쪽만 고쳐도
+     * 테스트가 통과해, 가드가 실제로 어디서 트립하는지 아무도 모르게 된다.
+     */
+    static final double MAX_EXTERNAL_FAILURE_SHARE = 0.10;
+
     /** 총계 위반율. 행위별로 하한에 못 미쳐도 총계는 낼 수 있는 경우가 있다. */
     ReportableRate violationRate() {
         return ReportableRate.of("계약 위반율(총계)", violated, applicable);
+    }
+
+    /**
+     * 외부 실패로 잃은 턴의 비율 (P0-3).
+     *
+     * <p>분모는 시도한 전 케이스다. 남은 모집단을 분모로 쓰면 실패가 늘수록 분모도 줄어 비율이
+     * 실제보다 작게 나온다 — 계량기가 자기 실패를 감추는 계산이 된다.
+     */
+    double externalFailureShare() {
+        return cases == 0 ? 0.0 : (double) externalFailures / cases;
+    }
+
+    /**
+     * 이 실행의 수치를 인용해도 되는가 (외부 실패 기준).
+     *
+     * <p>{@code #305} 실행은 16.3% 를 잃었고 이 검사가 0.65% 로 읽어 통과했다. 지금은
+     * {@link #externalFailures} 가 라벨이 아니라 사실을 세므로 같은 데이터에서 거짓이 된다.
+     */
+    boolean externalFailureWithinLimit() {
+        return externalFailureShare() <= MAX_EXTERNAL_FAILURE_SHARE;
+    }
+
+    /**
+     * 설명된 이탈의 합 — 이 값이 {@link #notApplicable} 과 어긋나면 이름 없는 이탈이 또 생겼다.
+     *
+     * <p>{@code #305} 대조군은 {@code 계약 밖 25건} 을 찍고 설명 줄은 모두 0 이었다. 합계를
+     * 리포트가 스스로 맞춰 보면 그 상태가 다음 실행에서 조용히 지나가지 않는다.
+     */
+    int explainedEscapes() {
+        return crisisRouted + unplanned + securityRefusal + noBodyEscapes;
+    }
+
+    /** 어느 이탈로도 설명되지 않은 계약 밖 턴. 0 이 아니면 리포트가 경고를 찍는다. */
+    int unexplainedEscapes() {
+        return notApplicable - explainedEscapes();
     }
 
     /**
@@ -142,13 +216,34 @@ record ContractComplianceMetrics(
                         .filter(o -> o.observedResponseAct() == ResponseAct.SECURITY_REFUSAL).count(),
                 (int) outcomes.stream()
                         .filter(o -> o.observedResponseAct() == ResponseAct.UNPLANNED).count(),
-                (int) outcomes.stream()
-                        .filter(o -> o.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EXTERNAL_FAILURE)
-                        .count(),
+                // 외부 실패는 acceptance 라벨이 아니라 관측된 사실을 센다 (P0-3). 라벨을 세면
+                // 같은 턴의 판정 실패가 생성 실패를 덮어쓴 만큼이 집계에서 사라진다.
+                (int) outcomes.stream().filter(CellCaseOutcome::externalFailureObserved).count(),
+                (int) outcomes.stream().filter(o -> o.externalFailure().generation()).count(),
+                (int) outcomes.stream().filter(o -> o.externalFailure().judge()).count(),
+                (int) outcomes.stream().filter(o -> o.externalFailure().caseAborted()).count(),
                 (int) outcomes.stream()
                         .filter(o -> o.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EMPTY_RESPONSE)
                         .count(),
+                (int) outcomes.stream().filter(ContractComplianceMetrics::noBodyEscape).count(),
                 byAct, violationTypes(scored), Shape.of(scored));
+    }
+
+    /**
+     * 이탈③ — 생성 본문이 없어 계약 모집단에서 빠진 턴 (P0-3).
+     *
+     * <p>둘 중 하나다. (1) 생성 호출이 외부 오류로 실패했다(타임아웃·예외로 케이스가 중단된
+     * 경우 포함), (2) 모델이 정상 응답으로 빈 본문을 돌려줬다. 어느 쪽이든
+     * {@code ResponseContractValidator} 는 볼 본문이 없어 {@code notApplicable()} 을 돌려준다.
+     *
+     * <p>{@code contract == NOT_APPLICABLE} 조건을 함께 본다. 판정 호출만 실패한 턴은 생성이
+     * 정상으로 돌아 분모에 남으므로 이탈이 아니다 — 그 턴을 여기 세면 이탈 합계가 계약 밖 건수를
+     * 넘고, 그러면 합계 검산이 아무것도 잡지 못한다.
+     */
+    private static boolean noBodyEscape(CellCaseOutcome outcome) {
+        return outcome.contract() == ContractOutcome.NOT_APPLICABLE
+                && (outcome.externalFailure().removesBody()
+                || outcome.acceptance() == CellCaseOutcome.Acceptance.REJECTED_EMPTY_RESPONSE);
     }
 
     private static boolean scored(CellCaseOutcome outcome) {

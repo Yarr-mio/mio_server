@@ -62,14 +62,6 @@ class ContractComplianceLlmTest {
 
     private static final String SAMPLE_PROPERTY = "mio.eval.sampleSize";
 
-    /**
-     * 외부 실패 상한 (비율).
-     *
-     * <p>실패한 턴은 계약 모집단에 들어오지 않는다. 실패가 많으면 남은 모집단이 실패하지 않은
-     * 쪽으로 치우쳐, 위반율이 네트워크 사정을 재는 값이 된다.
-     */
-    private static final double MAX_EXTERNAL_FAILURE_SHARE = 0.10;
-
     @Test
     @Timeout(value = 90, unit = TimeUnit.MINUTES)
     @DisplayName("계약 지시 유무로 두 팔을 돌리고 행위별 위반율·분포를 기록한다")
@@ -117,18 +109,34 @@ class ContractComplianceLlmTest {
         metrics.forEach((arm, m) -> {
             assertThat(m.applicable())
                     .as("%s 팔에서 계약 적용 턴이 하한 미만이다 (%d) — P0-8 3단계와 같이 "
-                            + "건수만 인용할 수 있는 실행이 됐다. 룰 레이어는 전 케이스를 계약 "
-                            + "경로로 보내므로(ContractEvalSetTest), 원인은 Judge 판정이 만든 두 "
-                            + "이탈 중 하나다: 위기 승격 %d건 · 보안 의심 %d건",
-                            arm.label(), m.applicable(), m.crisisRouted(), m.unplanned())
+                            + "건수만 인용할 수 있는 실행이 됐다. 이탈은 셋이다: "
+                            + "① Judge 위기 승격 %d건 · ② Judge 보안 의심 %d건 · "
+                            + "③ 생성 본문 없음 %d건. ①②만 무과금 게이트(ContractEvalSetTest)가 "
+                            + "닫으며, 그 게이트는 플래너 층까지만 보므로 ③은 여기서만 보인다",
+                            arm.label(), m.applicable(), m.crisisRouted(), m.unplanned(),
+                            m.noBodyEscapes())
                     .isGreaterThanOrEqualTo(LockedEvalSet.REPORTING.minSubgroupN());
             assertThat(m.violationRate())
                     .as("%s 팔의 총계 위반율이 보고 가능해야 한다", arm.label())
                     .isInstanceOf(ReportableRate.Reported.class);
-            assertThat((double) m.externalFailures() / m.cases())
-                    .as("%s 팔의 외부 실패가 많다 (%d/%d) — 남은 모집단이 편향된다",
-                            arm.label(), m.externalFailures(), m.cases())
-                    .isLessThanOrEqualTo(MAX_EXTERNAL_FAILURE_SHARE);
+            // 외부 실패는 acceptance 라벨이 아니라 관측된 사실로 센다 (P0-3). #305 실행은
+            // 생성 실패 25건 중 24건이 같은 턴의 판정 실패 라벨에 먹혀 이 검사가 16.3% 를
+            // 0.65% 로 읽고 통과했다.
+            assertThat(m.externalFailureWithinLimit())
+                    .as("%s 팔의 외부 실패가 상한을 넘었다 — %d/%d턴 (%.1f%%) > %.0f%%. "
+                            + "내역: 생성 %d · 판정 %d · 케이스 중단 %d. 남은 %d건은 무작위 표본이 "
+                            + "아니므로 위반율을 인용할 수 없다",
+                            arm.label(), m.externalFailures(), m.cases(),
+                            m.externalFailureShare() * 100,
+                            ContractComplianceMetrics.MAX_EXTERNAL_FAILURE_SHARE * 100,
+                            m.generationFailures(), m.judgeFailures(), m.abortedCases(),
+                            m.applicable())
+                    .isTrue();
+            assertThat(m.unexplainedEscapes())
+                    .as("%s 팔의 계약 밖 %d건 중 %d건이 어느 이탈로도 설명되지 않는다 — "
+                            + "'계약 밖 N건' 이 다시 설명 없이 남았다",
+                            arm.label(), m.notApplicable(), m.unexplainedEscapes())
+                    .isZero();
         });
 
         assertThat(runs.values())
