@@ -75,6 +75,10 @@ public class Session {
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
 
+    /** user_reframed_thought / user_declined / max_questions_reached / stabilized / not_applicable */
+    @Column(name = "cbt_completion_reason")
+    private String cbtCompletionReason;
+
     @PrePersist
     protected void onCreate() {
         startedAt = OffsetDateTime.now(ZoneOffset.UTC);

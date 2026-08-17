@@ -68,13 +68,15 @@ public class AdminSessionService {
                 crisisEvents.stream().map(c -> c.getId().toString())
         ).toList();
 
+        List<Message> messages = messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId);
+
         List<TimelineItem> items = Stream.of(
-                        messageRepository.findBySession_IdOrderByCreatedAtAsc(sessionId).stream()
+                        messages.stream()
                                 .map(this::messageItem),
                         aiPolicyDecisionRepository.findBySessionIdOrderByCreatedAtAsc(sessionId).stream()
                                 .map(this::policyDecisionItem),
                         crisisEvents.stream()
-                                .map(this::crisisEventItem),
+                                .map(c -> crisisEventItem(c, messages)),
                         auditResourceIds.stream()
                                 .flatMap(resourceId -> auditLogRepository.findByResourceIdOrderByCreatedAtAsc(resourceId).stream())
                                 .map(this::auditLogItem)
@@ -115,7 +117,7 @@ public class AdminSessionService {
         return new TimelineItem(d.getCreatedAt(), data);
     }
 
-    private TimelineItem crisisEventItem(CrisisEvent c) {
+    private TimelineItem crisisEventItem(CrisisEvent c, List<Message> sessionMessages) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("type", "crisis_event");
         data.put("at", c.getCreatedAt().toString());
@@ -124,6 +126,10 @@ public class AdminSessionService {
         data.put("operator_reviewed", c.isOperatorReviewed());
         data.put("review_action", c.getReviewAction());
         data.put("operator_note", c.getOperatorNote());
+        // 위기트리거 후 대화 지속여부 (이슈 #475, §4.2) — 신규 계측 없이 이 위기 이벤트 시각
+        // 이후에 메시지가 더 있었는지로 판단한다. "효과 증명"이 아니라 참여 지속 신호일 뿐이다.
+        data.put("continued_engagement", sessionMessages.stream()
+                .anyMatch(m -> m.getCreatedAt().isAfter(c.getCreatedAt())));
         return new TimelineItem(c.getCreatedAt(), data);
     }
 
