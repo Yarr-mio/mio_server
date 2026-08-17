@@ -187,6 +187,25 @@ class ContractComplianceHarnessTest {
     }
 
     @Test
+    @DisplayName("A/B manifest 의 외부 실패 비교 항목은 값이 채워진다 — #473")
+    void comparisonExtraFillsTheExternalFailureTally() {
+        ContractComplianceMetrics with = metricsOf(run(ContractPromptArm.WITH_CONTRACT_BLOCK,
+                new PromptSpy()));
+        ContractComplianceMetrics without = metricsOf(runWithFailureShape());
+
+        Map<String, String> extra = ContractComplianceReport.comparisonExtra(with, without);
+
+        assertThat(extra.get("ab_external_failure"))
+                .as("2026-08-17 재실행 아카이브(run_id c8b165d0)에 '%%d/%%d' 가 그대로 찍혔다 — "
+                        + "두 팔의 유실을 맞대는 항목이 값 없이 남으면 페어링 훼손을 볼 수 없다")
+                .doesNotContain("%d")
+                .contains("있음 0/%d".formatted(with.cases()))
+                .contains("없음 %d/%d".formatted(GENERATION_FAILURES, without.cases()));
+        assertThat(extra.get("ab_applicable")).doesNotContain("%d");
+        assertThat(extra.get("ab_violated")).doesNotContain("%d");
+    }
+
+    @Test
     @DisplayName("스텁 실행은 아카이브를 남기지 않는다")
     void stubRunsAreNotArchived() {
         CellRunner.Result result = run(ContractPromptArm.WITH_CONTRACT_BLOCK, new PromptSpy());
