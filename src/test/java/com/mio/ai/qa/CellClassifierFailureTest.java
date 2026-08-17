@@ -1,5 +1,9 @@
 package com.mio.ai.qa;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.judge.CbtInterventionState;
+import com.mio.ai.judge.CbtMetadataClassifier;
+import com.mio.ai.judge.CbtMetadataResult;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -14,6 +18,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,6 +76,16 @@ class CellClassifierFailureTest {
      * 로 세야 하는 이유다.
      */
     private static final String WRONG_SCHEMA = "{\"summary\":\"ok\",\"confidence\":0.9}";
+
+    /**
+     * 스키마 필드는 다 있는데 <b>값이 프로덕션 어휘 밖</b>이다.
+     *
+     * <p>{@code CbtInterventionState.fromWireValue} 가 모르는 문자열을 예외 없이 {@code NONE}
+     * 으로 접으므로, 프로덕션은 이것을 "개입 없음" 으로 읽는다. 필드 존재만 검사하던 첫 구현은
+     * 이것을 판정 성공으로 셌다 — 이 PR 이 막으려던 우회가 한 겹 아래에 그대로 있었다.
+     */
+    private static final String OUT_OF_VOCABULARY =
+            "{\"cbt_intervention_state\":\"asked_something\",\"is_socratic\":false}";
 
     private static List<LockedCase> sample() {
         return StratifiedSampler.sample(LockedEvalSet.CASES, LockedCase::subgroup, SAMPLE,
@@ -167,6 +182,38 @@ class CellClassifierFailureTest {
     }
 
     @Test
+    @DisplayName("어휘 밖 상태값도 실패다 — 필드만 채우고 준수를 얻는 우회를 막는다")
+    void outOfVocabularyStateIsAlsoAFailure() {
+        CellMetrics.Population exploit = population(ClassifierBehavior.respond(OUT_OF_VOCABULARY));
+
+        assertThat(exploit.cbtClassifierFailures())
+                .as("fromWireValue 가 모르는 문자열을 예외 없이 NONE 으로 접으므로, 필드 <존재> 만 "
+                        + "보면 이 응답이 '판정 성공' 으로 세지고 그대로 준수가 된다 — 후보 텍스트가 "
+                        + "분류기 프롬프트에 그대로 들어가는 이 하네스의 위협 모델에서 개연적인 경로다")
+                .isEqualTo(exploit.cbtClassifierCalls());
+        assertThat(exploit.cbtDeliveryCompliant()).isZero();
+        assertThat(exploit.cbtDeliveryJudged()).isZero();
+        assertThat(exploit.cbtInterventionComplianceRate())
+                .isInstanceOf(ReportableRate.Suppressed.class);
+    }
+
+    @Test
+    @DisplayName("어휘 밖이어도 다른 축이 개입을 말하면 판정은 성립한다 — OR 이라 결론이 바뀌지 않는다")
+    void oneTrustworthyAxisSayingInterventionIsEnough() {
+        CellMetrics.Population partial = population(ClassifierBehavior.respond(
+                "{\"cbt_intervention_state\":\"asked_something\",\"is_socratic\":true}"));
+
+        assertThat(partial.cbtClassifierFailures())
+                .as("한 축이 신뢰할 수 있고 참이면 OR 은 이미 정해진다 — 다른 축이 쓰레기여도 "
+                        + "결론이 바뀌지 않으므로 실패로 세면 과다 계상이다")
+                .isZero();
+        assertThat(partial.cbtDeliveryJudged()).isPositive();
+        assertThat(partial.cbtDeliveryCompliant())
+                .as("gold 가 금지한 턴에서 개입이 관측됐으므로 준수가 아니라 위반이다")
+                .isZero();
+    }
+
+    @Test
     @DisplayName("파싱은 되지만 스키마가 없는 응답도 실패다 — 예외가 없다고 판정이 있는 것은 아니다")
     void wellFormedJsonWithoutTheSchemaIsAlsoAFailure() {
         CellMetrics.Population wrongSchema = population(ClassifierBehavior.respond(WRONG_SCHEMA));
@@ -221,37 +268,147 @@ class CellClassifierFailureTest {
 
     // ── 3. 프로브의 판정 규칙이 프로덕션의 거울인가 ────────────────────
 
-    @Test
-    @DisplayName("프로덕션이 받아들이는 모양은 프로브도 받아들인다 — 거짓 실패를 만들지 않는다")
-    void probeAcceptsWhateverProductionCanActuallyRead() {
-        assertThat(CbtClassifierProbe.yieldsJudgment(HEALTHY)).isTrue();
-        assertThat(CbtClassifierProbe.yieldsJudgment(
-                "```json\n{\"cbt_intervention_state\":\"socratic_asked\"}\n```"))
-                .as("프로덕션 sanitizeJson 이 코드펜스를 벗기므로 프로브도 벗겨야 한다")
-                .isTrue();
-        assertThat(CbtClassifierProbe.yieldsJudgment("{\"is_socratic\":true}"))
-                .as("두 축 중 하나만 있어도 판정은 만들어진다")
-                .isTrue();
-        assertThat(CbtClassifierProbe.yieldsJudgment("  {\"is_socratic\":false}  ")).isTrue();
+    /**
+     * 프로브 판정과 프로덕션 실경로를 대조할 fixture.
+     *
+     * @param probeJudges          프로브가 "판정이 만들어졌다" 로 보는가
+     * @param interventionObserved 그렇다면 프로덕션이 실제로 읽어 내야 하는 개입 값
+     */
+    private record Fixture(String name, String json, boolean probeJudges,
+                           boolean interventionObserved) {
+
+        static Fixture judged(String name, String json, boolean intervention) {
+            return new Fixture(name, json, true, intervention);
+        }
+
+        static Fixture failed(String name, String json) {
+            return new Fixture(name, json, false, false);
+        }
+    }
+
+    /**
+     * 프로브가 판정으로 보는 것과 프로덕션이 실제로 읽어 내는 것.
+     *
+     * <p>실패로 보는 fixture 는 프로덕션에서 {@code none()} 과 <b>구별할 수 없는</b> 결과를
+     * 내야 한다 — 그것이 이 프로브가 그것들을 실패라고 부르는 근거다.
+     */
+    private static List<Fixture> fixtures() {
+        return List.of(
+                Fixture.judged("스키마 그대로", HEALTHY, false),
+                Fixture.judged("코드펜스로 감싼 socratic_asked",
+                        "```json\n{\"cbt_intervention_state\":\"socratic_asked\"}\n```", true),
+                Fixture.judged("is_socratic 만 있고 참", "{\"is_socratic\":true}", true),
+                Fixture.judged("한 축이 어휘 밖이어도 다른 축이 참이면 OR 은 이미 정해진다",
+                        "{\"cbt_intervention_state\":\"asked_something\",\"is_socratic\":true}",
+                        true),
+                Fixture.failed("JSON 이 아니다", NOT_JSON),
+                Fixture.failed("파싱되지만 스키마가 없다", WRONG_SCHEMA),
+                Fixture.failed("빈 객체 — sanitizeJson 이 null 을 이것으로 바꾼다", "{}"),
+                Fixture.failed("null 응답", null),
+                Fixture.failed("빈 문자열", ""),
+                Fixture.failed("객체가 아니다", "[]"),
+                Fixture.failed("두 축이 다 null",
+                        "{\"cbt_intervention_state\":null,\"is_socratic\":null}"),
+                Fixture.failed("상태가 어휘 밖이고 개입도 거짓 — HIGH-1 이 지적한 우회",
+                        "{\"cbt_intervention_state\":\"asked_something\",\"is_socratic\":false}"),
+                Fixture.failed("is_socratic 이 불리언이 아니다",
+                        "{\"cbt_intervention_state\":\"none\",\"is_socratic\":\"yes\"}"),
+                Fixture.failed("개입 없음인데 상태 축이 비었다", "{\"is_socratic\":false}"),
+                Fixture.failed("개입 없음인데 소크라테스 축이 비었다",
+                        "{\"cbt_intervention_state\":\"none\"}"));
     }
 
     @Test
-    @DisplayName("판정을 만들 재료가 없는 모양은 전부 실패다 — 프로덕션에서 none() 으로 접히는 것들이다")
-    void probeRejectsEverythingThatFoldsToNone() {
-        assertThat(CbtClassifierProbe.yieldsJudgment(NOT_JSON)).isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment(WRONG_SCHEMA)).isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment("{}"))
-                .as("프로덕션 sanitizeJson 은 null 을 '{}' 로 바꾼다 — 그 경로도 실패다")
+    @DisplayName("프로브가 '판정' 이라 부른 응답은 프로덕션이 실제로 그 판정을 읽어 낸다")
+    void probeAgreesWithProductionOnEveryJudgedFixture() {
+        for (Fixture fixture : fixtures()) {
+            if (!fixture.probeJudges()) {
+                continue;
+            }
+            assertThat(CbtClassifierProbe.yieldsJudgment(fixture.json()))
+                    .as("프로브가 '%s' 를 실패로 봤다 — 프로덕션은 이것을 읽어 낸다", fixture.name())
+                    .isTrue();
+            CbtMetadataResult real = classifyThroughProduction(fixture.json());
+            assertThat(CellCaseOutcome.interventionObserved(real))
+                    .as("'%s' — 프로덕션 실경로가 읽어 낸 개입 값이 프로브의 전제와 다르다",
+                            fixture.name())
+                    .isEqualTo(fixture.interventionObserved());
+        }
+    }
+
+    @Test
+    @DisplayName("프로브가 '실패' 라 부른 응답은 프로덕션에서 none() 과 구별되지 않는다 — 그것이 실패의 정의다")
+    void probeAgreesWithProductionOnEveryFailedFixture() {
+        CbtMetadataResult none = CbtMetadataResult.none();
+        for (Fixture fixture : fixtures()) {
+            if (fixture.probeJudges()) {
+                continue;
+            }
+            assertThat(CbtClassifierProbe.yieldsJudgment(fixture.json()))
+                    .as("프로브가 '%s' 를 판정으로 봤다 — 프로덕션은 여기서 none() 을 만든다",
+                            fixture.name())
+                    .isFalse();
+            CbtMetadataResult real = classifyThroughProduction(fixture.json());
+            assertThat(real.state())
+                    .as("'%s' — 프로덕션이 none() 이 아닌 것을 읽어 냈다면 이것은 실패가 아니다",
+                            fixture.name())
+                    .isEqualTo(none.state());
+            assertThat(real.socratic())
+                    .as("'%s' — 개입 축이 none() 과 다르면 실패로 부를 수 없다", fixture.name())
+                    .isEqualTo(none.socratic());
+        }
+    }
+
+    @Test
+    @DisplayName("프로덕션은 어휘 밖 상태를 예외 없이 NONE 으로 접는다 — 이 성질이 바뀌면 프로브도 바뀌어야 한다")
+    void productionSilentlyFoldsUnknownVocabularyToNone() {
+        CbtMetadataResult real = classifyThroughProduction(
+                "{\"cbt_intervention_state\":\"asked_something\",\"is_socratic\":false}");
+
+        assertThat(real.state())
+                .as("fromWireValue 가 모르는 문자열을 조용히 접는다는 것이 HIGH-1 의 전제다. "
+                        + "프로덕션이 나중에 예외를 던지도록 바뀌면 이 단언이 깨져야 하고, "
+                        + "그때 프로브의 어휘 검사도 다시 정해야 한다")
+                .isEqualTo(CbtInterventionState.NONE);
+        assertThat(CellCaseOutcome.interventionObserved(real))
+                .as("즉 이 응답은 하네스에 '개입 없음' 으로 보인다 — 프로브가 없으면 그대로 준수다")
                 .isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment(null)).isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment(""))
-                .as("빈 응답은 어떤 검사도 통과한다 — 여기서도 통과시키면 같은 결함이 돌아온다")
+    }
+
+    @Test
+    @DisplayName("프로덕션 sanitizeJson 이 코드펜스를 벗긴다 — 프로브의 sanitize 는 이 성질의 사본이다")
+    void productionStripsCodeFencesBeforeParsing() {
+        CbtMetadataResult real = classifyThroughProduction(
+                "```json\n{\"cbt_intervention_state\":\"socratic_asked\",\"is_socratic\":true}\n```");
+
+        assertThat(real.state())
+                .as("프로덕션이 코드펜스를 더 이상 벗기지 않게 되면 이 단언이 깨진다 — "
+                        + "그때 프로브의 sanitize 사본도 같이 낡은 것이다")
+                .isEqualTo(CbtInterventionState.SOCRATIC_ASKED);
+    }
+
+    @Test
+    @DisplayName("프로덕션이 예외를 삼킨다는 전제 자체를 고정한다 — 이것이 이 PR 의 출발점이다")
+    void productionSwallowsClassifierExceptionsAndReturnsNone() {
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(
+                new FixedJsonLlmClient(null, true), new ObjectMapper());
+
+        CbtMetadataResult real = classifier.classify(null, List.of(), "사용자 발화",
+                "전달된 응답 본문", null, 0, false, UUID.randomUUID(), UUID.randomUUID());
+
+        assertThat(real.state()).isEqualTo(CbtInterventionState.NONE);
+        assertThat(real.socratic())
+                .as("예외가 밖으로 나오면 하네스가 실패를 직접 볼 수 있고 이 프로브가 필요 없다. "
+                        + "삼키기 때문에 호출 경계에서 봐야 한다")
                 .isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment("[]")).isFalse();
-        assertThat(CbtClassifierProbe.yieldsJudgment(
-                "{\"cbt_intervention_state\":null,\"is_socratic\":null}"))
-                .as("두 축이 다 null 이면 프로덕션이 읽을 것이 없어 결과가 none() 이다")
-                .isFalse();
+    }
+
+    /** fixture 를 <b>프로덕션 분류기의 실경로</b>에 태운다. 리플렉션 없이 공개 API 만 쓴다. */
+    private static CbtMetadataResult classifyThroughProduction(String classifierResponse) {
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(
+                new FixedJsonLlmClient(classifierResponse, false), new ObjectMapper());
+        return classifier.classify(null, List.of(), "사용자 발화", "전달된 응답 본문",
+                null, 0, false, UUID.randomUUID(), UUID.randomUUID());
     }
 
     // ── 4. fail-closed — 재지 못한 축으로 순위를 매기지 않는다 ─────────
@@ -516,6 +673,28 @@ class CellClassifierFailureTest {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new IllegalStateException(e);
+        }
+    }
+
+    /** 분류 호출에 고정 응답 하나만 돌려주는 클라이언트. 프로덕션 분류기를 직접 태울 때 쓴다. */
+    private record FixedJsonLlmClient(String response, boolean throwOnCall) implements LlmClient {
+
+        @Override
+        public LlmStreamResult stream(LlmRequest request, Consumer<String> chunkHandler) {
+            throw new UnsupportedOperationException("분류기는 stream 을 쓰지 않는다");
+        }
+
+        @Override
+        public String completeText(LlmRequest request) {
+            throw new UnsupportedOperationException("분류기는 completeText 를 쓰지 않는다");
+        }
+
+        @Override
+        public String completeJson(LlmRequest request) {
+            if (throwOnCall) {
+                throw new IllegalStateException("분류 호출이 실패했다 (테스트 시나리오)");
+            }
+            return response;
         }
     }
 
