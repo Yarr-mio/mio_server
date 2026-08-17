@@ -77,6 +77,16 @@ record CellCaseOutcome(
         int responseQuestions,
         Acceptance acceptance,
         /**
+         * 이 턴에서 <b>실제로 일어난</b> 외부 실패 사실 — {@link #acceptance} 와 독립이다 (P0-3).
+         *
+         * <p>{@link #acceptance} 는 턴당 <b>하나</b>의 최종 라벨이라, 한 턴이 두 가지로 실패하면
+         * 하나가 다른 하나를 지운다. 계량기가 그 라벨을 세면 지워진 실패는 청구서에도 리포트에도
+         * 남지 않는다. 이 필드는 라벨이 아니라 <b>사실</b>을 담으므로 지워지지 않는다.
+         *
+         * @see ExternalFailure
+         */
+        ExternalFailure externalFailure,
+        /**
          * 케이스 타임아웃으로 끝났는가.
          *
          * <p>{@link Acceptance#REJECTED_EXTERNAL_FAILURE} 만으로는 "모델이 500 을 냈다" 와
@@ -222,12 +232,104 @@ record CellCaseOutcome(
         REJECTED_EMPTY_RESPONSE
     }
 
+    /**
+     * 한 턴에서 관측된 외부 실패 <b>사실</b>들 (P0-3, #305 유료 실행이 드러낸 결함).
+     *
+     * <h2>왜 {@link Acceptance} 로는 셀 수 없는가</h2>
+     *
+     * <p>{@code #305} 대조군은 153건 중 25건을 생성 호출 실패로 잃었다. 그런데 manifest 의
+     * 외부 실패 수는 <b>1</b> 이었다. {@code CellRunner.assemble()} 이 같은 턴의 InputJudge 도
+     * 실패했으면 {@link Acceptance#REJECTED_JUDGE_FAILURE} 로 덮어쓰는데, 25건 중 24건이 그
+     * 경우였기 때문이다(25 − 24 = 1). 그래서 실제로는 25/153 = <b>16.3%</b> 가 유실됐는데
+     * 10% 상한 가드는 0.65% 로 읽고 통과했다. 런북의 "외부 실패 10% 초과면 수치를 쓰지 않는다"
+     * 규칙이 정확히 그 상황에서 눈이 멀어 있었다.
+     *
+     * <p>원인은 덮어쓰기 자체가 아니다 — 턴에는 최종 라벨이 하나여야 하고, 그 라벨은 리포트가
+     * 거절 사유를 세는 데 쓰인다. 원인은 <b>계량기가 라벨을 셌다</b>는 것이다. 판정 실패와
+     * 생성 실패는 서로 다른 사실이고, 한 턴에서 둘이 동시에 일어날 수 있다. 그래서 사실은
+     * 사실대로 따로 남기고, 라벨은 라벨로 남긴다.
+     *
+     * <h2>세 축을 나눠 두는 이유</h2>
+     *
+     * <p>대응이 다르다. {@code generation} 은 모집단에서 턴을 <b>빼앗아 간다</b> — 본문이 없으면
+     * {@code ResponseContractValidator} 가 {@code notApplicable()} 을 돌려주므로 그 턴은 분모에서
+     * 사라진다. {@code judge} 는 턴을 빼앗지는 않지만 {@code PolicyEngine} 4번 분기가
+     * {@code MEDIUM}({@code EMOTION_CHECK}) 을 세우므로 <b>행위 분포를 한쪽으로 밀어</b>
+     * 행위별 비교를 왜곡한다. {@code caseAborted} 는 타임아웃·예외로 케이스가 끝난 것이라
+     * 원인이 모델이 아니라 동시성·rate limit 일 수 있다.
+     *
+     * @param generation  생성(또는 escalation 재생성) 호출이 실패했는가
+     * @param judge       Input·Output 판정 호출이 실패해 폴백으로 접혔는가
+     * @param caseAborted 케이스 자체가 타임아웃·예외로 중단됐는가
+     */
+    record ExternalFailure(boolean generation, boolean judge, boolean caseAborted) {
+
+        static final ExternalFailure NONE = new ExternalFailure(false, false, false);
+
+        /** 생성 호출이 외부 오류로 실패했다. */
+        static ExternalFailure ofGeneration() {
+            return new ExternalFailure(true, false, false);
+        }
+
+        /** 판정 호출이 외부 오류로 실패해 폴백 판정이 쓰였다. */
+        static ExternalFailure ofJudge() {
+            return new ExternalFailure(false, true, false);
+        }
+
+        /** 케이스가 타임아웃·예외로 중단됐다. 어느 호출까지 갔는지는 알 수 없다. */
+        static ExternalFailure ofCaseAbort() {
+            return new ExternalFailure(false, false, true);
+        }
+
+        /**
+         * 판정 실패 사실을 <b>더한다</b>. 기존 사실을 지우지 않는 것이 이 메서드의 요점이다.
+         *
+         * <p>{@code CellRunner.assemble()} 이 acceptance 를 덮어쓰는 자리에서 같이 불린다.
+         * 라벨은 덮어써도 사실은 누적된다.
+         */
+        ExternalFailure withJudge(boolean judgeFailed) {
+            return judgeFailed && !judge
+                    ? new ExternalFailure(generation, true, caseAborted)
+                    : this;
+        }
+
+        /** 이 턴에서 외부 실패가 <b>하나라도</b> 일어났는가. 10% 상한 가드가 이 값을 센다. */
+        boolean any() {
+            return generation || judge || caseAborted;
+        }
+
+        /**
+         * 이 실패가 턴을 계약 모집단에서 <b>빼앗아 갔는가</b>.
+         *
+         * <p>본문이 없으면 계약 검사가 {@code notApplicable()} 을 돌려주므로 분모에서 빠진다.
+         * 판정 실패만 일어난 턴은 생성이 정상으로 돌았으므로 분모에 남는다 — 대신 계획된 행위가
+         * 한쪽으로 쏠린다.
+         */
+        boolean removesBody() {
+            return generation || caseAborted;
+        }
+    }
+
     CellCaseOutcome {
         contractViolations = List.copyOf(contractViolations);
+        if (externalFailure == null) {
+            throw new IllegalArgumentException(
+                    "외부 실패 사실이 없다 — null 을 '실패 없음' 으로 접으면 계량기가 다시 눈이 먼다");
+        }
     }
 
     boolean accepted() {
         return acceptance == Acceptance.ACCEPTED;
+    }
+
+    /**
+     * 이 턴에서 외부 실패가 일어났는가 — {@link #acceptance} 라벨과 무관하다 (P0-3).
+     *
+     * <p>계량기는 이 값을 센다. {@code acceptance == REJECTED_EXTERNAL_FAILURE} 를 세면 같은
+     * 턴의 판정 실패가 라벨을 덮어쓴 만큼 계량기에서 사라진다.
+     */
+    boolean externalFailureObserved() {
+        return externalFailure.any();
     }
 
     /**
