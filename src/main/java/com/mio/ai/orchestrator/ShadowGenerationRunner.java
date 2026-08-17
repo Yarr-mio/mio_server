@@ -87,6 +87,13 @@ public class ShadowGenerationRunner {
                 log.warn("shadow 설정이 유효하지 않아 무시: '{}'", raw);
                 return;
             }
+            if (shadow.model().equals(primary.model())) {
+                // canary 가 같은 후보를 이미 본 응답으로 태우는 사용자다 — 여기서 또 부르면
+                // 지출만 2배고 신호는 0 이다 (본 경로가 같은 모델에 이미 사전 필터를 돈다).
+                // 겹침을 대시보드에서 보이게 세고 건너뛴다.
+                count("skipped_duplicate_of_primary");
+                return;
+            }
             if (shadow.percent() == 0 || !shadow.selects(primary.userId())) {
                 return;
             }

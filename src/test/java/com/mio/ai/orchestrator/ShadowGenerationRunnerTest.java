@@ -159,6 +159,21 @@ class ShadowGenerationRunnerTest {
     }
 
     @Test
+    @DisplayName("본 응답이 이미 그 모델인 턴은 건너뛴다 — canary 와 겹치면 지출 2배·신호 0 이다")
+    void skipsWhenPrimaryAlreadyUsesTheShadowModel() {
+        when(values.get(anyString())).thenReturn(SHADOW_MODEL + " 100");
+        LlmRequest canaryPrimary = new LlmRequest(SHADOW_MODEL,
+                primaryRequest().messages(), 400, "MAIN_GENERATION",
+                UUID.randomUUID(), UUID.randomUUID());
+
+        runner.maybeShadow(canaryPrimary);
+
+        assertThat(submitted).isEmpty();
+        assertThat(meters.counter("mio.model.shadow", "outcome", "skipped_duplicate_of_primary")
+                .count()).isEqualTo(1.0);
+    }
+
+    @Test
     @DisplayName("사전 필터에 걸린 그림자 응답은 prefilter_failed 로 남는다 — 이것이 shadow 의 존재 이유다")
     void prefilterViolationIsTheSignalWeAreAfter() {
         when(values.get(anyString())).thenReturn(SHADOW_MODEL + " 100");
