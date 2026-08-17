@@ -55,10 +55,11 @@
   "reporting": {
     "minSubgroupN": 30,
     "rule": "행위별 위반율은 그 행위의 계약 적용 모집단이 minSubgroupN 미만이면 산출하지 않는다. ReportableRate 가 잠금 세트의 같은 하한을 읽어 강제한다.",
-    "populationNote": "무과금 테스트가 합성 InputJudgeResult 로 실제 PolicyEngine·ResponsePlanner 를 등급×보안판정 전 조합에 통과시켜 모집단을 검사한다. 보장은 무조건이 아니라 'Judge 판정 modulo' 다 — 이탈이 정확히 둘 있고 둘 다 Judge 가 내리는 판정이라 무과금으로 닫을 수 없다. (1) Judge 가 HARD_CRISIS 로 올리는 경우, (2) Judge 의 보안 판정이 non-CLEAN 이라 EffectiveSecurityResolver 가 SUSPICIOUS 로 올리고 등급이 LOW 이하인 경우. 실행이 각각 crisis_routed·unplanned_turns 로 세어 보고하며, 이름 없는 세 번째 이탈이 생기면 테스트가 실패한다. 행위별 분포는 여전히 보장되지 않고 실행이 관측한 값을 쓴다.",
+    "populationNote": "무과금 테스트가 합성 InputJudgeResult 로 실제 PolicyEngine·ResponsePlanner 를 등급×보안판정 전 조합에 통과시켜 모집단을 검사한다. 보장은 무조건이 아니고 층에도 한정된다 — '플래너 층까지, Judge 판정 modulo' 다. 그 층의 이탈이 정확히 둘 있고 둘 다 Judge 가 내리는 판정이라 무과금으로 닫을 수 없다. (1) Judge 가 HARD_CRISIS 로 올리는 경우, (2) Judge 의 보안 판정이 non-CLEAN 이라 EffectiveSecurityResolver 가 SUSPICIOUS 로 올리고 등급이 LOW 이하인 경우. 실행이 각각 crisis_routed·unplanned_turns 로 세어 보고하며, 플래너 층에 이름 없는 이탈이 생기면 테스트가 실패한다. 그 층 밖에 이탈이 하나 더 있다 — ContractEvalSetTest 는 생성을 돌리지 않으므로, 계획까지 정상으로 갔다가 생성이 본문을 내지 못해 모집단에서 빠지는 이탈(no_body_escapes)을 구조적으로 볼 수 없다. 이슈 #305 실행이 그 이탈로 대조군 25건을 잃고도 어느 설명 줄에도 잡히지 않아 드러났다(P0-3). 행위별 분포는 여전히 보장되지 않고 실행이 관측한 값을 쓴다.",
     "escapes": [
       "JUDGE_HARD_CRISIS — Judge 가 위기로 올려 고정 플로우로 빠진다 (crisis_routed)",
-      "JUDGE_SECURITY — Judge 보안 판정이 non-CLEAN + 등급 LOW 이하 → GUARDED · 계획 범위 밖 (unplanned_turns)"
+      "JUDGE_SECURITY — Judge 보안 판정이 non-CLEAN + 등급 LOW 이하 → GUARDED · 계획 범위 밖 (unplanned_turns)",
+      "NO_BODY — 생성 호출 실패·케이스 중단·빈 응답으로 볼 본문이 없어 ResponseContractValidator 가 notApplicable() 을 돌려준다 → 분모에서 빠짐 (no_body_escapes). 생성 층 이탈이라 이 세트의 무과금 게이트가 볼 수 없다 (P0-3)"
     ]
   },
   "distribution": {
