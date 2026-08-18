@@ -15,16 +15,22 @@ class CiWorkflowContractTest {
     private static final Path WORKFLOW_DIR = Path.of(".github", "workflows");
 
     @Test
-    @DisplayName("통합 브랜치 push와 PR은 기본 build CI 대상이다")
-    void ciIncludesIntegrationBranches() throws IOException {
+    @DisplayName("CI 는 main·develop 만 본다 — 폐기된 integration 트리거가 되살아나면 실패한다")
+    void ciTargetsOnlyMainAndDevelop() throws IOException {
         String workflow = Files.readString(WORKFLOW_DIR.resolve("ci.yml"));
 
+        // 브랜치 전략 개정으로 integration/* 이 폐기됐다 (이슈 #488).
+        // 트리거가 남아 있으면 존재하지 않는 브랜치를 검증하는 죽은 설정이 된다.
         Pattern push = Pattern.compile(
-                "(?ms)^\\s*push:\\s*\\R\\s*branches:\\s*\\[[^]]*integration/\\*\\*[^]]*]");
+                "(?ms)^\\s*push:\\s*\\R\\s*branches:\\s*\\[[^]]*develop[^]]*]");
         Pattern pullRequest = Pattern.compile(
-                "(?ms)^\\s*pull_request:\\s*\\R\\s*branches:\\s*\\[[^]]*integration/\\*\\*[^]]*]");
+                "(?ms)^\\s*pull_request:\\s*\\R\\s*branches:\\s*\\[[^]]*develop[^]]*]");
 
-        assertThat(workflow).containsPattern(push).containsPattern(pullRequest);
+        assertThat(workflow)
+                .containsPattern(push)
+                .containsPattern(pullRequest)
+                .contains("main")
+                .doesNotContain("integration");
     }
 
     @Test
