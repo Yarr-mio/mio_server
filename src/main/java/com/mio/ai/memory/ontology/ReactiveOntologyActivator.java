@@ -68,7 +68,7 @@ public class ReactiveOntologyActivator {
             if (!isSessionActive(sessionId) || !workingMemory.tryAcquireOntologyActivation(sessionId)) {
                 return;
             }
-            TurnOntologySignal signal = turnOntologyExtractor.extract(normalizedMessage);
+            TurnOntologySignal signal = turnOntologyExtractor.extract(normalizedMessage, userId, sessionId);
             if (!isSessionActive(sessionId) || !ontologyValidator.isValidDistortionCode(signal.distortionCode())) {
                 return;
             }

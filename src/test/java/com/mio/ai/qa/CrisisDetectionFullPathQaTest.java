@@ -5,7 +5,9 @@ import com.mio.ai.input.InputNormalizer;
 import com.mio.ai.input.SecurityRuleFilter;
 import com.mio.ai.judge.InputJudge;
 import com.mio.ai.judge.InputJudgeResult;
+import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmPricingProperties;
 import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.moderation.ModerationResult;
@@ -46,6 +48,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * 위기 탐지 <b>전체 경로</b> 평가 — 실제 InputJudge 판정을 포함한다 (이슈 #295).
@@ -69,6 +72,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class CrisisDetectionFullPathQaTest {
 
     private static final int PARALLELISM = 4;
+    /**
+     * 실행 기록에 실을 실제 판정 모델 ID. {@code InputJudge} 의 동명 상수와 같은 값이며,
+     * 그쪽이 private 이라 여기서 한 번만 적고 아카이브는 이 상수를 읽는다 — 아카이브에 값을
+     * 다시 적으면 모델이 바뀌었을 때 기록만 옛 값으로 남는다.
+     */
     private static final String JUDGE_MODEL = "gpt-4o-mini";
 
     // ── 릴리스 게이트 ──────────────────────────────────────────────
@@ -140,8 +148,9 @@ class CrisisDetectionFullPathQaTest {
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         inputJudge = new InputJudge(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
-                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
-                new ObjectMapper());
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
+                        mock(AiCostEventWriter.class), ModelCatalog.defaults()),
+                new ObjectMapper(), new SimpleMeterRegistry(), ModelCatalog.defaults());
     }
 
     @Test
@@ -154,7 +163,7 @@ class CrisisDetectionFullPathQaTest {
 
         String report = buildReport(evaluated, elapsed);
         System.out.print(report);
-        EvalRunArchive.write("crisis-full-path", archiveMetadata(evaluated, elapsed), report);
+        EvalRunArchive.write("crisis-full-path", archiveManifest(evaluated, elapsed), report);
 
         List<Evaluated> missed = withGrade(evaluated, Grade.FN);
         List<Evaluated> crisisFalsePositives = withGrade(evaluated, Grade.FP_CRISIS);
@@ -207,7 +216,7 @@ class CrisisDetectionFullPathQaTest {
 
         boolean judgeCalled = inputJudge.shouldCallJudge(combined, null);
         InputJudgeResult judgeResult = judgeCalled
-                ? inputJudge.judge(normalized, combined, null)
+                ? inputJudge.judge(normalized, combined, null, null, null)
                 : null;
 
         PolicyDecision decision = policyEngine.decide(combined, judgeResult, null, null);
@@ -333,28 +342,48 @@ class CrisisDetectionFullPathQaTest {
                 .orElse("(없음)");
     }
 
-    private Map<String, String> archiveMetadata(List<Evaluated> evaluated, Duration elapsed) {
-        Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("scope", "full path (rule + real InputJudge + PolicyEngine)");
-        metadata.put("dataset", CrisisCorpus.VERSION);
-        metadata.put("dataset_size", String.valueOf(CrisisCorpus.PROBES.size()));
-        metadata.put("label_guide", "docs/eval/crisis-corpus-labeling-guide.md");
-        metadata.put("judge_model", JUDGE_MODEL);
-        metadata.put("judge_calls", String.valueOf(
-                evaluated.stream().filter(Evaluated::judgeCalled).count()));
-        metadata.put("policy_version", evaluated.isEmpty() ? "unknown" : policyVersion());
-        metadata.put("gate_final_false_negative", "<= %d건 (기준선 %d + 변동 %d, #298 반영)"
-                .formatted(BASELINE_FINAL_FALSE_NEGATIVES + FINAL_FALSE_NEGATIVE_MARGIN,
-                        BASELINE_FINAL_FALSE_NEGATIVES, FINAL_FALSE_NEGATIVE_MARGIN));
-        metadata.put("gate_crisis_false_positive", "<= %d건 (기준선 %d + 변동 %d, 목표 0건 #297)"
-                .formatted(BASELINE_CRISIS_FALSE_POSITIVES + CRISIS_FALSE_POSITIVE_MARGIN,
-                        BASELINE_CRISIS_FALSE_POSITIVES, CRISIS_FALSE_POSITIVE_MARGIN));
-        metadata.put("gate_guard_false_positive", "<= %d건 (기준선 %d + 변동 %d, 지연 비용 상한)"
-                .formatted(BASELINE_GUARD_FALSE_POSITIVES + GUARD_FALSE_POSITIVE_MARGIN,
-                        BASELINE_GUARD_FALSE_POSITIVES, GUARD_FALSE_POSITIVE_MARGIN));
-        metadata.put("elapsed", "%dm %ds".formatted(elapsed.toMinutes(), elapsed.toSecondsPart()));
-        metadata.put("command", "./gradlew test -PllmTests --tests \"com.mio.ai.qa.CrisisDetectionFullPathQaTest\"");
-        return metadata;
+    /**
+     * 이 실행이 어떤 버전 조합에서 나온 값인지 남긴다 (로드맵 §10.5 / P0-8).
+     *
+     * <p>가장 값비싼 실행이면서 A~E 셀 비교가 재사용할 아카이브다. 자유 형식 맵을 쓰면 무엇을
+     * 남길지가 이 메서드의 재량이 되고, 실제로 그래서 저장소에 남은 기록에 프롬프트 버전·seed·
+     * 단가 기준일이 통째로 빠져 있었다. {@link EvalRunManifest} 가 누락을 생성 시점에 막는다.
+     *
+     * <p>아직 저장소에 개념이 없는 항목은 값을 지어내지 않고 명시적 부재 표식으로 남긴다.
+     */
+    private EvalRunManifest archiveManifest(List<Evaluated> evaluated, Duration elapsed) {
+        return new EvalRunManifest(
+                "full path (rule + real InputJudge + PolicyEngine)",
+                EvalRunManifest.BASELINE_CELL,
+                CrisisCorpus.VERSION,
+                // 룰 레이어 평가와 같은 172건이며 이미 튜닝에 쓰였다 (로드맵 §6.4).
+                EvalRunManifest.DatasetSplit.DEV_GOLD,
+                CrisisCorpus.PROBES.size(),
+                "docs/eval/crisis-corpus-labeling-guide.md",
+                // 저장소 안에서 직접 작성한 문장이라 외부 라이선스가 얽히지 않는다 (§6.3).
+                EvalRunManifest.DataRights.PRIORITY_USE,
+                EvalRunManifest.TuningExposure.USED_FOR_TUNING,
+                Map.of("input_judge", JUDGE_MODEL),
+                EvalRunManifest.UNVERSIONED,
+                policyVersion(),
+                EvalRunManifest.PRICING_DATE_UNRECORDED,
+                // 코퍼스 전량을 돌린다 — 표본 추출이 없으므로 시드가 결과를 바꾸지 않는다.
+                EvalRunManifest.NO_SEED,
+                "./gradlew test -PllmTests --tests \"com.mio.ai.qa.CrisisDetectionFullPathQaTest\"",
+                Map.of(
+                        "final_false_negative", "<= %d건 (기준선 %d + 변동 %d, #298 반영)"
+                                .formatted(BASELINE_FINAL_FALSE_NEGATIVES + FINAL_FALSE_NEGATIVE_MARGIN,
+                                        BASELINE_FINAL_FALSE_NEGATIVES, FINAL_FALSE_NEGATIVE_MARGIN),
+                        "crisis_false_positive", "<= %d건 (기준선 %d + 변동 %d, 목표 0건 #297)"
+                                .formatted(BASELINE_CRISIS_FALSE_POSITIVES + CRISIS_FALSE_POSITIVE_MARGIN,
+                                        BASELINE_CRISIS_FALSE_POSITIVES, CRISIS_FALSE_POSITIVE_MARGIN),
+                        "guard_false_positive", "<= %d건 (기준선 %d + 변동 %d, 지연 비용 상한)"
+                                .formatted(BASELINE_GUARD_FALSE_POSITIVES + GUARD_FALSE_POSITIVE_MARGIN,
+                                        BASELINE_GUARD_FALSE_POSITIVES, GUARD_FALSE_POSITIVE_MARGIN)),
+                Map.of(
+                        "judge_calls", String.valueOf(
+                                evaluated.stream().filter(Evaluated::judgeCalled).count()),
+                        "elapsed", "%dm %ds".formatted(elapsed.toMinutes(), elapsed.toSecondsPart())));
     }
 
     private String policyVersion() {

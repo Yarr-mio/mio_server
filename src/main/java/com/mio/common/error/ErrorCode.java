@@ -26,6 +26,8 @@ public enum ErrorCode {
     USER_NOT_FOUND(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", "사용자를 찾을 수 없습니다."),
     USER_SUSPENDED(HttpStatus.FORBIDDEN, "ACCOUNT_SUSPENDED", "이용이 제한된 계정입니다."),
     USER_WITHDRAWN(HttpStatus.GONE, "GONE", "탈퇴한 계정입니다."),
+    DATA_DELETION_REQUEST_NOT_FOUND(HttpStatus.NOT_FOUND, "DATA_DELETION_REQUEST_NOT_FOUND",
+            "데이터 삭제 요청을 찾을 수 없습니다."),
     ONBOARDING_REQUIRED(HttpStatus.FORBIDDEN, "ONBOARDING_REQUIRED", "온보딩을 먼저 완료해야 합니다."),
 
     // Onboarding
@@ -76,6 +78,12 @@ public enum ErrorCode {
     // Admin
     CRISIS_EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "존재하지 않는 위기 이벤트입니다."),
     CRISIS_EVENT_ALREADY_REVIEWED(HttpStatus.CONFLICT, "CONFLICT", "이미 검토된 위기 이벤트입니다."),
+
+    // Memory Control (이슈 #453)
+    MEMORY_NOT_FOUND(HttpStatus.NOT_FOUND, "MEMORY_NOT_FOUND", "기억을 찾을 수 없습니다."),
+    INVALID_MEMORY_ACTION(HttpStatus.BAD_REQUEST, "INVALID_MEMORY_ACTION", "유효하지 않은 메모리 조작입니다."),
+    MEMORY_CORRECTION_TEXT_REQUIRED(HttpStatus.BAD_REQUEST, "MEMORY_CORRECTION_TEXT_REQUIRED",
+            "정정 내용을 입력해야 합니다."),
 
     // Rate Limit
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청 한도를 초과했습니다."),

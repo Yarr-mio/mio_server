@@ -45,9 +45,9 @@ class CrisisDeliveryTest {
                                                             CrisisEventRecorder recorder) {
         CrisisFlowService service = new CrisisFlowService(recorder);
         User user = user();
-        return service.handle(
+        return service.handleWithFixedResponse(
                 SafetyL1Result.clear(), CrisisTrigger.SELF_HARM_INQUIRY, "자살 방법 알려줘",
-                user, session(user), emitter, "msg_out_test", 20);
+                user, session(user), emitter, "msg_out_test", 20, null);
     }
 
     @Test
@@ -102,8 +102,8 @@ class CrisisDeliveryTest {
 
         for (CrisisTrigger trigger : CrisisTrigger.values()) {
             var preview = service.preview(SafetyL1Result.clear(), trigger, "죽고싶다");
-            var handled = service.handle(SafetyL1Result.clear(), trigger, "죽고싶다",
-                    user, session(user), mock(SseEmitter.class), "msg_out_test", 20);
+            var handled = service.handleWithFixedResponse(SafetyL1Result.clear(), trigger, "죽고싶다",
+                    user, session(user), mock(SseEmitter.class), "msg_out_test", 20, null);
 
             assertThat(preview.severity())
                     .as("trigger=%s severity 불일치", trigger)

@@ -1,6 +1,8 @@
 package com.mio.ai.qa;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmPricingProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -23,6 +25,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 /**
  * ExtractorLLM episodeType 분류 QA 테스트 (107개 시나리오)
@@ -55,7 +58,9 @@ class ExtractorEpisodeTypeQaTest {
         );
         extractor = new ExtractorLlmClient(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
-                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
+                        mock(AiCostEventWriter.class), ModelCatalog.defaults()),
+                ModelCatalog.defaults(),
                 new ObjectMapper()
         );
     }
@@ -78,7 +83,7 @@ class ExtractorEpisodeTypeQaTest {
     @MethodSource("scenarios")
     @DisplayName("episodeType 분류")
     void classifyEpisodeType(String id, String expectedType, String description, String summary) {
-        ExtractorResult result = extractor.extract(summary);
+        ExtractorResult result = extractor.extract(summary, null, null);
         System.out.printf("[%s] expected=%-14s actual=%-14s emotion=%-10s score=%s thoughts=%d  — %s%n",
                 id, expectedType, result.episodeType(), result.dominantEmotion(),
                 result.emotionScore(), result.thoughts().size(), description);

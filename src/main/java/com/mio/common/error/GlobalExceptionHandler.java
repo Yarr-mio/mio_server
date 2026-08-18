@@ -12,6 +12,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.ServletRequestBindingException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.stream.Collectors;
 
@@ -63,6 +64,19 @@ public class GlobalExceptionHandler {
         log.warn("ServletRequestBindingException: {}", e.getMessage());
         return ResponseEntity.badRequest()
                 .body(ErrorResponse.of(ErrorCode.INVALID_INPUT, e.getMessage(), getTraceId(request)));
+    }
+
+    /**
+     * UUID·enum 같은 경로/쿼리 타입 변환 실패는 클라이언트 입력 오류다. 이 핸들러가
+     * 없으면 공용 Exception 폴백으로 내려가 500으로 보고되고 5xx 알람을 오염시킨다.
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatchException(
+            MethodArgumentTypeMismatchException e, HttpServletRequest request) {
+        log.warn("MethodArgumentTypeMismatchException: parameter={}, value={}",
+                e.getName(), e.getValue());
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of(ErrorCode.INVALID_INPUT, getTraceId(request)));
     }
 
     @ExceptionHandler(AuthenticationException.class)

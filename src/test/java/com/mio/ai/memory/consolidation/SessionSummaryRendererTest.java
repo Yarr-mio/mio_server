@@ -1,5 +1,6 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -34,7 +35,7 @@ class SessionSummaryRendererTest {
     @BeforeEach
     void setUp() {
         llmClient = mock(LlmClient.class);
-        renderer = new SessionSummaryRenderer(llmClient);
+        renderer = new SessionSummaryRenderer(llmClient, ModelCatalog.defaults());
     }
 
     @Test
@@ -44,7 +45,7 @@ class SessionSummaryRendererTest {
                 + "최악의 장면부터 떠올리는 마음이 보였는데, 실제 확률을 같이 따져보면서 조금 가벼워졌어요.";
         stubLlm(rendered);
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isEqualTo(rendered);
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isEqualTo(rendered);
     }
 
     @ParameterizedTest
@@ -55,7 +56,7 @@ class SessionSummaryRendererTest {
     void injectsCharacterVoiceIntoPrompt(String characterId, String displayName) {
         stubLlm("오늘 이야기 나눈 걸 정리해봤어요. 마음이 조금 정리된 것 같아요.");
 
-        renderer.render(INTERNAL_SUMMARY, characterId);
+        renderer.render(INTERNAL_SUMMARY, characterId, null, null);
 
         assertThat(capturedSystemPrompt()).contains("당신은 " + displayName + "입니다");
     }
@@ -65,7 +66,7 @@ class SessionSummaryRendererTest {
     void fallsBackToDefaultPersona() {
         stubLlm("오늘 이야기 나눈 걸 정리해봤어요. 마음이 조금 정리된 것 같아요.");
 
-        renderer.render(INTERNAL_SUMMARY, "unknown-character");
+        renderer.render(INTERNAL_SUMMARY, "unknown-character", null, null);
 
         assertThat(capturedSystemPrompt()).contains("당신은 미오입니다");
     }
@@ -93,7 +94,7 @@ class SessionSummaryRendererTest {
     void returnsNullOnContractViolation(String violating) {
         stubLlm(violating);
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isNull();
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isNull();
     }
 
     @Test
@@ -101,7 +102,7 @@ class SessionSummaryRendererTest {
     void returnsNullWhenTooManySentences() {
         stubLlm("오늘 이야기했어요. 걱정이 많았어요. 확률을 따져봤어요. 조금 가벼워졌어요.");
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isNull();
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isNull();
     }
 
     @Test
@@ -109,7 +110,7 @@ class SessionSummaryRendererTest {
     void returnsNullWhenTooLong() {
         stubLlm("오늘은 발표 걱정을 아주 많이 이야기했어요 ".repeat(12) + "그래서 조금 가벼워졌어요.");
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isNull();
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isNull();
     }
 
     @Test
@@ -117,7 +118,7 @@ class SessionSummaryRendererTest {
     void returnsNullOnLlmFailure() {
         doThrow(new RuntimeException("LLM down")).when(llmClient).stream(any(LlmRequest.class), any());
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isNull();
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isNull();
     }
 
     @Test
@@ -126,14 +127,14 @@ class SessionSummaryRendererTest {
         // 계약 검사를 통과하는 문장이라도 잘렸으면 정본으로 저장하지 않는다.
         stubLlm("오늘은 발표 걱정을 많이 이야기했어요. 확률을 같이 따져봤어요.", true);
 
-        assertThat(renderer.render(INTERNAL_SUMMARY, "mio")).isNull();
+        assertThat(renderer.render(INTERNAL_SUMMARY, "mio", null, null)).isNull();
     }
 
     @Test
     @DisplayName("내부 요약이 비면 LLM을 호출하지 않는다")
     void skipsWhenInternalSummaryBlank() {
-        assertThat(renderer.render("  ", "mio")).isNull();
-        assertThat(renderer.render(null, "mio")).isNull();
+        assertThat(renderer.render("  ", "mio", null, null)).isNull();
+        assertThat(renderer.render(null, "mio", null, null)).isNull();
 
         verify(llmClient, never()).stream(any(LlmRequest.class), any());
     }

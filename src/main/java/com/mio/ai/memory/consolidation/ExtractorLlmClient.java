@@ -1,6 +1,8 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -10,6 +12,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * GPT-4o-mini를 이용해 세션 요약에서 thought/distortion/emotion/trigger를 추출.
@@ -20,7 +23,6 @@ import java.util.Set;
 @Slf4j
 public class ExtractorLlmClient {
 
-    private static final String MODEL = "gpt-4o-mini";
     // JSON 추출 출력 상한. 항목 최대 3개라 여유를 둔다.
     private static final int MAX_COMPLETION_TOKENS = 600;
 
@@ -90,9 +92,10 @@ public class ExtractorLlmClient {
             """;
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final ObjectMapper objectMapper;
 
-    public ExtractorResult extract(String sessionSummary) {
+    public ExtractorResult extract(String sessionSummary, UUID userId, UUID sessionId) {
         if (sessionSummary == null || sessionSummary.isBlank()) {
             return ExtractorResult.empty();
         }
@@ -100,8 +103,9 @@ public class ExtractorLlmClient {
         StringBuilder responseBuilder = new StringBuilder();
         try {
             LlmStreamResult result = llmClient.stream(
-                    LlmRequest.of(MODEL, SYSTEM_PROMPT, sessionSummary)
-                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
+                    LlmRequest.of(modelCatalog.modelFor(ModelRole.EPISODE_EXTRACTOR), SYSTEM_PROMPT, sessionSummary)
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                            .withAttribution("EXTRACTOR", userId, sessionId),
                     responseBuilder::append
             );
             // 잘린 응답은 파싱하지 않는다. "파싱이 실패할 테니 괜찮다"에 기댈 수 없다 —

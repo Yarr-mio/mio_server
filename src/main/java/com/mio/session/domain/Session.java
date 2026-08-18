@@ -65,11 +65,19 @@ public class Session {
     @Builder.Default
     private SummaryStatus summaryStatus = SummaryStatus.PENDING;
 
+    /** 현재 핵심 요약 처리 시도의 시작 시각. stale 판정이 세션 종료 시각을 오인하지 않게 한다. */
+    @Column(name = "summary_processing_started_at")
+    private OffsetDateTime summaryProcessingStartedAt;
+
     @Column(name = "last_message_at")
     private OffsetDateTime lastMessageAt;
 
     @Column(name = "updated_at")
     private OffsetDateTime updatedAt;
+
+    /** user_reframed_thought / user_declined / max_questions_reached / stabilized / not_applicable */
+    @Column(name = "cbt_completion_reason")
+    private String cbtCompletionReason;
 
     @PrePersist
     protected void onCreate() {

@@ -45,17 +45,26 @@ final class EvalRunArchive {
     }
 
     /**
+     * 출처가 검증된 manifest 로 실행을 기록한다 (로드맵 §10.5 / P0-8).
+     *
+     * <p>기록을 남기는 길은 이것 하나다. 예전에는 {@code Map<String, String>} 을 그대로 받는
+     * 오버로드가 함께 있었고, 무엇을 남길지가 호출부 재량이라 저장소에 남은 기록에서 프롬프트
+     * 버전·seed·단가 기준일이 통째로 빠졌다. 자유 형식 입구를 남겨두면 새 하네스(A~E 셀)가
+     * 같은 우회 경로를 그대로 답습하므로 입구 자체를 없앤다. {@link EvalRunManifest} 가 필수
+     * 항목 누락을 생성 시점에 막으므로, 여기까지 온 기록에는 프롬프트·정책 버전과 실제 model
+     * ID, 데이터 split, 권리 판정, seed 가 반드시 들어있다.
+     *
      * @param runName  실행 이름. 파일명 접두사로 쓰인다
-     * @param metadata 버전·환경 정보. 삽입 순서대로 기록된다
+     * @param manifest 검증된 출처. 항목 순서는 manifest 가 정한다
      * @param report   본문 — 각 테스트가 이미 만드는 리포트 문자열을 그대로 넣는다
      * @return 기록된 파일 경로
      */
-    static Path write(String runName, Map<String, String> metadata, String report) {
+    static Path write(String runName, EvalRunManifest manifest, String report) {
         Instant now = Instant.now();
         Map<String, String> header = new LinkedHashMap<>();
         header.put("run_at", now.toString());
         header.put("code_commit", gitDescribe());
-        header.putAll(metadata);
+        header.putAll(manifest.toMetadata());
 
         StringBuilder doc = new StringBuilder();
         doc.append("# 평가 실행 기록 — ").append(runName).append("\n\n");
@@ -78,13 +87,21 @@ final class EvalRunArchive {
     /**
      * 실행 시점의 코드 리비전. 커밋 해시만으로는 부족하다 — 커밋되지 않은 변경 위에서 낸
      * 수치를 나중에 그 커밋의 결과로 오해할 수 있으므로 오염 여부를 함께 남긴다.
+     *
+     * <p><b>추적되지 않는 파일은 오염으로 세지 않는다</b> (이슈 #371). 이전에는 그냥
+     * {@code git status --porcelain} 이라 스크래치 디렉터리 하나만 있어도 모든 실행이
+     * "dirty" 로 찍혔다. 그 결과 저장소에 남은 아카이브 4건이 전부 dirty 였고, 표식이
+     * <b>"이 수치를 낸 코드가 HEAD 와 다르다"</b> 를 뜻하는지 <b>"누가 임시 폴더를 뒀다"</b>
+     * 를 뜻하는지 구별할 수 없었다. 구별할 수 없는 경고는 경고가 아니다.
+     *
+     * <p>재현 가능성을 좌우하는 것은 추적 중인 파일이 HEAD 와 같은가다. 그것만 본다.
      */
     private static String gitDescribe() {
         String commit = git("rev-parse", "--short", "HEAD");
         if (commit == null) {
             return "unknown";
         }
-        String status = git("status", "--porcelain");
+        String status = git("status", "--porcelain", "--untracked-files=no");
         boolean dirty = status != null && !status.isBlank();
         return commit + (dirty ? " (dirty worktree)" : "");
     }

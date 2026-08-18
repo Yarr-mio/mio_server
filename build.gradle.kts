@@ -55,6 +55,10 @@ dependencies {
     implementation("me.paulschwarz:spring-dotenv:4.0.0")
     // Firebase Admin SDK — Android FCM push
     implementation("com.google.firebase:firebase-admin:9.4.1")
+    // AWS CloudWatch — 인프라 비용 배치 캐싱(이슈 #437). AWS/Billing EstimatedCharges 지표를 읽는다 —
+    // Cost Explorer(ce:GetCostAndUsage, 건당 $0.01)보다 이쪽이 무료라 이걸로 전환함(리뷰 반영).
+    // 크리덴셜은 EC2 인스턴스 역할 기본 체인.
+    implementation("software.amazon.awssdk:cloudwatch:2.28.11")
 
     // Lombok
     compileOnly("org.projectlombok:lombok")
@@ -63,6 +67,7 @@ dependencies {
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
+    testImplementation("io.micrometer:micrometer-registry-prometheus")
     testImplementation("it.ozimov:embedded-redis:0.7.3") {
         exclude(group = "org.slf4j", module = "slf4j-simple")
     }
@@ -90,6 +95,105 @@ tasks.withType<Test> {
     project.findProperty("evalArchiveDir")?.let {
         systemProperty("mio.eval.archiveDir", it.toString())
     }
+
+    // ── A~E 셀 벤치마크 (이슈 #454, 로드맵 §11.3) ────────────────────
+    //
+    // 상위 모델 후보 ID 와 단가는 코드에 없다. 실행 직전에 여기로 핀한다 — 로드맵이
+    // "정확한 후보 ID 와 당시 단가는 각 벤치마크 실행의 registry 에 핀한다" 고 정했다.
+    //
+    //   ./gradlew test -PllmTests -Pcells=A,D -PsampleSize=20 \
+    //     -PcellModels="generation=<후보 ID>,escalation=<후보 ID>" \
+    //     -PcellPrices="<후보 ID>=5.0/2.5/20.0" -PpricingAsOf=2026-08-16
+    //
+    // 견적은 태그 없이 돌아간다: ./gradlew test --tests "com.mio.ai.qa.CellCostEstimateTest"
+    // 상위 모델 후보를 여럿 지정하면 상위 모델을 쓰는 셀이 후보 수만큼 변형으로 펼쳐진다.
+    // 전부 같은 실행·같은 기준선 A 아래에서 돌기 때문에 후보끼리 비교할 수 있다 —
+    // 실행을 나눠 돌린 결과는 RunIdentity 가 비교를 거부한다.
+    //
+    //   ./gradlew test -PllmTests -Pcells=A,B -PsampleSize=60 \
+    //     -PfrontierCandidates="<후보1>,<후보2>,<후보3>" \
+    //     -PcellPrices="<후보1>=2.0/0.2/12.0" -PpricingAsOf=2026-08-16
+    project.findProperty("frontierCandidates")?.let {
+        systemProperty("mio.eval.frontierCandidates", it.toString())
+    }
+    // 모델 선정 깔때기의 단계. 표본 수와 후보 정책이 단계에 묶여 따라온다.
+    //   -Pstage=screen     1단계 — 명부의 생성 후보 전부, 표본 50건
+    //   -Pstage=semifinal  2단계 — 1단계 생존자, 표본 150건
+    //   -Pstage=full       3단계 — 역할별 결선, 전량 323건 (여기서만 Go/No-Go 가 나온다)
+    project.findProperty("stage")?.let { systemProperty("mio.eval.stage", it.toString()) }
+    // Batch API 품질 전용 모드 (1단계 한정). 지연·전달 지표는 측정되지 않는다.
+    project.findProperty("batchQuality")?.let {
+        systemProperty("mio.eval.batchQuality", it.toString())
+    }
+    // 1단계 생존자용 동기 지연 프로브 표본 수. batch 로 못 잰 p95 를 여기서 잰다.
+    project.findProperty("latencyProbe")?.let {
+        systemProperty("mio.eval.latencyProbe", it.toString())
+    }
+    // 추론 모델(o 계열·pro 계열)의 completion 토큰 배수 가정. 견적에만 쓴다.
+    project.findProperty("reasoningMultiplier")?.let {
+        systemProperty("mio.eval.reasoningMultiplier", it.toString())
+    }
+    project.findProperty("cells")?.let { systemProperty("mio.eval.cells", it.toString()) }
+    project.findProperty("sampleSize")?.let { systemProperty("mio.eval.sampleSize", it.toString()) }
+    project.findProperty("pricingAsOf")?.let { systemProperty("mio.eval.pricingAsOf", it.toString()) }
+    project.findProperty("evalSeed")?.let { systemProperty("mio.eval.seed", it.toString()) }
+    project.findProperty("cellRegistry")?.let { systemProperty("mio.eval.registry", it.toString()) }
+
+    // "<역할>=<모델 ID>" 목록 → mio.eval.model.<역할>
+    project.findProperty("cellModels")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) { "cellModels 항목 형식이 잘못됐다: '$entry' — <역할>=<모델 ID> 여야 한다" }
+            systemProperty(
+                "mio.eval.model." + entry.substring(0, idx).trim().lowercase(),
+                entry.substring(idx + 1).trim()
+            )
+        }
+
+    // "<모델 ID>=<정수>" 목록 → mio.eval.maxCompletionTokens.<모델 ID>
+    //
+    // 후보별 생성 출력 토큰 예산. 지정하지 않은 모델은 프로덕션 상수(400) 그대로다.
+    // 추론 모델은 400 토큰을 내부 추론에 전부 쓰고 사용자에게 보일 본문을 내지 못한다
+    // (run_id 826444f8: gpt-5-nano 47/47턴 절단, 전달 0턴). 예산을 올려야 비교가 성립한다.
+    //
+    //   -PcellMaxCompletionTokens="gpt-5-nano=4000,o3=4000"
+    //
+    // 올려서 잰 수치는 프로덕션 수치가 아니다 — 리포트·manifest 가 그 사실을 찍는다.
+    // 프로덕션 상수를 올리는 것은 원가와 "2~4문장 간결" 계약을 같이 바꾸는 제품 결정이라
+    // 하네스가 대신 정하지 않는다 (docs/eval/cell-benchmark.md §0-4).
+    project.findProperty("cellMaxCompletionTokens")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) {
+                "cellMaxCompletionTokens 항목 형식이 잘못됐다: '$entry' — <모델 ID>=<정수> 여야 한다"
+            }
+            systemProperty(
+                "mio.eval.maxCompletionTokens." + entry.substring(0, idx).trim(),
+                entry.substring(idx + 1).trim()
+            )
+        }
+
+    // "<모델 ID>=<input>/<cachedInput>/<output>" 목록 → mio.eval.price.<모델 ID>
+    project.findProperty("cellPrices")?.toString()
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?.forEach { entry ->
+            val idx = entry.indexOf('=')
+            require(idx > 0) {
+                "cellPrices 항목 형식이 잘못됐다: '$entry' — <모델 ID>=<input>/<cachedInput>/<output> 여야 한다"
+            }
+            systemProperty(
+                "mio.eval.price." + entry.substring(0, idx).trim(),
+                entry.substring(idx + 1).trim()
+            )
+        }
 
     val envFile = rootProject.file(".env")
     if (envFile.exists()) {

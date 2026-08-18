@@ -81,6 +81,19 @@ public class ResponseContractValidator {
                 : ResponseContractResult.violated(violations);
     }
 
+    /**
+     * 질문 수 — 상한 위반 여부와 무관하게 <b>세기만</b> 한다 (이슈 #305).
+     *
+     * <p>계약 도입이 응답의 질문 수·길이 분포를 어떻게 바꿨는지는 위반 여부와 다른 물음이다.
+     * 위반이 0 이어도 분포는 움직일 수 있고, 그 변화가 곧 "계약이 응답을 딱딱하게 만들었는가"
+     * 에 답하는 근거다. 평가 하네스가 같은 물음에 답하려고 정규식을 <b>다시 쓰면</b> 두 곳의
+     * 기준이 갈라지고, 그 순간 분포와 위반이 같은 자로 잰 값이 아니게 된다. 그래서 계약이
+     * 실제로 쓰는 계수기를 그대로 연다.
+     */
+    public int countQuestions(String text) {
+        return text == null ? 0 : countMatches(QUESTION, text);
+    }
+
     private int countMatches(Pattern pattern, String text) {
         return (int) pattern.matcher(text).results().count();
     }
@@ -88,8 +101,14 @@ public class ResponseContractValidator {
     /**
      * 문장 수. 종결 부호가 연속으로 오는 경우(<code>?!</code>, 줄바꿈 두 번)를 하나로 센다.
      * 종결 부호 없이 끝나는 마지막 조각도 한 문장으로 센다.
+     *
+     * <p>{@link #countQuestions(String)} 와 같은 이유로 공개돼 있다 (이슈 #305).
      */
-    private int countSentences(String text) {
+    public int countSentences(String text) {
+        return text == null ? 0 : countSentencesInternal(text);
+    }
+
+    private int countSentencesInternal(String text) {
         String trimmed = text.strip();
         if (trimmed.isEmpty()) {
             return 0;

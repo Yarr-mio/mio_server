@@ -17,6 +17,24 @@ public interface ProactiveCareLogRepository extends JpaRepository<ProactiveCareL
     Optional<ProactiveCareLog> findByIdAndUser_Id(UUID id, UUID userId);
 
     /**
+     * "알림 후 실제 참여" 반응신호(이슈 #475) — 세션 시작 직전 발송된 알림이 있었는지, 있었다면
+     * 열람됐는지 확인한다. {@code windowStart}~{@code sessionStartedAt} 구간에서 가장 최근 것 하나.
+     */
+    @Query("""
+            SELECT log FROM ProactiveCareLog log
+            WHERE log.user.id = :userId
+              AND log.sentAt >= :windowStart
+              AND log.sentAt <= :sessionStartedAt
+            ORDER BY log.sentAt DESC, log.id DESC
+            """)
+    List<ProactiveCareLog> findMostRecentBeforeSessionStart(
+            @Param("userId") UUID userId,
+            @Param("windowStart") OffsetDateTime windowStart,
+            @Param("sessionStartedAt") OffsetDateTime sessionStartedAt,
+            Pageable pageable
+    );
+
+    /**
      * 실제로 발송된 상태({@code DELIVERED_STATUSES})의 이력만 재발송 억제 대상으로 본다.
      * 실패·미발송 이력은 재시도를 막지 않는다.
      */

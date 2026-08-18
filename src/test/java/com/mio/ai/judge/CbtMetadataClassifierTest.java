@@ -1,6 +1,7 @@
 package com.mio.ai.judge;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.safety.UserMessageSignal;
@@ -32,7 +33,8 @@ class CbtMetadataClassifierTest {
                 }
                 ```
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "socratic_asked",
@@ -41,7 +43,9 @@ class CbtMetadataClassifierTest {
                 "그 관점을 기억해볼까요?",
                 new UserMessageSignal(45, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);
@@ -63,7 +67,8 @@ class CbtMetadataClassifierTest {
                   "reconstructed_thought": "최악은 아닐 수 있다"
                 }
                 """);
-        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
 
         CbtMetadataResult result = classifier.classify(
                 "completed",
@@ -72,7 +77,9 @@ class CbtMetadataClassifierTest {
                 "물론이에요. 지금 떠오르는 이야기를 편하게 말해 주세요.",
                 new UserMessageSignal(45, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);

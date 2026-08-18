@@ -1,5 +1,6 @@
 package com.mio.ai.judge;
 
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.moderation.ModerationResult;
@@ -91,7 +92,7 @@ class InputJudgeTest {
                 """);
 
         InputJudgeResult result = judge.judge(
-                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile(), null, null);
 
         assertThat(result.failed())
                 .as("CLEAN 으로 채우면 규칙이 의심한 입력을 '없는 근거'로 복구해버린다")
@@ -106,7 +107,7 @@ class InputJudgeTest {
                 """);
 
         InputJudgeResult result = judge.judge(
-                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile(), null, null);
 
         assertThat(result.failed()).isTrue();
     }
@@ -119,7 +120,7 @@ class InputJudgeTest {
                 """);
 
         InputJudgeResult result = judge.judge(
-                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile(), null, null);
 
         assertThat(result.failed()).isFalse();
         assertThat(result.security().requireOutputSecurityGuard())
@@ -137,7 +138,7 @@ class InputJudgeTest {
                 """);
 
         InputJudgeResult result = judge.judge(
-                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile());
+                "메시지", combined(SecurityLevel.SUSPICIOUS, false, false, false, true), defaultProfile(), null, null);
 
         assertThat(result.failed()).isFalse();
         assertThat(result.security().level()).isEqualTo(SecurityLevel.CLEAN);
@@ -167,7 +168,9 @@ class InputJudgeTest {
                 return responseJson;
             }
         };
-        return new InputJudge(llmClient, new com.fasterxml.jackson.databind.ObjectMapper());
+        return new InputJudge(llmClient, new com.fasterxml.jackson.databind.ObjectMapper(),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
+                ModelCatalog.defaults());
     }
 
     /**
@@ -187,7 +190,7 @@ class InputJudgeTest {
     })
     @DisplayName("risk_level 이 없거나 스키마 밖 값이면 판정 실패로 처리한다 (fail-closed)")
     void incompleteResponseIsTreatedAsFailure(String responseJson) {
-        var result = judgeReturning(responseJson).judge("죽고싶어", null, null);
+        var result = judgeReturning(responseJson).judge("죽고싶어", null, null, null, null);
 
         assertThat(result.failed())
                 .as("'%s' 는 판정 실패로 표시되어야 강등된 위기가 해제되지 않는다", responseJson)
@@ -202,7 +205,7 @@ class InputJudgeTest {
                  "risk":{"risk_level":"MEDIUM","risk_types":[],"recommended_generation_mode":"SUPPORTIVE",
                          "recommended_delivery":"CAUTIOUS_SPECULATIVE","require_output_safety_guard":false},
                  "confidence":0.8}
-                """).judge("좀 힘들어요", null, null);
+                """).judge("좀 힘들어요", null, null, null, null);
 
         assertThat(result.failed()).isFalse();
         assertThat(result.risk().riskLevel()).isEqualTo(RiskLevel.MEDIUM);

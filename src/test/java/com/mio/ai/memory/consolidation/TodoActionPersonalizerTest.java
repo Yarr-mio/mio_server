@@ -1,6 +1,7 @@
 package com.mio.ai.memory.consolidation;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.llm.LlmStreamResult;
@@ -31,7 +32,7 @@ class TodoActionPersonalizerTest {
     @BeforeEach
     void setUp() {
         llmClient = mock(LlmClient.class);
-        personalizer = new TodoActionPersonalizer(llmClient, new ObjectMapper());
+        personalizer = new TodoActionPersonalizer(llmClient, ModelCatalog.defaults(), new ObjectMapper());
     }
 
     @Test
@@ -40,7 +41,7 @@ class TodoActionPersonalizerTest {
         String behaviorFirst = "4-7-8 호흡을 3회 하고, 발표 걱정이 떠오르면 다시 해보기";
         stubLlm("{\"actions\": [\"%s\"]}".formatted(behaviorFirst));
 
-        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()));
+        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()), null, null);
 
         assertThat(result).containsExactly(behaviorFirst);
     }
@@ -62,7 +63,7 @@ class TodoActionPersonalizerTest {
     void rejectsSituationLeadingText(String situationFirst) {
         stubLlm("{\"actions\": [\"%s\"]}".formatted(situationFirst));
 
-        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()));
+        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()), null, null);
 
         assertThat(result).containsExactly(TEMPLATE_TEXT);
     }
@@ -83,7 +84,7 @@ class TodoActionPersonalizerTest {
     void doesNotRejectBehaviorLeadingTextWithSituationWords(String behaviorFirst) {
         stubLlm("{\"actions\": [\"%s\"]}".formatted(behaviorFirst));
 
-        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()));
+        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()), null, null);
 
         assertThat(result).containsExactly(behaviorFirst);
     }
@@ -100,7 +101,7 @@ class TodoActionPersonalizerTest {
                 ]}
                 """);
 
-        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(breathing, walk));
+        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(breathing, walk), null, null);
 
         assertThat(result).containsExactly(
                 "4-7-8 호흡법 3회 연습하기",
@@ -112,7 +113,7 @@ class TodoActionPersonalizerTest {
     void rejectsTooLongText() {
         stubLlm("{\"actions\": [\"%s\"]}".formatted("호흡하기 ".repeat(40)));
 
-        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()));
+        List<String> result = personalizer.personalize(SUMMARY, List.of("발표"), List.of(template()), null, null);
 
         assertThat(result).containsExactly(TEMPLATE_TEXT);
     }
@@ -120,7 +121,7 @@ class TodoActionPersonalizerTest {
     @Test
     @DisplayName("세션 요약이 없으면 LLM을 호출하지 않고 템플릿 문구를 반환한다")
     void skipsWhenSummaryBlank() {
-        List<String> result = personalizer.personalize("  ", List.of("발표"), List.of(template()));
+        List<String> result = personalizer.personalize("  ", List.of("발표"), List.of(template()), null, null);
 
         assertThat(result).containsExactly(TEMPLATE_TEXT);
     }

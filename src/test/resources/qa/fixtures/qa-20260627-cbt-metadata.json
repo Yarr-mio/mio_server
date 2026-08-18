@@ -1,0 +1,89 @@
+{
+  "case_id": "QA-20260627-CBT-01",
+  "source_qa": "docs/qa/03_sse_qa_results.md — 페르소나 1(직장인·완벽주의) T1–T2, 익명화 재작성",
+  "description": "인지왜곡 발화에서 done 이벤트의 CBT 메타데이터(socratic_asked → followup_needed 상태 전이, is_socratic, emotion_score)가 정확히 노출돼야 한다. 모바일이 이 필드로 개입 UI 를 그리므로 값 하나가 틀려도 최종 화면 회귀다.",
+  "correlation": {
+    "model_version": "gpt-4o",
+    "prompt_version": null,
+    "policy_version": null,
+    "envelope_version": null
+  },
+  "turns": [
+    {
+      "name": "T1 파국화 인지왜곡 — socratic_asked 전환",
+      "user_message": "오늘 회사에서 발표를 완전히 망쳤어요. 제가 뭘 해도 항상 실패하는 것 같아요.",
+      "stubs": {
+        "moderation_self_harm_flagged": false,
+        "llm_stream_chunks": [
+          "발표가 마음처럼 되지 않아 많이 속상하셨겠어요. ",
+          "정말 매번 실패했는지, 잘 된 적은 한 번도 없었는지 같이 살펴볼까요?"
+        ],
+        "input_judge_json": null,
+        "output_judge_json": null,
+        "cbt_classifier_json": {
+          "cbt_intervention_state": "socratic_asked",
+          "completion_reason": null,
+          "requires_emotion_score": false,
+          "is_socratic": true,
+          "bias_type": null,
+          "reconstructed_thought": null
+        }
+      },
+      "expect": {
+        "sse_events": ["session_meta", "delta", "done"],
+        "final_text": {
+          "exact": null,
+          "contains": ["같이 살펴볼까요"],
+          "not_contains": []
+        },
+        "crisis": null,
+        "done": {
+          "finished_reason": "stop",
+          "is_crisis_flagged": false,
+          "is_socratic": true,
+          "cbt_intervention_state": "socratic_asked",
+          "emotion_score": 45
+        },
+        "llm_stream_called": true
+      }
+    },
+    {
+      "name": "T2 과잉일반화 추적 발화 — followup_needed 전환",
+      "user_message": "맞아요, 항상 이런 식이에요. 저는 원래 이런 사람인 것 같아요.",
+      "stubs": {
+        "moderation_self_harm_flagged": false,
+        "llm_stream_chunks": [
+          "'항상', '원래'라는 말이 스스로를 많이 누르고 있는 것 같아요. ",
+          "가장 최근에 괜찮았던 순간이 언제였는지 떠올려 볼 수 있을까요?"
+        ],
+        "input_judge_json": null,
+        "output_judge_json": null,
+        "cbt_classifier_json": {
+          "cbt_intervention_state": "followup_needed",
+          "completion_reason": null,
+          "requires_emotion_score": false,
+          "is_socratic": false,
+          "bias_type": "overgeneralization",
+          "reconstructed_thought": null
+        }
+      },
+      "expect": {
+        "sse_events": ["session_meta", "delta", "done"],
+        "final_text": {
+          "exact": null,
+          "contains": ["떠올려 볼 수 있을까요"],
+          "not_contains": []
+        },
+        "crisis": null,
+        "done": {
+          "finished_reason": "stop",
+          "is_crisis_flagged": false,
+          "is_socratic": false,
+          "cbt_intervention_state": "followup_needed",
+          "emotion_score": 70
+        },
+        "llm_stream_called": true
+      }
+    }
+  ]
+}

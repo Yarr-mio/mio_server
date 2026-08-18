@@ -1,6 +1,8 @@
 package com.mio.ai.qa;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.cost.AiCostEventWriter;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmPricingProperties;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -14,6 +16,8 @@ import java.net.http.HttpClient;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
+
+import static org.mockito.Mockito.mock;
 
 @DisplayName("[QA] ExtractorLLM episodeType 스케일 테스트 (~1000 시나리오)")
 @Tag("llm-integration")
@@ -36,7 +40,9 @@ class ExtractorLlmScaleTest {
                 "OPENAI_API_KEY 미설정 또는 placeholder — LLM 통합 테스트 skip");
         extractor = new ExtractorLlmClient(
                 new OpenAiLlmClient(apiKey, HttpClient.newHttpClient(), new ObjectMapper(),
-                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties())),
+                        new SimpleMeterRegistry(), new LlmCostCalculator(new LlmPricingProperties()),
+                        mock(AiCostEventWriter.class), ModelCatalog.defaults()),
+                ModelCatalog.defaults(),
                 new ObjectMapper()
         );
     }
@@ -109,7 +115,7 @@ class ExtractorLlmScaleTest {
 
     private Result runCase(Case c) {
         try {
-            ExtractorResult r = extractor.extract(c.summary());
+            ExtractorResult r = extractor.extract(c.summary(), null, null);
             String actual = r.episodeType() != null ? r.episodeType() : "null";
             return new Result(c.id(), c.expected(), actual, c.expected().equals(actual), c.cat());
         } catch (Exception e) {

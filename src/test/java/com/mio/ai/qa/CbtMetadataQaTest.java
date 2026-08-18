@@ -10,6 +10,7 @@ import com.mio.ai.judge.RiskLevel;
 import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.llm.LlmClient;
+import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.memory.working.WorkingMessage;
 import com.mio.ai.policy.DecisionAction;
@@ -56,7 +57,7 @@ class CbtMetadataQaTest {
 
     @BeforeEach
     void setUp() {
-        classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper());
+        classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(), ModelCatalog.defaults());
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
         defaultProfile = new SafetyProfile(
                 "test_user", "default", Map.of(), List.of(), List.of(),
@@ -77,7 +78,9 @@ class CbtMetadataQaTest {
                 "위기 응답입니다.",
                 null,
                 0,
-                true  // crisisFlowTriggered=true
+                true,  // crisisFlowTriggered=true
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.NONE);
@@ -114,7 +117,9 @@ class CbtMetadataQaTest {
                 "어떤 근거로 그렇게 생각하시나요?",
                 new UserMessageSignal(40, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.SOCRATIC_ASKED);
@@ -179,7 +184,9 @@ class CbtMetadataQaTest {
                 "그렇군요! 이번에 새로운 시각을 갖게 되셨네요.",
                 new UserMessageSignal(60, "overgeneralization"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);

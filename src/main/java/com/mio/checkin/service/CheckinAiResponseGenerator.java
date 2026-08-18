@@ -1,5 +1,7 @@
 package com.mio.checkin.service;
 
+import com.mio.ai.llm.ModelCatalog;
+import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import lombok.RequiredArgsConstructor;
@@ -19,7 +21,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class CheckinAiResponseGenerator {
 
-    private static final String MODEL = "gpt-4o-mini";
     // 체크인 응답 출력 상한. 프롬프트가 150자를 요구한다 (~107 토큰).
     private static final int MAX_COMPLETION_TOKENS = 400;
     private static final String SYSTEM_PROMPT = """
@@ -34,14 +35,17 @@ public class CheckinAiResponseGenerator {
             """;
 
     private final LlmClient llmClient;
+    private final ModelCatalog modelCatalog;
     private final JdbcTemplate jdbcTemplate;
 
     @Async
-    public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay) {
+    public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay,
+                                UUID userId) {
         try {
             String userMessage = buildPrompt(emotionType, conditionScore, timeOfDay);
-            String response = llmClient.completeText(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
-                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
+            String response = llmClient.completeText(LlmRequest.of(modelCatalog.modelFor(ModelRole.CHECKIN_RESPONSE), SYSTEM_PROMPT, userMessage)
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                    .withAttribution("CHECKIN_RESPONSE", userId, null));
 
             if (response == null || response.isBlank()) {
                 log.debug("[CheckinAiResponseGenerator] no response for checkinId={}", checkinId);

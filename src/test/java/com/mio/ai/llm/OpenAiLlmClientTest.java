@@ -1,12 +1,14 @@
 package com.mio.ai.llm;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mio.ai.cost.AiCostEventWriter;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.core.task.TaskRejectedException;
 
 import java.math.BigDecimal;
 import java.net.http.HttpClient;
@@ -16,6 +18,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Flow;
 import java.util.stream.Stream;
@@ -23,6 +26,8 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -38,7 +43,7 @@ class OpenAiLlmClientTest {
         meterRegistry = new SimpleMeterRegistry();
         pricing = new LlmPricingProperties();
         pricing.setModels(Map.of(MODEL, new LlmPricingProperties.ModelPrice(
-                new BigDecimal("0.15"), new BigDecimal("0.60"))));
+                new BigDecimal("0.15"), new BigDecimal("0.075"), new BigDecimal("0.60"))));
     }
 
     @Test
@@ -76,10 +81,14 @@ class OpenAiLlmClientTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(response);
 
-        client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
+        LlmStreamResult result =
+                client(httpClient).stream(LlmRequest.of(MODEL, "system", "user"), chunk -> { });
 
         assertThat(requestBody(capturedRequest(httpClient)))
                 .contains("\"stream_options\":{\"include_usage\":true}");
+        assertThat(result.ttftMs())
+                .as("콘텐츠 없는 DONE-only 스트림은 종료 시간을 TTFT로 가장하면 안 된다")
+                .isEqualTo(-1);
     }
 
     @Test
@@ -108,6 +117,50 @@ class OpenAiLlmClientTest {
         // 0.15*100/1e6 + 0.60*40/1e6 = 0.000015 + 0.000024
         assertThat(counter("mio.llm.cost.usd", "mode", "stream")).isEqualTo(0.000039);
         assertThat(counter("mio.llm.usage", "outcome", "resolved")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("LLM 토큰과 비용을 고정된 역할 component별로 집계한다")
+    void stream_recordsUsageByBoundedComponent() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":40}}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        LlmRequest request = LlmRequest.of(MODEL, "system", "user")
+                .withAttribution("MAIN_GENERATION", UUID.randomUUID(), UUID.randomUUID());
+        client(httpClient).stream(request, chunk -> { });
+
+        assertThat(meterRegistry.find("mio.llm.cost.usd")
+                .tag("component", "main_generation").counter().count()).isEqualTo(0.000039);
+        assertThat(meterRegistry.find("mio.llm.tokens")
+                .tags("component", "main_generation", "type", "prompt")
+                .counter().count()).isEqualTo(100.0);
+    }
+
+    @Test
+    @DisplayName("등록되지 않은 component 문자열은 metric label로 직접 사용하지 않는다")
+    void stream_mapsUnknownComponentToOther() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+
+        LlmRequest request = LlmRequest.of(MODEL, "system", "user")
+                .withAttribution("session-05619207-f2d2-43ea-bc87-a7c59ac8afa3",
+                        UUID.randomUUID(), UUID.randomUUID());
+        client(httpClient).stream(request, chunk -> { });
+
+        assertThat(meterRegistry.find("mio.llm.cost.usd")
+                .tag("component", "other").counter().count()).isPositive();
+        assertThat(meterRegistry.getMeters())
+                .flatMap(meter -> meter.getId().getTags())
+                .extracting(tag -> tag.getValue())
+                .noneMatch(value -> value.contains("05619207"));
     }
 
     @Test
@@ -167,6 +220,50 @@ class OpenAiLlmClientTest {
     }
 
     @Test
+    @DisplayName("비용 이벤트 큐 거부가 비스트리밍 성공을 실패로 바꾸지 않고 드롭으로 계측된다")
+    void complete_costEventRejectionIsDroppedWithoutAbortingRequest() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<String> response = mock(HttpResponse.class);
+        when(response.statusCode()).thenReturn(200);
+        when(response.body()).thenReturn("{\"choices\":[{\"message\":{\"content\":\"answer\"}}],"
+                + "\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}");
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+        AiCostEventWriter writer = rejectingCostEventWriter();
+
+        String result = client(httpClient, writer).completeJson(
+                LlmRequest.of(MODEL, "system", "user")
+                        .withAttribution("OUTPUT_JUDGE", null, null));
+
+        assertThat(result).isEqualTo("answer");
+        assertThat(counter("mio.llm.requests", "outcome", "success")).isEqualTo(1.0);
+        assertThat(counter("mio.llm.requests", "outcome", "aborted")).isZero();
+        assertThat(counter("mio.llm.cost.events", "outcome", "dropped")).isEqualTo(1.0);
+    }
+
+    @Test
+    @DisplayName("비용 이벤트 큐 거부가 스트리밍 성공을 실패로 바꾸지 않고 드롭으로 계측된다")
+    void stream_costEventRejectionIsDroppedWithoutAbortingRequest() throws Exception {
+        HttpClient httpClient = mock(HttpClient.class);
+        HttpResponse<Stream<String>> response = streamingResponse(List.of(
+                "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7}}",
+                "data: [DONE]"));
+        when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
+                .thenReturn(response);
+        AiCostEventWriter writer = rejectingCostEventWriter();
+
+        LlmStreamResult result = client(httpClient, writer).stream(
+                LlmRequest.of(MODEL, "system", "user")
+                        .withAttribution("MAIN_GENERATION", null, null),
+                chunk -> { });
+
+        assertThat(result.usage().resolved()).isTrue();
+        assertThat(counter("mio.llm.requests", "outcome", "success")).isEqualTo(1.0);
+        assertThat(counter("mio.llm.requests", "outcome", "aborted")).isZero();
+        assertThat(counter("mio.llm.cost.events", "outcome", "dropped")).isEqualTo(1.0);
+    }
+
+    @Test
     @DisplayName("429 재시도 시 앞선 시도의 usage가 최종 결과에 섞이지 않는다")
     void stream_retryDiscardsPreviousAttemptUsage() throws Exception {
         HttpClient httpClient = mock(HttpClient.class);
@@ -188,6 +285,9 @@ class OpenAiLlmClientTest {
         assertThat(result.usage().promptTokens())
                 .as("버려진 시도의 사용량이 남으면 비용이 부풀려 계상된다")
                 .isEqualTo(11);
+        assertThat(result.ttftMs())
+                .as("재시도 후에도 콘텐츠가 없으면 TTFT sentinel을 유지해야 한다")
+                .isEqualTo(-1);
         assertThat(counter("mio.llm.tokens", "type", "prompt")).isEqualTo(11.0);
         assertThat(counter("mio.llm.retries", "reason", "rate_limited"))
                 .as("재시도로 삼켜진 스로틀링은 결과가 success 라 별도 지표가 없으면 흔적이 없다")
@@ -287,7 +387,7 @@ class OpenAiLlmClientTest {
     @DisplayName("임베딩도 토큰·비용을 계측한다 — 빼면 비용 합계가 실제 지출보다 낮다")
     void embed_recordsUsageAndCost() throws Exception {
         pricing.setModels(Map.of("text-embedding-3-small",
-                new LlmPricingProperties.ModelPrice(new BigDecimal("0.02"), BigDecimal.ZERO)));
+                new LlmPricingProperties.ModelPrice(new BigDecimal("0.02"), null, BigDecimal.ZERO)));
         HttpClient httpClient = mock(HttpClient.class);
         HttpResponse<String> response = mock(HttpResponse.class);
         when(response.statusCode()).thenReturn(200);
@@ -296,9 +396,9 @@ class OpenAiLlmClientTest {
         when(httpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
                 .thenReturn(response);
 
-        client(httpClient).embed("안녕하세요");
+        client(httpClient).embed("안녕하세요", "EMBEDDING", null, null);
 
-        assertThat(counter("mio.llm.tokens", "mode", "embed")).isEqualTo(24.0);
+        assertThat(counter("mio.llm.tokens", "type", "prompt")).isEqualTo(24.0);
         // 24 * 0.02 / 1e6 = 4.8e-7 — 6자리로 끊으면 0 이 되던 값이다.
         assertThat(counter("mio.llm.cost.usd", "mode", "embed")).isEqualTo(4.8e-7);
     }
@@ -424,8 +524,21 @@ class OpenAiLlmClientTest {
     // ── helpers ────────────────────────────────────────────────────
 
     private OpenAiLlmClient client(HttpClient httpClient) {
+        return client(httpClient, mock(AiCostEventWriter.class));
+    }
+
+    private OpenAiLlmClient client(HttpClient httpClient, AiCostEventWriter costEventWriter) {
         return new OpenAiLlmClient("test-key", httpClient, new ObjectMapper(),
-                meterRegistry, new LlmCostCalculator(pricing));
+                meterRegistry, new LlmCostCalculator(pricing), costEventWriter,
+                ModelCatalog.defaults());
+    }
+
+    private AiCostEventWriter rejectingCostEventWriter() {
+        AiCostEventWriter writer = mock(AiCostEventWriter.class);
+        doThrow(new TaskRejectedException("queue full"))
+                .when(writer).write(any(), any(), any(), any(), any(),
+                        anyLong(), anyLong(), anyLong(), any(), any());
+        return writer;
     }
 
     private double total(String name) {

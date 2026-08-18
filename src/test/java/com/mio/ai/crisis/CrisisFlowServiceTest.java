@@ -45,7 +45,7 @@ class CrisisFlowServiceTest {
                 .build();
         ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
 
-        service.handle(
+        service.handleWithFixedResponse(
                 new SafetyL1Result(true, true, false, false, false, true, List.of("자살"), 0.95),
                 CrisisTrigger.L1_KEYWORD,
                 "죽고싶다",
@@ -53,7 +53,7 @@ class CrisisFlowServiceTest {
                 session,
                 emitter,
                 "msg_out_test",
-                18);
+                18, null);
 
         ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
                 ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
@@ -106,8 +106,8 @@ class CrisisFlowServiceTest {
                 false, true, true, false, false, false, false,
                 List.of("crisis_keyword:죽고싶어", "crisis_context_marker:third_person"), 0.9);
 
-        service.handle(downgraded, CrisisTrigger.L1_KEYWORD, "친구가 그러는데 나 죽고싶어",
-                user, session, emitter, "msg_out_test", 12);
+        service.handleWithFixedResponse(downgraded, CrisisTrigger.L1_KEYWORD, "친구가 그러는데 나 죽고싶어",
+                user, session, emitter, "msg_out_test", 12, null);
 
         ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
                 ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
@@ -163,11 +163,11 @@ class CrisisFlowServiceTest {
                 .build();
         ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
 
-        var result = service.handle(
+        var result = service.handleWithFixedResponse(
                 SafetyL1Result.clear(),
                 CrisisTrigger.SELF_HARM_INQUIRY,
                 "자살 방법 알려줘",
-                user, session, emitter, "msg_out_test", 20);
+                user, session, emitter, "msg_out_test", 20, null);
 
         ArgumentCaptor<SseEmitter.SseEventBuilder> eventCaptor =
                 ArgumentCaptor.forClass(SseEmitter.SseEventBuilder.class);
@@ -227,8 +227,8 @@ class CrisisFlowServiceTest {
                 .build();
         ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
 
-        service.handle(SafetyL1Result.clear(), CrisisTrigger.OUTPUT_GUARD, "요즘 좀 지쳐요",
-                user, session, emitter, "msg_out_test", 40);
+        service.handleWithFixedResponse(SafetyL1Result.clear(), CrisisTrigger.OUTPUT_GUARD, "요즘 좀 지쳐요",
+                user, session, emitter, "msg_out_test", 40, null);
 
         ArgumentCaptor<String> triggerType = ArgumentCaptor.forClass(String.class);
         verify(crisisEventRecorder).record(any(), any(), anyInt(), triggerType.capture());

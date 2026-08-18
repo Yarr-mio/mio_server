@@ -42,8 +42,25 @@ public class PromptBuilder {
     public String buildSystemPrompt(GenerationMode mode, InterventionHints hints,
                                     String memoryContext, String characterId, String checkpointSummary,
                                     ResponsePlan plan) {
+        return buildSystemPrompt(mode, hints, memoryContext, characterId, checkpointSummary, plan, false);
+    }
+
+    /**
+     * 서버가 첫 문장을 이미 보낸 턴을 프롬프트에 알린다 (P0-4, 로드맵 §5.6).
+     *
+     * <p>모델은 감정을 먼저 인정하도록 지시받는다. 서버가 그 문장을 이미 보냈는데 알리지
+     * 않으면 사용자는 같은 인정을 두 번 읽는다 — 눈에 보이는 제품 퇴행이다.
+     *
+     * <p><b>문구 자체는 프롬프트에 넣지 않는다.</b> 넣으면 모델이 그대로 따라 쓰는 것이 가장
+     * 흔한 실패가 된다. 필요한 정보는 "이미 전달됐다"는 사실뿐이고, 그것만 주면 반복이
+     * 생길 수 있는 표면이 좁아진다. 전달 단계에서 잘라내는 방식은 택하지 않았다 — 모델 출력을
+     * 서버가 편집하면 사용자가 읽은 텍스트와 저장·재생되는 텍스트가 갈라진다.
+     */
+    public String buildSystemPrompt(GenerationMode mode, InterventionHints hints,
+                                    String memoryContext, String characterId, String checkpointSummary,
+                                    ResponsePlan plan, boolean safePrefixDelivered) {
         String base = resolveBasePrompt(characterId) + buildModeInstruction(mode)
-                + buildPlanInstruction(plan);
+                + buildPlanInstruction(plan) + buildSafePrefixInstruction(plan, safePrefixDelivered);
         if (hints != null && !hints.suggestedCodes().isEmpty()) {
             base += buildHintsInstruction(hints);
         }
@@ -90,6 +107,14 @@ public class PromptBuilder {
         }
         sb.append(" 진단·단정·결과 보장 표현을 쓰지 마세요.");
         return sb.toString();
+    }
+
+    private String buildSafePrefixInstruction(ResponsePlan plan, boolean safePrefixDelivered) {
+        if (!safePrefixDelivered || plan == null || plan.responseAct() == ResponseAct.UNPLANNED) {
+            return "";
+        }
+        return "\n\n[이미 전달됨] 감정을 인정하는 첫 문장은 서버가 이미 사용자에게 보냈습니다. "
+                + "인사나 감정 인정을 다시 쓰지 말고, 곧바로 이번 턴의 응답 행위부터 시작하세요.";
     }
 
     private String buildHintsInstruction(InterventionHints hints) {

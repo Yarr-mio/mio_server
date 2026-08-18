@@ -28,18 +28,22 @@ class CiWorkflowContractTest {
     }
 
     @Test
-    @DisplayName("위기 평가는 기본 브랜치에 등록되지만 고정 integration ref만 checkout한다")
-    void crisisEvalDispatcherPinsTrustedIntegrationRef() throws IOException {
+    @DisplayName("위기 평가는 기본 브랜치에 등록되지만 신뢰 브랜치(develop) ref만 checkout한다")
+    void crisisEvalDispatcherPinsTrustedRef() throws IOException {
         Path workflowPath = WORKFLOW_DIR.resolve("crisis-eval.yml");
         assertThat(workflowPath).exists();
 
+        // 브랜치 전략 개정으로 integration/* 이 폐기되면서 신뢰 브랜치가 develop 이 됐다.
+        // 계약의 핵심은 그대로다: 임의 브랜치 코드가 시크릿으로 실행되면 안 된다 —
+        // ref 가 입력값이 되거나 폐기된 브랜치를 가리키면 실패한다.
         String workflow = Files.readString(workflowPath);
         assertThat(workflow)
                 .contains("workflow_dispatch:")
-                .contains("ref: integration/1.1.0")
+                .contains("ref: develop")
                 .contains("persist-credentials: false")
                 .contains("OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}")
                 .contains("Validate evaluation secret")
-                .doesNotContain("ref: ${{ inputs.");
+                .doesNotContain("ref: ${{ inputs.")
+                .doesNotContain("ref: integration");
     }
 }

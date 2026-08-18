@@ -48,6 +48,7 @@ public class EmbeddingWorker {
 
     private final JdbcTemplate jdbcTemplate;
     private final OpenAiLlmClient openAiLlmClient;
+    private final SummaryStageMetrics stageMetrics;
 
     @Scheduled(fixedDelay = 30_000)
     public void processPending() {
@@ -68,7 +69,9 @@ public class EmbeddingWorker {
                 String summaryText = (String) row.get("summary_text");
                 int attempts = ((Number) row.get("embedding_attempts")).intValue();
                 Object claimToken = row.get("embedding_claimed_at");
-                embedOne(id, summaryText, attempts, claimToken);
+                UUID userId = row.get("user_id") != null ? UUID.fromString(row.get("user_id").toString()) : null;
+                UUID sessionId = row.get("session_id") != null ? UUID.fromString(row.get("session_id").toString()) : null;
+                embedOne(id, summaryText, attempts, claimToken, userId, sessionId);
             } catch (Exception e) {
                 log.error("EmbeddingWorker: malformed claimed row, skipping: {}", row.get("id"), e);
             }
@@ -87,10 +90,12 @@ public class EmbeddingWorker {
                 UPDATE session_summaries
                 SET embedding_status = 'processing',
                     embedding_claimed_at = now(),
-                    embedding_attempts = embedding_attempts + 1
+                    embedding_attempts = embedding_attempts + 1,
+                    updated_at = now()
                 WHERE id IN (
                     SELECT id FROM session_summaries
-                    WHERE embedding_attempts < ?
+                    WHERE memory_status = 'active'
+                      AND embedding_attempts < ?
                       AND (
                         embedding_status = 'pending'
                         OR (embedding_status = 'processing'
@@ -100,7 +105,7 @@ public class EmbeddingWorker {
                     LIMIT ?
                     FOR UPDATE SKIP LOCKED
                 )
-                RETURNING id, summary_text, embedding_attempts, embedding_claimed_at
+                RETURNING id, summary_text, embedding_attempts, embedding_claimed_at, user_id, session_id
                 """,
                 MAX_ATTEMPTS, RECLAIM_AFTER_MINUTES, BATCH_SIZE
         );
@@ -116,7 +121,10 @@ public class EmbeddingWorker {
         return jdbcTemplate.update(
                 """
                 UPDATE session_summaries
-                SET embedding_status = 'failed'
+                SET embedding_status = 'failed',
+                    component_errors = jsonb_set(component_errors, '{embedding}',
+                            '"EMBEDDING_WORKER_STUCK"'::jsonb, true),
+                    updated_at = now()
                 WHERE embedding_status = 'processing'
                   AND embedding_attempts >= ?
                   AND embedding_claimed_at < now() - make_interval(mins => ?)
@@ -125,22 +133,31 @@ public class EmbeddingWorker {
         );
     }
 
-    private void embedOne(UUID summaryId, String summaryText, int attempts, Object claimToken) {
+    private void embedOne(UUID summaryId, String summaryText, int attempts, Object claimToken,
+                           UUID userId, UUID sessionId) {
+        SummaryStageMetrics.StageSample embeddingStage = stageMetrics.start(SummaryStageMetrics.EMBEDDING);
         if (summaryText == null || summaryText.isBlank()) {
             // 재시도해도 결과가 달라지지 않는다. 상한을 기다리지 않고 바로 확정한다.
             log.warn("EmbeddingWorker: summaryText is null or blank for summaryId={}, marking failed", summaryId);
-            markStatus(summaryId, "failed", claimToken);
+            try {
+                markStatus(summaryId, "failed", "EMBEDDING_INPUT_INVALID", claimToken);
+            } finally {
+                embeddingStage.stop("failed");
+            }
             return;
         }
+        String outcome = "failed";
         try {
-            float[] embedding = openAiLlmClient.embed(summaryText);
+            float[] embedding = openAiLlmClient.embed(summaryText, "SUMMARY_STORAGE_EMBEDDING", userId, sessionId);
             String vectorLiteral = toVectorLiteral(embedding);
 
             int updated = jdbcTemplate.update(
                     """
                     UPDATE session_summaries
                     SET episode_emb = ?::vector,
-                        embedding_status = 'done'
+                        embedding_status = 'done',
+                        component_errors = component_errors - 'embedding',
+                        updated_at = now()
                     WHERE id = ?
                       AND embedding_status = 'processing'
                       AND embedding_claimed_at = ?
@@ -148,22 +165,28 @@ public class EmbeddingWorker {
                     vectorLiteral, summaryId, claimToken
             );
             if (updated == 0) {
+                outcome = "discarded";
                 log.debug("EmbeddingWorker: summaryId={} was reclaimed by another worker, discarding result", summaryId);
             } else {
+                outcome = "done";
                 log.debug("EmbeddingWorker: embedded summaryId={}", summaryId);
             }
         } catch (Exception e) {
             // 임베딩 API 실패는 대부분 일시적이다(타임아웃, rate limit). 이전에는 한 번 실패하면
             // 그대로 failed 로 확정해 그 요약이 영구히 검색에서 빠졌다. 상한까지는 되돌린다.
             if (attempts < MAX_ATTEMPTS) {
+                outcome = "retry";
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, will retry",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "pending", claimToken);
+                markStatus(summaryId, "pending", "EMBEDDING_RETRY_PENDING", claimToken);
             } else {
+                outcome = "failed";
                 log.warn("EmbeddingWorker: attempt {}/{} failed for summaryId={}, marking failed",
                         attempts, MAX_ATTEMPTS, summaryId, e);
-                markStatus(summaryId, "failed", claimToken);
+                markStatus(summaryId, "failed", "EMBEDDING_FAILED", claimToken);
             }
+        } finally {
+            embeddingStage.stop(outcome);
         }
     }
 
@@ -178,17 +201,20 @@ public class EmbeddingWorker {
      * <p>재시도로 되돌릴 때는 claim 시각을 비운다. 그러지 않으면 {@code pending} 행에 오래된
      * claim 시각이 남아 대시보드에서 "처리 중"으로 오해된다.
      */
-    private void markStatus(UUID summaryId, String status, Object claimToken) {
+    private void markStatus(UUID summaryId, String status, String errorCode, Object claimToken) {
         jdbcTemplate.update(
                 """
                 UPDATE session_summaries
                 SET embedding_status = ?,
-                    embedding_claimed_at = CASE WHEN ? = 'pending' THEN NULL ELSE embedding_claimed_at END
+                    embedding_claimed_at = CASE WHEN ? = 'pending' THEN NULL ELSE embedding_claimed_at END,
+                    component_errors = jsonb_set(component_errors, '{embedding}',
+                            to_jsonb(CAST(? AS text)), true),
+                    updated_at = now()
                 WHERE id = ?
                   AND embedding_status = 'processing'
                   AND embedding_claimed_at = ?
                 """,
-                status, status, summaryId, claimToken
+                status, status, errorCode, summaryId, claimToken
         );
     }
 
