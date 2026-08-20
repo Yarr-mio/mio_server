@@ -17,6 +17,8 @@ import com.mio.ai.memory.working.WorkingMemory;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.session.repository.SessionCheckpointRepository;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -34,6 +36,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * POST /v1/sessions 직후 비동기 context + safety profile 사전 빌드 (§12.4.1).
@@ -56,6 +59,28 @@ public class ContextPreWarmer {
      * 소스별로 나누는 이유는 pgvector 장애와 일반 SQL 장애가 다른 대응을 요구하기 때문이다.
      */
     private static final String RETRIEVAL_METRIC = "mio.retrieval.outcome";
+
+    /** 일반 실패. 외부 장애·쿼리 오류 등 "고쳐야 하는" 실패다. */
+    private static final String OUTCOME_FAILED = "failed";
+
+    /**
+     * 대기 상한 초과 (이슈 #495).
+     *
+     * <p>{@link #OUTCOME_FAILED} 와 나누는 이유는 <b>대응이 다르기 때문</b>이다. 일반 실패는
+     * 외부 장애를 의심해야 하지만, 타임아웃은 상한이 실제 왕복 시간보다 짧다는 <b>튜닝 신호</b>다.
+     * 한 값으로 묶여 있으면 지표만 보고 둘을 구별할 수 없다 — 프로덕션에서 이 경로가
+     * 시도 57턴 중 54턴 실패로 관측됐는데, 그것이 장애인지 설정 문제인지 알 수 없었다.
+     */
+    private static final String OUTCOME_TIMEOUT = "timeout";
+
+    /**
+     * 임베딩 왕복 시간 (이슈 #495).
+     *
+     * <p><b>호출자가 대기를 포기했는지와 무관하게</b> 실제 완료 시점에 기록한다.
+     * 이 값이 없으면 {@link #MAX_EMBEDDING_WAIT_MS} 를 얼마로 올려야 하는지 판단할 근거가 없다 —
+     * 타임아웃 카운터만으로는 "250ms 를 넘었다" 는 사실만 알 뿐 260ms 인지 3초인지 모른다.
+     */
+    private static final String EMBEDDING_WAIT_METRIC = "mio.retrieval.embedding.wait";
 
     /**
      * 이력 확인 쿼리의 메트릭 라벨.
@@ -82,6 +107,10 @@ public class ContextPreWarmer {
     private final MeterRegistry meterRegistry;
 
     private final Executor retrievalPool = Executors.newVirtualThreadPerTaskExecutor();
+
+    /** {@link #initEmbeddingWaitTimers} 에서 기동 시 1회만 만든다 (이슈 #495). */
+    private Timer embeddingWaitSuccessTimer;
+    private Timer embeddingWaitFailureTimer;
 
     @Async
     public void preWarm(UUID sessionId, UUID userId) {
@@ -204,7 +233,7 @@ public class ContextPreWarmer {
             return new HistoryProbe(count != null && count > 0, false);
         } catch (Exception e) {
             log.warn("ContextPreWarmer: history probe failed for userId={}; assuming history exists", userId, e);
-            meterRegistry.counter(RETRIEVAL_METRIC, "source", HISTORY_PROBE, "outcome", "failed").increment();
+            meterRegistry.counter(RETRIEVAL_METRIC, "source", HISTORY_PROBE, "outcome", OUTCOME_FAILED).increment();
             return new HistoryProbe(true, true);
         }
     }
@@ -237,6 +266,9 @@ public class ContextPreWarmer {
      *
      * <p>이전에는 조용히 {@code null} 을 반환해 벡터 검색을 건너뛰었다. 그러면 임베딩
      * 타임아웃이 잦아져도 "벡터 검색 결과가 원래 없다" 와 구별되지 않는다.
+     *
+     * <p>단, <b>대기 상한 초과는 {@link #OUTCOME_TIMEOUT} 으로 따로 센다</b> (이슈 #495).
+     * 외부 장애와 상한 부족은 대응이 다른데, 한 값으로 묶여 있으면 지표로 구별할 수 없다.
      */
     private float[] embedIfNeeded(RetrievalPlan plan, String queryText, UUID userId, UUID sessionId,
                                   Set<RetrievalSource> failedSources) {
@@ -245,10 +277,20 @@ public class ContextPreWarmer {
             return null;
         }
         CompletableFuture<float[]> embeddingFuture = CompletableFuture.supplyAsync(
-                () -> embeddingClient.embed(queryText, "RETRIEVAL_QUERY_EMBEDDING", userId, sessionId), retrievalPool);
+                () -> embedTimed(queryText, userId, sessionId), retrievalPool);
+        long timeoutMs = Math.min(plan.budgetMs(), MAX_EMBEDDING_WAIT_MS);
         try {
-            long timeoutMs = Math.min(plan.budgetMs(), MAX_EMBEDDING_WAIT_MS);
             return embeddingFuture.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            // 상한 초과는 장애가 아니라 튜닝 신호다. 아래 cancel 은 이미 시작된 작업을 멈추지
+            // 못하므로(CompletableFuture.cancel 은 실행 중인 스레드를 인터럽트하지 않는다),
+            // embedTimed 의 타이머는 그대로 완료 시점에 기록된다 — 상한을 얼마로 올려야 하는지는
+            // 그 값으로만 알 수 있다.
+            embeddingFuture.cancel(true);
+            log.warn("ContextPreWarmer: embedding wait exceeded {}ms; continuing without vector retrieval",
+                    timeoutMs);
+            markRetrievalOutcome(failedSources, RetrievalSource.VECTOR_EPISODE, OUTCOME_TIMEOUT);
+            return null;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             embeddingFuture.cancel(true);
@@ -261,9 +303,77 @@ public class ContextPreWarmer {
         return null;
     }
 
+    /**
+     * 임베딩을 부르고 왕복 시간을 남긴다.
+     *
+     * <p>계측을 호출자 쪽이 아니라 <b>비동기 작업 안에</b> 두는 것이 핵심이다. 호출자는 상한을
+     * 넘기면 결과를 버리는데, 버려진 호출이야말로 "얼마나 오래 걸렸는가" 를 알려주는 표본이다.
+     *
+     * <p>성공·실패를 태그로 나눈다. 상한을 정하는 근거는 <b>성공한 호출</b>의 분포이고,
+     * 빠르게 떨어지는 4xx 같은 실패가 섞이면 그 p95 가 실제보다 낮게 나온다.
+     */
+    private float[] embedTimed(String queryText, UUID userId, UUID sessionId) {
+        long startedAt = System.nanoTime();
+        boolean succeeded = false;
+        try {
+            float[] embedding = embeddingClient.embed(queryText, "RETRIEVAL_QUERY_EMBEDDING", userId, sessionId);
+            succeeded = true;
+            return embedding;
+        } finally {
+            recordEmbeddingWait(succeeded, System.nanoTime() - startedAt);
+        }
+    }
+
+    /**
+     * 왕복 시간 기록. <b>실패해도 호출 결과를 덮지 않는다.</b>
+     *
+     * <p>{@code finally} 안에서 예외가 나가면 자바 의미론상 그 예외가 원래 반환값 또는 원래
+     * 예외를 통째로 대체한다. 그러면 <b>성공한 임베딩이 실패로 오분류되어 버려지고</b>,
+     * 실패 경로에서는 진짜 원인이 관측 예외로 덮인다 — 이 클래스가 없애려는 문제를
+     * 관측 코드가 다시 만드는 셈이다. 그래서 여기서 끊는다.
+     */
+    private void recordEmbeddingWait(boolean succeeded, long elapsedNanos) {
+        try {
+            Timer timer = succeeded ? embeddingWaitSuccessTimer : embeddingWaitFailureTimer;
+            timer.record(elapsedNanos, TimeUnit.NANOSECONDS);
+        } catch (RuntimeException e) {
+            log.warn("ContextPreWarmer: failed to record embedding wait metric", e);
+        }
+    }
+
+    /**
+     * 왕복 시간 타이머를 기동 시 한 번만 만든다.
+     *
+     * <p>{@code Timer.builder(...).register(...)} 는 같은 이름·태그면 기존 미터를 돌려주지만
+     * 그 확인을 위해 레지스트리 락을 잡는다. 턴 크리티컬 패스에서 매번 부르면 동시 턴이
+     * 전부 공유하는 동기화 지점이 된다 — 캐리어 스레드가 2개(2 vCPU)인 환경에서는 특히 아깝다.
+     */
+    @PostConstruct
+    void initEmbeddingWaitTimers() {
+        embeddingWaitSuccessTimer = embeddingWaitTimer("success");
+        embeddingWaitFailureTimer = embeddingWaitTimer("failure");
+    }
+
+    private Timer embeddingWaitTimer(String outcome) {
+        return Timer.builder(EMBEDDING_WAIT_METRIC)
+                .description("검색용 임베딩 왕복 시간. 호출자의 대기 포기 여부와 무관하게 기록한다.")
+                .tag("outcome", outcome)
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(10))
+                .maximumExpectedValue(Duration.ofSeconds(10))
+                // 자동 백분위 버킷이 이미 10~20% 간격으로 깔리므로 SLO 는 현재 상한 하나만 둔다.
+                // 나머지 라운드 숫자는 자동 버킷과 겹쳐 시계열만 늘리고 해상도 이득이 없다.
+                .serviceLevelObjectives(Duration.ofMillis(MAX_EMBEDDING_WAIT_MS))
+                .register(meterRegistry);
+    }
+
     private void markFailed(Set<RetrievalSource> failedSources, RetrievalSource source) {
+        markRetrievalOutcome(failedSources, source, OUTCOME_FAILED);
+    }
+
+    private void markRetrievalOutcome(Set<RetrievalSource> failedSources, RetrievalSource source, String outcome) {
         failedSources.add(source);
-        meterRegistry.counter(RETRIEVAL_METRIC, "source", source.name(), "outcome", "failed").increment();
+        meterRegistry.counter(RETRIEVAL_METRIC, "source", source.name(), "outcome", outcome).increment();
     }
 
     /**

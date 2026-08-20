@@ -67,14 +67,28 @@ groups:
           summary: "위기 이벤트 영속화 실패"
           description: "위기 안내 이후 기록 재시도가 소진됐습니다. safety latch와 DB 상태를 확인하십시오."
 
+      # outcome 에 timeout 이 분리되면서(이슈 #495) 이 룰이 그 몫을 놓치지 않도록 정규식으로 받는다.
+      # 파이프라인 관점에서는 타임아웃도 "기억을 못 쓴 턴" 이므로 총 실패율에 포함돼야 한다.
       - alert: MioRetrievalFailureRatioHigh
-        expr: sum(increase(mio_retrieval_outcome_total{outcome="failed"}[10m])) / clamp_min(sum(increase(mio_retrieval_outcome_total[10m])), 1) > 0.10 and sum(increase(mio_retrieval_outcome_total[10m])) >= 20
+        expr: sum(increase(mio_retrieval_outcome_total{outcome=~"failed|timeout"}[10m])) / clamp_min(sum(increase(mio_retrieval_outcome_total[10m])), 1) > 0.10 and sum(increase(mio_retrieval_outcome_total[10m])) >= 20
         for: 10m
         labels:
           severity: warning
         annotations:
           summary: "기억 retrieval 실패율이 10% 초과"
-          description: "최근 10분간 20회 이상 retrieval에서 실패율이 10%를 넘었습니다. source별 실패를 확인하십시오."
+          description: "최근 10분간 20회 이상 retrieval에서 실패율이 10%를 넘었습니다. source별·outcome별 분포를 확인하십시오. outcome=timeout 이 지배적이면 장애가 아니라 대기 상한 문제입니다 — MioEmbeddingWaitTimeoutRatioHigh 를 함께 보십시오."
+
+      # 상한 초과는 장애가 아니라 튜닝 신호라 별도로 본다 (이슈 #495).
+      # 프로덕션에서 이 경로가 시도 57턴 중 54턴 실패로 관측됐는데, 지표가 일반 실패와
+      # 합쳐져 있어 원인을 구별할 수 없었다.
+      - alert: MioEmbeddingWaitTimeoutRatioHigh
+        expr: sum(increase(mio_retrieval_outcome_total{source="VECTOR_EPISODE",outcome="timeout"}[15m])) / clamp_min(sum(increase(mio_retrieval_outcome_total{source="VECTOR_EPISODE"}[15m])), 1) > 0.20 and sum(increase(mio_retrieval_outcome_total{source="VECTOR_EPISODE"}[15m])) >= 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "임베딩 대기 상한 초과율이 20% 초과 — 벡터 검색이 버려지고 있다"
+          description: "턴 크리티컬 패스의 임베딩 대기 상한을 넘겨 벡터 검색 없이 응답하고 있습니다. 회상 품질이 조용히 떨어지는 경로입니다. 상한을 얼마로 올려야 하는지는 실제 왕복 분포로 판단하십시오 — histogram_quantile(0.95, sum(rate(mio_retrieval_embedding_wait_seconds_bucket{outcome='success'}[30m])) by (le))."
 
       - alert: MioContractViolationRatioHigh
         expr: sum(increase(mio_ai_contract_results_total{result="violated"}[15m])) / clamp_min(sum(increase(mio_ai_contract_results_total[15m])), 1) > 0.20 and sum(increase(mio_ai_contract_results_total[15m])) >= 20
