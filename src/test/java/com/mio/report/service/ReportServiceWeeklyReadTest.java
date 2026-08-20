@@ -7,6 +7,7 @@ import com.mio.common.error.ErrorCode;
 import com.mio.report.domain.NarrativeStatus;
 import com.mio.report.domain.ReportWeek;
 import com.mio.report.domain.WeeklyReport;
+import com.mio.report.dto.MonthlyReportResponse;
 import com.mio.report.dto.WeeklyReportResponse;
 import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.session.repository.MessageRepository;
@@ -56,7 +57,8 @@ import static org.mockito.Mockito.when;
 @DisplayName("ReportService — 주간 조회는 저장분만 읽는다 (#419)")
 class ReportServiceWeeklyReadTest {
 
-    private static final int ENOUGH_CHECKINS = 5;
+    /** 주간 최소 3회, 월간 최소 7회를 모두 넘기는 값. */
+    private static final int ENOUGH_CHECKINS = 10;
 
     @Mock private CheckinRepository checkinRepository;
     @Mock private MessageRepository messageRepository;
@@ -69,11 +71,13 @@ class ReportServiceWeeklyReadTest {
     private ReportService service;
     private UUID userId;
     private LocalDate lastWeekStart;
+    private LocalDate lastMonthStart;
 
     @BeforeEach
     void setUp() {
         userId = UUID.randomUUID();
         lastWeekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(AppConstants.ZONE));
+        lastMonthStart = LocalDate.now(AppConstants.ZONE).minusMonths(1).withDayOfMonth(1);
 
         service = new ReportService(checkinRepository, messageRepository, sessionRepository,
                 behaviorTaskRepository, userRepository, weeklyReportRepository, txManager);
@@ -145,6 +149,38 @@ class ReportServiceWeeklyReadTest {
         }
 
         @Test
+        void 진행_중인_이번_주도_pending_이다() {
+            LocalDate currentWeek = lastWeekStart.plusWeeks(1);
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+
+            WeeklyReportResponse response = service.getWeeklyReport(userId, currentWeek);
+
+            // 이번 주는 다음 월요일 배치가 채운다 — "기다리면 채워지는" 구간이다.
+            assertThat(response.narrativeStatus()).isEqualTo(NarrativeStatus.PENDING);
+        }
+
+        @Test
+        void 진행_중인_이번_주는_부분_집계로_표시된다() {
+            LocalDate currentWeek = lastWeekStart.plusWeeks(1);
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+
+            WeeklyReportResponse response = service.getWeeklyReport(userId, currentWeek);
+
+            // 아직 끝나지 않은 구간을 집계한 값이라, 완전한 한 주로 오해하면 안 된다.
+            assertThat(response.isPartial()).isTrue();
+        }
+
+        @Test
+        void 완료된_주차는_부분_집계가_아니다() {
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+
+            assertThat(service.getWeeklyReport(userId, lastWeekStart).isPartial()).isFalse();
+        }
+
+        @Test
         void 더_과거_주차는_영영_안_채워지므로_unavailable() {
             LocalDate olderWeek = lastWeekStart.minusWeeks(3);
             when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
@@ -198,6 +234,58 @@ class ReportServiceWeeklyReadTest {
             assertThatThrownBy(() -> service.getWeeklyReport(userId, future))
                     .isInstanceOf(BusinessException.class)
                     .hasFieldOrPropertyWithValue("errorCode", ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+    }
+
+    @Nested
+    @DisplayName("월간 — 저장소가 없어 내러티브는 항상 없고, 범위만 제한한다")
+    class Monthly {
+
+        @Test
+        void 내러티브는_항상_null_이고_unavailable_이다() {
+            MonthlyReportResponse response = service.getMonthlyReport(userId, lastMonthStart);
+
+            // monthly_reports 저장소가 없다. 여기서 생성하면 "GET 에서 LLM 을 부르지 않는다" 는
+            // 계약을 월간만 깨게 된다.
+            assertThat(response.narrative()).isNull();
+            assertThat(response.coachingDirection()).isNull();
+            assertThat(response.narrativeStatus()).isEqualTo(NarrativeStatus.UNAVAILABLE);
+        }
+
+        @Test
+        void 집계_필드는_정상_반환한다() {
+            MonthlyReportResponse response = service.getMonthlyReport(userId, lastMonthStart);
+
+            assertThat(response.checkinCount()).isEqualTo(ENOUGH_CHECKINS);
+            assertThat(response.sessionSummary()).isNotNull();
+        }
+
+        @Test
+        void 범위를_벗어난_과거_월은_거절한다() {
+            LocalDate tooOld = lastMonthStart.minusMonths(6);
+
+            assertThatThrownBy(() -> service.getMonthlyReport(userId, tooOld))
+                    .isInstanceOf(BusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+
+        @Test
+        void 범위_경계는_허용한다() {
+            assertThat(service.getMonthlyReport(userId, lastMonthStart.minusMonths(5))).isNotNull();
+        }
+
+        @Test
+        void 아직_시작하지_않은_월은_거절한다() {
+            assertThatThrownBy(() -> service.getMonthlyReport(userId, lastMonthStart.plusMonths(2)))
+                    .isInstanceOf(BusinessException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+
+        @Test
+        void 월_중간_날짜는_그_달의_1일로_맞춘다() {
+            MonthlyReportResponse response = service.getMonthlyReport(userId, lastMonthStart.plusDays(15));
+
+            assertThat(response.monthStart()).isEqualTo(lastMonthStart);
         }
     }
 

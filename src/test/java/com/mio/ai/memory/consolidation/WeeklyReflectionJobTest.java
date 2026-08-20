@@ -6,6 +6,7 @@ import com.mio.ai.llm.ModelCatalog;
 import com.mio.ai.repository.UserSelfModelRepository;
 import com.mio.report.domain.ReportWeek;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -99,10 +100,39 @@ class WeeklyReflectionJobTest {
         assertThat(captureWeekStart()).isEqualTo(aggregationWeekStart);
     }
 
+    /**
+     * {@code loadActiveUserIds} 가 넘긴 {@code (weekStart, weekEnd)} 중 앞의 것을 꺼낸다.
+     *
+     * <p>이 검증이 성립하는 전제가 두 개 있다.
+     * <ul>
+     *   <li>{@code jdbcTemplate} 을 스텁하지 않아 Mockito 기본값(빈 리스트)이 돌아오고,
+     *       그래서 {@code processUser} 이하의 다른 쿼리들이 아예 호출되지 않는다 —
+     *       {@code verify(...)} 가 단일 호출을 기대할 수 있는 이유다</li>
+     *   <li>Mockito 는 varargs 를 <b>위치별로</b> 매칭하므로 인자 수만큼 캡터를 놓아야 한다.
+     *       이슈 #419 에서 상한 인자가 붙어 vararg 가 1개 → 2개가 됐고, 캡터가 하나면
+     *       매칭 자체가 실패한다</li>
+     * </ul>
+     */
     private LocalDate captureWeekStart() {
         ArgumentCaptor<Object> args = ArgumentCaptor.forClass(Object.class);
-        verify(jdbcTemplate).query(anyString(), any(RowMapper.class), args.capture());
-        return (LocalDate) args.getValue();
+        verify(jdbcTemplate).query(anyString(), any(RowMapper.class), args.capture(), args.capture());
+        return (LocalDate) args.getAllValues().get(0);
+    }
+
+    @Test
+    @DisplayName("집계 구간에 상한을 걸어 이번 주 데이터가 섞이지 않는다")
+    void 집계_구간에_상한을_건다() {
+        // 월 04:00 실행 시점은 이번 주 월요일 00:00 을 이미 4시간 지났다. 상한이 없으면
+        // 그 4시간치 데이터가 "지난주" 회고에 섞여 들어간다.
+        Clock clock = Clock.fixed(OffsetDateTime.parse("2026-08-17T04:00:00+09:00").toInstant(), KST);
+
+        jobAt(clock).run();
+
+        ArgumentCaptor<Object> args = ArgumentCaptor.forClass(Object.class);
+        verify(jdbcTemplate).query(anyString(), any(RowMapper.class), args.capture(), args.capture());
+        assertThat(args.getAllValues())
+                .as("weekStart 와 weekEnd 가 모두 전달돼야 구간이 닫힌다")
+                .containsExactly(LocalDate.of(2026, 8, 10), LocalDate.of(2026, 8, 16));
     }
 
     private WeeklyReflectionJob jobAt(Clock clock) {

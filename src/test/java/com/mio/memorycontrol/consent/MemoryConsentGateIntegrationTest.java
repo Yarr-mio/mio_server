@@ -9,6 +9,7 @@ import com.mio.ai.memory.consolidation.SessionConsolidator;
 import com.mio.ai.memory.consolidation.SessionEndedEvent;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.memorycontrol.service.MemoryControlService;
+import com.mio.report.domain.ReportWeek;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -19,6 +20,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -185,20 +189,34 @@ class MemoryConsentGateIntegrationTest {
     }
 
     /** 지난주 활동 흔적: 종료 세션 + 지배 감정 — 주간 회고 대상 선정과 집계에 걸리게 한다. */
+    /**
+     * 주간 회고 job 의 <b>대상 구간(직전 주 월~일) 안에</b> 활동을 심는다.
+     *
+     * <p>이전에는 {@code now() - interval '2 days'} 를 썼는데, 집계 쿼리에 상한이 없어
+     * 그래도 걸려들었다. 이슈 #419 로 상한이 생기면서 "2일 전" 은 실행 요일에 따라
+     * 이번 주로 떨어져 대상에서 빠진다 — 구간 안이라는 것을 날짜로 명시한다.
+     */
     private void seedWeeklyActivity(UUID targetUserId) {
+        ZoneId kst = ZoneId.of("Asia/Seoul");
+        OffsetDateTime withinLastWeek = ReportWeek.lastWeekStartFrom(LocalDate.now(kst))
+                .plusDays(2)              // 직전 주 수요일 — 경계에서 충분히 떨어뜨린다
+                .atTime(12, 0)
+                .atZone(kst)
+                .toOffsetDateTime();
+
         UUID weeklySession = UUID.randomUUID();
         jdbcTemplate.update(
                 """
                 INSERT INTO sessions (id, user_id, character_id, status, started_at, ended_at)
-                VALUES (?, ?, 'mio', 'ended', now() - interval '2 days', now() - interval '2 days')
+                VALUES (?, ?, 'mio', 'ended', ?, ?)
                 """,
-                weeklySession, targetUserId);
+                weeklySession, targetUserId, withinLastWeek, withinLastWeek);
         jdbcTemplate.update(
                 """
-                INSERT INTO emotional_states (user_id, source_event_id, primary_emotion, intensity, source)
-                VALUES (?, ?, 'anxious', 60, 'chat')
+                INSERT INTO emotional_states (user_id, source_event_id, primary_emotion, intensity, source, created_at)
+                VALUES (?, ?, 'anxious', 60, 'chat', ?)
                 """,
-                targetUserId, weeklySession);
+                targetUserId, weeklySession, withinLastWeek);
     }
 
     private int selfModelCount(UUID targetUserId) {

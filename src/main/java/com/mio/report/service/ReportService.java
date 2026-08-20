@@ -137,32 +137,7 @@ public class ReportService {
 
         verifyWeekInRange(resolvedStart, lastWeekStart);
 
-        WeeklyLookup lookup = readOnlyTx.execute(status -> {
-            verifyUserExists(userId);
-
-            long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, resolvedStart, weekEnd);
-            if (checkinCount < WEEKLY_MIN_CHECKINS) {
-                return new WeeklyLookup(
-                        ReportDbData.insufficient(resolvedStart, weekEnd, (int) checkinCount),
-                        StoredNarrative.EMPTY);
-            }
-
-            OffsetDateTime start = toStartOfDay(resolvedStart);
-            OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
-
-            ReportDbData data = new ReportDbData(
-                    resolvedStart, weekEnd, (int) checkinCount, false,
-                    roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
-                    buildDistortionTop3(userId, start, end),
-                    buildTodoSummary(userId, start, end),
-                    buildSessionSummary(userId, start, end)
-            );
-            StoredNarrative stored = weeklyReportRepository
-                    .findByUser_IdAndWeekStart(userId, resolvedStart)
-                    .map(StoredNarrative::from)
-                    .orElse(StoredNarrative.EMPTY);
-            return new WeeklyLookup(data, stored);
-        });
+        WeeklyLookup lookup = readOnlyTx.execute(status -> lookupWeekly(userId, resolvedStart, weekEnd));
 
         ReportDbData data = lookup.data();
         if (data.insufficient()) {
@@ -170,13 +145,17 @@ public class ReportService {
         }
 
         StoredNarrative stored = lookup.stored();
+        // 진행 중인 주(= 이번 주)는 아직 끝나지 않은 구간을 집계한 값이다. 조회를 허용하는 이상
+        // 그 사실을 응답에 실어야 한다 — 완전한 한 주로 오해하면 클라이언트가 값을 확정 수치처럼
+        // 쓰게 된다.
+        boolean inProgressWeek = resolvedStart.isAfter(lastWeekStart);
 
         return new WeeklyReportResponse(
                 stored.reportId(), data.periodStart(), data.periodEnd(),
                 // core status 는 집계가 제공 가능한지만 말한다. 내러티브 부재가 리포트 전체를
                 // PENDING 으로 만들면 클라이언트가 집계까지 못 그린다 (명세 v1.1).
                 WeeklyReport.STATUS_GENERATED,
-                stored.partial(),
+                stored.partial() || inProgressWeek,
                 data.checkinCount(), null,
                 data.avgEmotionScore(),
                 data.distortionTop3(),
@@ -185,25 +164,60 @@ public class ReportService {
                 data.todoSummary(),
                 data.sessionSummary(),
                 // 저장 artifact 가 있으면 그 생성 시각, 없으면 이 집계 snapshot 시각.
+                // 명세 v1.1 이 이 필드를 그렇게 정의한다 — 이름과 달리 "조회 시점" 이 될 수 있다.
                 stored.generatedAt() != null ? stored.generatedAt() : OffsetDateTime.now(ZoneOffset.UTC),
                 null
         );
     }
 
     /**
+     * 집계와 배치 저장분을 <b>읽기 트랜잭션 하나에서 함께</b> 읽는다.
+     *
+     * <p>저장분을 별도 호출로 빼면 턴당 커넥션 획득이 한 번 더 늘어난다.
+     */
+    private WeeklyLookup lookupWeekly(UUID userId, LocalDate resolvedStart, LocalDate weekEnd) {
+        verifyUserExists(userId);
+
+        long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, resolvedStart, weekEnd);
+        if (checkinCount < WEEKLY_MIN_CHECKINS) {
+            return new WeeklyLookup(
+                    ReportDbData.insufficient(resolvedStart, weekEnd, (int) checkinCount),
+                    StoredNarrative.EMPTY);
+        }
+
+        OffsetDateTime start = toStartOfDay(resolvedStart);
+        OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
+
+        ReportDbData data = new ReportDbData(
+                resolvedStart, weekEnd, (int) checkinCount, false,
+                roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
+                buildDistortionTop3(userId, start, end),
+                buildTodoSummary(userId, start, end),
+                buildSessionSummary(userId, start, end)
+        );
+        StoredNarrative stored = weeklyReportRepository
+                .findByUser_IdAndWeekStart(userId, resolvedStart)
+                .map(StoredNarrative::from)
+                .orElse(StoredNarrative.EMPTY);
+        return new WeeklyLookup(data, stored);
+    }
+
+    /**
      * 내러티브 상태 판정. {@code PENDING} 과 {@code UNAVAILABLE} 을 나누는 기준은
      * <b>"기다리면 채워지는가"</b> 다.
      *
-     * <p>지난 주차는 월요일 배치가 아직 돌 기회가 남아 있지만, 그보다 과거 주차는 배치 대상이
-     * 아니라 영영 채워지지 않는다. 둘을 구분하지 않으면 클라이언트가 과거 리포트에서 무한히
-     * 로딩 UI 를 띄우게 된다.
+     * <p>지난 주차와 진행 중인 이번 주차는 아직 배치가 돌 기회가 남아 있지만, 그보다 과거
+     * 주차는 배치 대상이 아니라 영영 채워지지 않는다. 둘을 구분하지 않으면 클라이언트가 과거
+     * 리포트에서 무한히 로딩 UI 를 띄우게 된다.
      */
     private NarrativeStatus resolveNarrativeStatus(
             StoredNarrative stored, LocalDate resolvedStart, LocalDate lastWeekStart) {
         if (stored.hasText()) {
             return NarrativeStatus.READY;
         }
-        return resolvedStart.equals(lastWeekStart) ? NarrativeStatus.PENDING : NarrativeStatus.UNAVAILABLE;
+        // 지난주는 이번 월요일 배치가, 진행 중인 이번 주는 다음 월요일 배치가 채운다.
+        // 둘 다 "기다리면 채워지는" 구간이다. 그보다 과거만 배치 대상이 아니다.
+        return resolvedStart.isBefore(lastWeekStart) ? NarrativeStatus.UNAVAILABLE : NarrativeStatus.PENDING;
     }
 
     /** 월요일이 아닌 입력을 그 주의 월요일로 맞춘다. {@code null} 이면 지난주. */
