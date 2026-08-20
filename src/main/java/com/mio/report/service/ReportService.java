@@ -2,6 +2,8 @@ package com.mio.report.service;
 
 import com.mio.common.AppConstants;
 import com.mio.report.domain.ReportWeek;
+import com.mio.report.domain.WeeklyReport;
+import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.checkin.repository.CheckinRepository;
@@ -25,6 +27,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
@@ -38,6 +41,20 @@ public class ReportService {
     private static final int WEEKLY_MIN_CHECKINS  = 3;
     private static final int MONTHLY_MIN_CHECKINS = 7;
     private static final int DAYS_MAX = 90;
+
+    /**
+     * 리포트 조회 가능 범위 (이슈 #419).
+     *
+     * <p>내러티브가 배치 저장분으로 바뀌어 조회당 LLM 호출은 이미 0 이지만, 범위 제한은
+     * 그와 별개의 방어선이다 — 집계 SQL 자체가 비용이고 캐시도 조건부 요청도 없어서
+     * 임의 주차를 반복 조회하면 DB 부담이 누적된다. 또한 이 값이 없으면 나중에 누군가
+     * "저장분 없으면 그때 생성" 으로 되돌릴 때 곧바로 비용 DoS 경로가 열린다.
+     */
+    private static final int WEEKLY_LOOKBACK_WEEKS = 26;
+    private static final int MONTHLY_LOOKBACK_MONTHS = 6;
+
+    private static final String PENDING_MESSAGE =
+            "주간 요약을 준비하고 있어요. 잠시 후 다시 확인해 주세요.";
 
     private static final Map<String, String> BIAS_LABELS = Map.of(
             "overgeneralization",  "과일반화",
@@ -53,6 +70,7 @@ public class ReportService {
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
+    private final WeeklyReportRepository weeklyReportRepository;
     private final ReportNarrativeService reportNarrativeService;
     private final PlatformTransactionManager txManager;
 
@@ -62,6 +80,27 @@ public class ReportService {
     void init() {
         readOnlyTx = new TransactionTemplate(txManager);
         readOnlyTx.setReadOnly(true);
+    }
+
+    /** 주간 배치가 저장해 둔 산출물. 조회 경로는 이 값만 쓰고 LLM 을 부르지 않는다 (이슈 #419). */
+    private record StoredNarrative(
+            UUID reportId, String narrative, String coachingDirection,
+            boolean partial, OffsetDateTime generatedAt
+    ) {
+        private static final StoredNarrative EMPTY = new StoredNarrative(null, null, null, false, null);
+
+        static StoredNarrative from(WeeklyReport report) {
+            return new StoredNarrative(report.getId(), report.getNarrative(),
+                    report.getCoachingDirection(), report.isPartial(), report.getGeneratedAt());
+        }
+
+        boolean hasText() {
+            return narrative != null || coachingDirection != null;
+        }
+    }
+
+    /** 읽기 트랜잭션 하나에서 집계와 저장분을 함께 돌려준다 — 커넥션을 두 번 잡지 않기 위해서다. */
+    private record WeeklyLookup(ReportDbData data, StoredNarrative stored) {
     }
 
     private record ReportDbData(
@@ -76,55 +115,121 @@ public class ReportService {
 
     // ── 주간 리포트 ───────────────────────────────────────────────
 
+    /**
+     * 주간 리포트 조회 (이슈 #419).
+     *
+     * <p><b>이 경로는 LLM 을 호출하지 않는다.</b> {@code narrative}/{@code coaching_direction} 은
+     * 주간 배치({@code ReportAggregationJob} → {@code WeeklyReflectionJob})가 저장해 둔 값만
+     * 반환하고, 없으면 {@code null} 이다. 이전 구현은 조회할 때마다 생성했기 때문에 같은 주차를
+     * N 번 열면 LLM 이 N 번 호출됐고, 그러면서도 응답의 내러티브가 매번 달랐다.
+     *
+     * <p>집계 필드는 저장분과 무관하게 매번 계산한다. 둘의 비용이 다르기 때문이다 —
+     * 집계는 SQL 한 번이라 어느 주차든 값싸게 낼 수 있고, 비싼 것은 내러티브뿐이다.
+     * 내러티브가 없다는 이유로 조회 자체를 막으면 싼 것까지 함께 막는 셈이 된다.
+     */
     public WeeklyReportResponse getWeeklyReport(UUID userId, LocalDate weekStart) {
-        final LocalDate resolvedStart = weekStart != null ? weekStart : resolveLastWeekStart();
+        final LocalDate lastWeekStart = resolveLastWeekStart();
+        // 월요일이 아닌 날짜가 와도 그 날이 속한 주로 맞춘다. week_start 컬럼에는 월요일만
+        // 저장되므로(UNIQUE(user_id, week_start)), 정규화하지 않으면 저장분과 영영 매칭되지
+        // 않는다 — 이슈 #415 가 없앤 불일치와 같은 종류다.
+        final LocalDate resolvedStart = normalizeToWeekStart(weekStart, lastWeekStart);
         final LocalDate weekEnd = ReportWeek.weekEndOf(resolvedStart);
 
-        ReportDbData data = readOnlyTx.execute(status -> {
+        verifyWeekInRange(resolvedStart, lastWeekStart);
+
+        WeeklyLookup lookup = readOnlyTx.execute(status -> {
             verifyUserExists(userId);
 
             long checkinCount = checkinRepository.countByUser_IdAndCheckinDateBetween(userId, resolvedStart, weekEnd);
             if (checkinCount < WEEKLY_MIN_CHECKINS) {
-                return ReportDbData.insufficient(resolvedStart, weekEnd, (int) checkinCount);
+                return new WeeklyLookup(
+                        ReportDbData.insufficient(resolvedStart, weekEnd, (int) checkinCount),
+                        StoredNarrative.EMPTY);
             }
 
             OffsetDateTime start = toStartOfDay(resolvedStart);
             OffsetDateTime end   = toStartOfDay(weekEnd.plusDays(1));
 
-            return new ReportDbData(
+            ReportDbData data = new ReportDbData(
                     resolvedStart, weekEnd, (int) checkinCount, false,
                     roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
                     buildDistortionTop3(userId, start, end),
                     buildTodoSummary(userId, start, end),
                     buildSessionSummary(userId, start, end)
             );
+            StoredNarrative stored = weeklyReportRepository
+                    .findByUser_IdAndWeekStart(userId, resolvedStart)
+                    .map(StoredNarrative::from)
+                    .orElse(StoredNarrative.EMPTY);
+            return new WeeklyLookup(data, stored);
         });
 
+        ReportDbData data = lookup.data();
         if (data.insufficient()) {
             return WeeklyReportResponse.insufficientData(data.periodStart(), data.periodEnd(), data.checkinCount());
         }
 
-        // DB 커넥션 반납 후 LLM 호출
-        ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
+        StoredNarrative stored = lookup.stored();
+        // 배치가 아직 채울 기회가 남은 주차만 PENDING 이다. 그보다 과거 주차는 내러티브가
+        // 영영 생기지 않으므로 PENDING 으로 두면 FE 가 무한히 로딩 UI 를 띄우게 된다.
+        boolean pending = !stored.hasText() && resolvedStart.equals(lastWeekStart);
 
         return new WeeklyReportResponse(
-                null, data.periodStart(), data.periodEnd(), "GENERATED", false,
+                stored.reportId(), data.periodStart(), data.periodEnd(),
+                pending ? WeeklyReport.STATUS_PENDING : WeeklyReport.STATUS_GENERATED,
+                stored.partial(),
                 data.checkinCount(), null,
                 data.avgEmotionScore(),
                 data.distortionTop3(),
-                narrative.narrative(), narrative.coachingDirection(),
+                stored.narrative(), stored.coachingDirection(),
                 data.todoSummary(),
                 data.sessionSummary(),
-                OffsetDateTime.now(ZoneOffset.UTC), null
+                stored.generatedAt(),
+                pending ? PENDING_MESSAGE : null
         );
+    }
+
+    /** 월요일이 아닌 입력을 그 주의 월요일로 맞춘다. {@code null} 이면 지난주. */
+    private LocalDate normalizeToWeekStart(LocalDate requested, LocalDate fallback) {
+        return requested == null ? fallback : requested.with(DayOfWeek.MONDAY);
+    }
+
+    private void verifyWeekInRange(LocalDate weekStart, LocalDate lastWeekStart) {
+        // 아직 시작하지 않은 주차. 진행 중인 이번 주는 부분 집계로 허용한다.
+        if (weekStart.isAfter(lastWeekStart.plusWeeks(1))) {
+            throw new BusinessException(ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+        if (weekStart.isBefore(lastWeekStart.minusWeeks(WEEKLY_LOOKBACK_WEEKS - 1L))) {
+            throw new BusinessException(ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+    }
+
+    private void verifyMonthInRange(LocalDate monthStart, LocalDate lastMonthStart) {
+        if (monthStart.isAfter(lastMonthStart.plusMonths(1))) {
+            throw new BusinessException(ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
+        if (monthStart.isBefore(lastMonthStart.minusMonths(MONTHLY_LOOKBACK_MONTHS - 1L))) {
+            throw new BusinessException(ErrorCode.REPORT_PERIOD_OUT_OF_RANGE);
+        }
     }
 
     // ── 월간 리포트 ───────────────────────────────────────────────
 
+    /**
+     * 월간 리포트 조회.
+     *
+     * <p><b>주간과 달리 여기는 아직 조회 시점 LLM 호출이 남아 있다</b> — 월간은 선계산 테이블
+     * ({@code monthly_reports})도 배치도 없어서 저장분을 읽을 대상이 없기 때문이다.
+     * 이슈 #419 는 주간을 대상으로 하므로 여기서는 <b>조회 범위 제한만</b> 적용해
+     * "주차를 순회하며 LLM 을 무한정 태우는" 경로를 막는다. 월간의 배치 전환은 별건이다.
+     */
     public MonthlyReportResponse getMonthlyReport(UUID userId, LocalDate monthStart) {
-        final LocalDate resolvedStart = monthStart != null ? monthStart : resolveLastMonthStart();
+        final LocalDate lastMonthStart = resolveLastMonthStart();
+        final LocalDate resolvedStart =
+                (monthStart != null ? monthStart : lastMonthStart).withDayOfMonth(1);
         final LocalDate monthEnd = YearMonth.from(resolvedStart).atEndOfMonth();
+
+        verifyMonthInRange(resolvedStart, lastMonthStart);
 
         ReportDbData data = readOnlyTx.execute(status -> {
             verifyUserExists(userId);

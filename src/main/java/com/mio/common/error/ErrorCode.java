@@ -74,6 +74,8 @@ public enum ErrorCode {
 
     // Report
     REPORT_SERVER_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "SERVER_ERROR", "서버 오류로 리포트 조회에 실패했습니다."),
+    REPORT_PERIOD_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "REPORT_PERIOD_OUT_OF_RANGE",
+            "조회할 수 있는 기간이 아닙니다."),
 
     // Admin
     CRISIS_EVENT_NOT_FOUND(HttpStatus.NOT_FOUND, "NOT_FOUND", "존재하지 않는 위기 이벤트입니다."),
