@@ -13,6 +13,18 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * 리포트 내러티브 생성기.
+ *
+ * <p><b>현재 프로덕션 참조가 없다</b> (이슈 #419). 주간·월간 조회 경로가 모두 배치 저장분을
+ * 읽도록 바뀌면서 호출부가 사라졌고, 주간 내러티브는 {@code WeeklyReflectionJob} 이 자체
+ * 프롬프트로 생성한다.
+ *
+ * <p>삭제하지 않고 남겨 둔 이유는 <b>월간 내러티브 artifact 방식이 아직 확정되지 않았기
+ * 때문</b>이다 (API 명세 {@code 08_Report_리포트.md} — "별건으로 확정"). 월간 배치를 만들 때
+ * 이 클래스가 그대로 쓰인다. 그 결정이 "월간 내러티브를 두지 않는다" 로 나면 이 클래스와
+ * {@code ModelRole.REPORT_NARRATIVE} 를 함께 제거한다.
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j

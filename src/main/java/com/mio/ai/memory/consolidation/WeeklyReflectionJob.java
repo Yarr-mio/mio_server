@@ -7,6 +7,7 @@ import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.repository.UserSelfModelRepository;
+import com.mio.report.domain.ReportWeek;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,19 +16,33 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
 
 /**
- * Tier 3 Worker — 매주 일요일 자정 실행.
+ * Tier 3 Worker — 매주 월요일 04:00 KST 실행 (이슈 #419).
  *
  * 처리:
- * 1. 지난 7일 intervention_outcomes 집계 → effective_interventions 갱신
+ * 1. 지난 주 intervention_outcomes 집계 → effective_interventions 갱신
  * 2. recurring trigger_tags 집계
- * 3. GPT-4o-mini로 narrative / coaching_direction 생성
+ * 3. LLM 으로 narrative / coaching_direction 생성
  * 4. user_self_model 갱신 (사용자별 독립 트랜잭션)
  * 5. weekly_reports.narrative / coaching_direction UPDATE
+ *
+ * <p><b>실행 시각이 {@link com.mio.report.job.ReportAggregationJob}(월 03:00) 뒤여야 한다.</b>
+ * 5번이 UPDATE 이므로 대상 행이 먼저 존재해야 하는데, 그 행을 만드는 것이 집계 job 이다.
+ * 이전에는 일요일 00:00 에 돌아 <b>행이 생기기 28시간 전</b>에 UPDATE 를 시도했고,
+ * 게다가 {@code week_start} 를 {@code 오늘 - 7일}(= 일요일)로 계산해 월요일만 저장되는
+ * 컬럼과 영영 매칭되지 않았다. 두 원인이 겹쳐 UPDATE 가 항상 0 rows 였다
+ * (프로덕션 확인: {@code weekly_reports} 9행 중 narrative 0행).
+ *
+ * <p>주차 계산은 {@link ReportWeek} 로 통일한다 — 집계 job · 알림 게이트 · 리포트 조회가
+ * 모두 같은 헬퍼를 쓰므로, 여기만 다르면 같은 종류의 불일치가 다시 생긴다.
+ *
+ * <p>부수 효과로 일요일 00:00 의 {@code DailyReflectionJob} 동시 발화도 해소된다 —
+ * 두 잡 모두 LLM 을 구동하므로 같은 시각에 겹치면 2 vCPU 를 함께 물었다.
  */
 @Slf4j
 @Component
@@ -59,14 +74,23 @@ public class WeeklyReflectionJob {
     private final UserSelfModelRepository selfModelRepository;
     private final ObjectMapper objectMapper;
     private final MemoryConsentChecker memoryConsentChecker;
+    /** 실행 시각을 주입받아 비-월요일 실행도 테스트할 수 있게 한다 (이슈 #415 선례). */
+    private final Clock clock;
 
-    @Scheduled(cron = "0 0 0 * * SUN", zone = "Asia/Seoul")
+    @Scheduled(cron = "0 0 4 * * MON", zone = "Asia/Seoul")
     public void run() {
-        log.info("[WeeklyReflectionJob] start");
-        LocalDate weekStart = LocalDate.now(KST).minusDays(7);
-        LocalDate weekEnd = LocalDate.now(KST).minusDays(1);
+        // 집계 job(월 03:00)이 weekly_reports 행을 만든 뒤에 돌아야 5번 UPDATE 가 성립한다.
+        // 주차 계산도 그쪽과 같은 헬퍼를 써야 week_start 가 일치한다 (이슈 #419).
+        //
+        // weekEnd 가 필요한 이유: 집계 쿼리들이 하한만 걸고 있었는데, 이전 스케줄(일 00:00)은
+        // 실행 시각이 주 경계와 같아 "지금까지" 가 곧 상한 역할을 했다. 월 04:00 으로 옮기면
+        // 그 우연한 안전장치가 사라져 이번 주 00:00~04:00 데이터가 지난주 회고에 섞인다.
+        LocalDate weekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(clock));
+        LocalDate weekEnd = ReportWeek.weekEndOf(weekStart);
 
-        List<UUID> userIds = loadActiveUserIds(weekStart);
+        log.info("[WeeklyReflectionJob] start weekStart={} weekEnd={}", weekStart, weekEnd);
+
+        List<UUID> userIds = loadActiveUserIds(weekStart, weekEnd);
         log.info("[WeeklyReflectionJob] processing {} users", userIds.size());
 
         for (UUID userId : userIds) {
@@ -89,9 +113,9 @@ public class WeeklyReflectionJob {
         }
 
         // 집계 (읽기 전용, 트랜잭션 불필요)
-        Map<String, Double> effectiveMap = aggregateEffectiveInterventions(userId, weekStart);
-        List<String> recurringTriggers = aggregateRecurringTriggers(userId, weekStart);
-        List<String> dominantEmotions = aggregateDominantEmotions(userId, weekStart);
+        Map<String, Double> effectiveMap = aggregateEffectiveInterventions(userId, weekStart, weekEnd);
+        List<String> recurringTriggers = aggregateRecurringTriggers(userId, weekStart, weekEnd);
+        List<String> dominantEmotions = aggregateDominantEmotions(userId, weekStart, weekEnd);
 
         // LLM 호출 (트랜잭션 외부 — 커넥션 점유 방지)
         String context = buildContext(effectiveMap, recurringTriggers, dominantEmotions);
@@ -105,21 +129,23 @@ public class WeeklyReflectionJob {
         }
     }
 
-    private List<UUID> loadActiveUserIds(LocalDate weekStart) {
+    private List<UUID> loadActiveUserIds(LocalDate weekStart, LocalDate weekEnd) {
         try {
             return jdbcTemplate.query("""
                     SELECT DISTINCT user_id FROM sessions
-                    WHERE (started_at AT TIME ZONE 'Asia/Seoul')::date >= ? AND status = 'ended'
+                    WHERE (started_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND (started_at AT TIME ZONE 'Asia/Seoul')::date <= ?
+                      AND status = 'ended'
                     """,
                     (rs, i) -> (UUID) rs.getObject(1),
-                    weekStart);
+                    weekStart, weekEnd);
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] loadActiveUserIds failed: {}", e.getMessage());
             return List.of();
         }
     }
 
-    private Map<String, Double> aggregateEffectiveInterventions(UUID userId, LocalDate weekStart) {
+    private Map<String, Double> aggregateEffectiveInterventions(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
         Map<String, Double> result = new LinkedHashMap<>();
         try {
             jdbcTemplate.query("""
@@ -127,6 +153,7 @@ public class WeeklyReflectionJob {
                     FROM intervention_outcomes
                     WHERE user_id = ?
                       AND (created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND (created_at AT TIME ZONE 'Asia/Seoul')::date <= ?
                       AND delta IS NOT NULL
                     GROUP BY intervention_kind
                     ORDER BY avg_delta DESC
@@ -138,7 +165,7 @@ public class WeeklyReflectionJob {
                         }
                         return null;
                     },
-                    userId, weekStart);
+                    userId, weekStart, weekEnd);
         } catch (Exception e) {
             log.debug("[WeeklyReflectionJob] intervention aggregation failed: {}", e.getMessage());
         }
@@ -146,7 +173,7 @@ public class WeeklyReflectionJob {
     }
 
     // package-private: memory_status 필터 회귀를 실 DB 로 검증하려면 집계만 따로 불러야 한다.
-    List<String> aggregateRecurringTriggers(UUID userId, LocalDate weekStart) {
+    List<String> aggregateRecurringTriggers(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
         try {
             // memory_status 필터는 검색기 4곳과 같은 이유로 여기에도 필요하다 (이슈 #453 리뷰).
             // 주간 회고는 로그가 아니라 weekly_reports.narrative 로 사용자에게 그대로 노출되는
@@ -159,27 +186,29 @@ public class WeeklyReflectionJob {
                          UNNEST(ss.trigger_tags) t
                     WHERE ss.user_id = ?
                       AND (ss.created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND (ss.created_at AT TIME ZONE 'Asia/Seoul')::date <= ?
                       AND ss.memory_status = 'active'
                     GROUP BY t ORDER BY cnt DESC LIMIT 5
                     """,
                     (rs, i) -> rs.getString("trigger"),
-                    userId, weekStart);
+                    userId, weekStart, weekEnd);
         } catch (Exception e) {
             return List.of();
         }
     }
 
-    private List<String> aggregateDominantEmotions(UUID userId, LocalDate weekStart) {
+    private List<String> aggregateDominantEmotions(UUID userId, LocalDate weekStart, LocalDate weekEnd) {
         try {
             return jdbcTemplate.query("""
                     SELECT primary_emotion, COUNT(*) AS cnt
                     FROM emotional_states
                     WHERE user_id = ?
                       AND (created_at AT TIME ZONE 'Asia/Seoul')::date >= ?
+                      AND (created_at AT TIME ZONE 'Asia/Seoul')::date <= ?
                     GROUP BY primary_emotion ORDER BY cnt DESC LIMIT 3
                     """,
                     (rs, i) -> rs.getString("primary_emotion"),
-                    userId, weekStart);
+                    userId, weekStart, weekEnd);
         } catch (Exception e) {
             return List.of();
         }
@@ -231,7 +260,15 @@ public class WeeklyReflectionJob {
                     WHERE user_id = ? AND week_start = ?
                     """,
                     narrative, coachingDirection, userId, weekStart);
-            log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+            if (rows == 0) {
+                // 이 상태가 이슈 #419 의 증상이었다 — debug 로 남기면 "LLM 을 부르고 버리는"
+                // 상태가 조용히 유지된다. 집계 job 미실행·week_start 불일치를 즉시 드러낸다.
+                log.warn("[WeeklyReflectionJob] report row not found — narrative discarded."
+                        + " userId={} weekStart={} (ReportAggregationJob 이 먼저 실행됐는지 확인)",
+                        userId, weekStart);
+            } else {
+                log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+            }
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] report update failed userId={}: {}", userId, e.getMessage());
         }

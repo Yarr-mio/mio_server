@@ -37,11 +37,14 @@ class WeeklyReflectionMemoryStatusIntegrationTest {
 
     private UUID userId;
     private LocalDate weekStart;
+    private LocalDate weekEnd;
 
     @BeforeEach
     void setUp() {
         userId = UUID.randomUUID();
         weekStart = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(6);
+        // 집계에 상한이 생겼다 (이슈 #419). 오늘 삽입한 요약이 구간에 들어오도록 상한을 오늘로 둔다.
+        weekEnd = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
         jdbcTemplate.update(
                 "INSERT INTO users (id, social_provider, social_id) VALUES (?, 'kakao', ?)",
@@ -55,7 +58,7 @@ class WeeklyReflectionMemoryStatusIntegrationTest {
     @Test
     @DisplayName("주간 트리거 집계는 active 기억만 회수한다 — disabled·corrected 는 0건")
     void aggregateRecurringTriggers_excludesDisabledAndCorrectedMemories() {
-        List<String> triggers = weeklyReflectionJob.aggregateRecurringTriggers(userId, weekStart);
+        List<String> triggers = weeklyReflectionJob.aggregateRecurringTriggers(userId, weekStart, weekEnd);
 
         assertThat(triggers).containsExactly(ACTIVE_TRIGGER);
         assertThat(triggers).doesNotContain(DISABLED_TRIGGER, CORRECTED_TRIGGER);
@@ -67,7 +70,7 @@ class WeeklyReflectionMemoryStatusIntegrationTest {
         jdbcTemplate.update(
                 "UPDATE session_summaries SET memory_status = 'disabled' WHERE user_id = ?", userId);
 
-        assertThat(weeklyReflectionJob.aggregateRecurringTriggers(userId, weekStart)).isEmpty();
+        assertThat(weeklyReflectionJob.aggregateRecurringTriggers(userId, weekStart, weekEnd)).isEmpty();
     }
 
     private void insertSummary(String triggerTag, String memoryStatus) {
