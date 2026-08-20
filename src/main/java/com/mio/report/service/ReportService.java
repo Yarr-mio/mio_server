@@ -1,6 +1,7 @@
 package com.mio.report.service;
 
 import com.mio.common.AppConstants;
+import com.mio.report.domain.NarrativeStatus;
 import com.mio.report.domain.ReportWeek;
 import com.mio.report.domain.WeeklyReport;
 import com.mio.report.repository.WeeklyReportRepository;
@@ -53,9 +54,6 @@ public class ReportService {
     private static final int WEEKLY_LOOKBACK_WEEKS = 26;
     private static final int MONTHLY_LOOKBACK_MONTHS = 6;
 
-    private static final String PENDING_MESSAGE =
-            "주간 요약을 준비하고 있어요. 잠시 후 다시 확인해 주세요.";
-
     private static final Map<String, String> BIAS_LABELS = Map.of(
             "overgeneralization",  "과일반화",
             "catastrophizing",     "파국화",
@@ -65,13 +63,15 @@ public class ReportService {
             "emotional_reasoning", "감정적 추론"
     );
 
+    // ReportNarrativeService 는 더 이상 주입하지 않는다 (이슈 #419). 의존을 남겨 두면
+    // "저장분이 없을 때만 생성" 같은 되돌림이 한 줄로 가능해지는데, 그 순간 기간을 순회하며
+    // LLM 을 무한정 태우는 경로가 다시 열린다. 되돌리려면 생성자를 바꿔야 하도록 둔다.
     private final CheckinRepository checkinRepository;
     private final MessageRepository messageRepository;
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
     private final WeeklyReportRepository weeklyReportRepository;
-    private final ReportNarrativeService reportNarrativeService;
     private final PlatformTransactionManager txManager;
 
     private TransactionTemplate readOnlyTx;
@@ -170,23 +170,40 @@ public class ReportService {
         }
 
         StoredNarrative stored = lookup.stored();
-        // 배치가 아직 채울 기회가 남은 주차만 PENDING 이다. 그보다 과거 주차는 내러티브가
-        // 영영 생기지 않으므로 PENDING 으로 두면 FE 가 무한히 로딩 UI 를 띄우게 된다.
-        boolean pending = !stored.hasText() && resolvedStart.equals(lastWeekStart);
 
         return new WeeklyReportResponse(
                 stored.reportId(), data.periodStart(), data.periodEnd(),
-                pending ? WeeklyReport.STATUS_PENDING : WeeklyReport.STATUS_GENERATED,
+                // core status 는 집계가 제공 가능한지만 말한다. 내러티브 부재가 리포트 전체를
+                // PENDING 으로 만들면 클라이언트가 집계까지 못 그린다 (명세 v1.1).
+                WeeklyReport.STATUS_GENERATED,
                 stored.partial(),
                 data.checkinCount(), null,
                 data.avgEmotionScore(),
                 data.distortionTop3(),
+                resolveNarrativeStatus(stored, resolvedStart, lastWeekStart),
                 stored.narrative(), stored.coachingDirection(),
                 data.todoSummary(),
                 data.sessionSummary(),
-                stored.generatedAt(),
-                pending ? PENDING_MESSAGE : null
+                // 저장 artifact 가 있으면 그 생성 시각, 없으면 이 집계 snapshot 시각.
+                stored.generatedAt() != null ? stored.generatedAt() : OffsetDateTime.now(ZoneOffset.UTC),
+                null
         );
+    }
+
+    /**
+     * 내러티브 상태 판정. {@code PENDING} 과 {@code UNAVAILABLE} 을 나누는 기준은
+     * <b>"기다리면 채워지는가"</b> 다.
+     *
+     * <p>지난 주차는 월요일 배치가 아직 돌 기회가 남아 있지만, 그보다 과거 주차는 배치 대상이
+     * 아니라 영영 채워지지 않는다. 둘을 구분하지 않으면 클라이언트가 과거 리포트에서 무한히
+     * 로딩 UI 를 띄우게 된다.
+     */
+    private NarrativeStatus resolveNarrativeStatus(
+            StoredNarrative stored, LocalDate resolvedStart, LocalDate lastWeekStart) {
+        if (stored.hasText()) {
+            return NarrativeStatus.READY;
+        }
+        return resolvedStart.equals(lastWeekStart) ? NarrativeStatus.PENDING : NarrativeStatus.UNAVAILABLE;
     }
 
     /** 월요일이 아닌 입력을 그 주의 월요일로 맞춘다. {@code null} 이면 지난주. */
@@ -218,10 +235,10 @@ public class ReportService {
     /**
      * 월간 리포트 조회.
      *
-     * <p><b>주간과 달리 여기는 아직 조회 시점 LLM 호출이 남아 있다</b> — 월간은 선계산 테이블
-     * ({@code monthly_reports})도 배치도 없어서 저장분을 읽을 대상이 없기 때문이다.
-     * 이슈 #419 는 주간을 대상으로 하므로 여기서는 <b>조회 범위 제한만</b> 적용해
-     * "주차를 순회하며 LLM 을 무한정 태우는" 경로를 막는다. 월간의 배치 전환은 별건이다.
+     * <p>주간과 마찬가지로 <b>LLM 을 호출하지 않는다.</b> 다만 월간은 선계산 테이블
+     * ({@code monthly_reports})도 배치도 없어 읽을 artifact 자체가 없으므로, 내러티브는 항상
+     * {@code null} 이고 {@code narrative_status} 는 {@code unavailable} 이다 (명세 v1.1).
+     * 월간 내러티브를 어떤 artifact 로 만들지는 별건으로 확정한다.
      */
     public MonthlyReportResponse getMonthlyReport(UUID userId, LocalDate monthStart) {
         final LocalDate lastMonthStart = resolveLastMonthStart();
@@ -255,16 +272,14 @@ public class ReportService {
             return MonthlyReportResponse.insufficientData(data.periodStart(), data.periodEnd(), data.checkinCount());
         }
 
-        // DB 커넥션 반납 후 LLM 호출
-        ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
-
+        // monthly_reports 저장소가 없으므로 반환할 내러티브 artifact 자체가 없다.
+        // 여기서 생성하면 "GET 에서 LLM 을 부르지 않는다" 는 계약을 월간만 깨게 된다.
         return new MonthlyReportResponse(
                 null, data.periodStart(), data.periodEnd(), "GENERATED", false,
                 data.checkinCount(), null,
                 data.avgEmotionScore(),
                 data.distortionTop3(),
-                narrative.narrative(), narrative.coachingDirection(),
+                NarrativeStatus.UNAVAILABLE, null, null,
                 data.todoSummary(),
                 data.sessionSummary(),
                 OffsetDateTime.now(ZoneOffset.UTC), null

@@ -2,6 +2,7 @@ package com.mio.report.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.mio.report.domain.NarrativeStatus;
 import com.mio.report.dto.ReportCommonDto.DistortionDto;
 import com.mio.report.dto.ReportCommonDto.SessionSummaryDto;
 import com.mio.report.dto.ReportCommonDto.TodoSummaryDto;
@@ -22,6 +23,7 @@ public record MonthlyReportResponse(
         @JsonProperty("required_count") Integer requiredCount,
         @JsonProperty("avg_emotion_score") Double avgEmotionScore,
         @JsonProperty("distortion_top3") List<DistortionDto> distortionTop3,
+        @JsonProperty("narrative_status") NarrativeStatus narrativeStatus,
         String narrative,
         @JsonProperty("coaching_direction") String coachingDirection,
         @JsonProperty("todo_summary") TodoSummaryDto todoSummary,
@@ -31,7 +33,8 @@ public record MonthlyReportResponse(
 ) {
     public static MonthlyReportResponse insufficientData(LocalDate monthStart, LocalDate monthEnd, int checkinCount) {
         return new MonthlyReportResponse(null, monthStart, monthEnd, "INSUFFICIENT_DATA",
-                null, checkinCount, 7, null, null, null, null, null, null, null,
+                null, checkinCount, 7, null, null,
+                NarrativeStatus.UNAVAILABLE, null, null, null, null, null,
                 "아직 기록이 부족해요. 체크인을 7회 이상 완료하면 월간 리포트를 볼 수 있어요.");
     }
 }

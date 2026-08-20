@@ -4,6 +4,7 @@ import com.mio.checkin.repository.CheckinRepository;
 import com.mio.common.AppConstants;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.report.domain.NarrativeStatus;
 import com.mio.report.domain.ReportWeek;
 import com.mio.report.domain.WeeklyReport;
 import com.mio.report.dto.WeeklyReportResponse;
@@ -36,7 +37,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -46,9 +46,10 @@ import static org.mockito.Mockito.when;
  * 호출되면서 문장이 매번 달라졌고, 정작 API 명세는 "항상 null" 이라고 안내해 FE 가 그 값을
  * 표시하지 않았다 — 비용만 나가고 아무에게도 닿지 않는 호출이었다.
  *
- * <p>가장 중요한 단언은 {@code verifyNoInteractions(reportNarrativeService)} 다.
- * 응답 필드만 검사하면 누군가 "저장분이 없을 때만 생성" 을 되살려도 통과해 버리고,
- * 그 순간 주차 순회를 통한 비용 DoS 경로가 다시 열린다.
+ * <p>되돌림 방지는 테스트가 아니라 구조로 건다 — {@code ReportService} 에서
+ * {@code ReportNarrativeService} 의존 자체를 걷어냈다. "저장분이 없을 때만 생성" 을
+ * 되살리려면 생성자를 바꿔야 하므로 리뷰에서 반드시 눈에 띈다. 여기서는 관측 가능한
+ * 계약(내러티브 출처와 {@code narrative_status} 판정)을 고정한다.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -63,7 +64,6 @@ class ReportServiceWeeklyReadTest {
     @Mock private BehaviorTaskRepository behaviorTaskRepository;
     @Mock private UserRepository userRepository;
     @Mock private WeeklyReportRepository weeklyReportRepository;
-    @Mock private ReportNarrativeService reportNarrativeService;
     @Mock private PlatformTransactionManager txManager;
 
     private ReportService service;
@@ -76,8 +76,7 @@ class ReportServiceWeeklyReadTest {
         lastWeekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(AppConstants.ZONE));
 
         service = new ReportService(checkinRepository, messageRepository, sessionRepository,
-                behaviorTaskRepository, userRepository, weeklyReportRepository,
-                reportNarrativeService, txManager);
+                behaviorTaskRepository, userRepository, weeklyReportRepository, txManager);
 
         // @PostConstruct 가 만드는 readOnlyTx 를 콜백 실행만 하는 스텁으로 대체한다.
         TransactionTemplate tx = mock(TransactionTemplate.class);
@@ -95,7 +94,7 @@ class ReportServiceWeeklyReadTest {
     class NarrativeSource {
 
         @Test
-        void 저장분이_있으면_그_값을_그대로_반환하고_LLM_을_부르지_않는다() {
+        void 저장분이_있으면_그_값을_그대로_반환한다() {
             storedReport(lastWeekStart, "이번 주는 불안이 줄었어요.", "다음 주엔 산책을 늘려봐요.");
 
             WeeklyReportResponse response = service.getWeeklyReport(userId, lastWeekStart);
@@ -103,18 +102,18 @@ class ReportServiceWeeklyReadTest {
             assertThat(response.narrative()).isEqualTo("이번 주는 불안이 줄었어요.");
             assertThat(response.coachingDirection()).isEqualTo("다음 주엔 산책을 늘려봐요.");
             assertThat(response.status()).isEqualTo(WeeklyReport.STATUS_GENERATED);
-            verifyNoInteractions(reportNarrativeService);
+            assertThat(response.narrativeStatus()).isEqualTo(NarrativeStatus.READY);
         }
 
         @Test
-        void 저장분이_없어도_LLM_으로_생성하지_않는다() {
+        void 저장분이_없으면_내러티브는_null_이다() {
             when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
                     .thenReturn(Optional.empty());
 
             WeeklyReportResponse response = service.getWeeklyReport(userId, lastWeekStart);
 
             assertThat(response.narrative()).isNull();
-            verifyNoInteractions(reportNarrativeService);
+            assertThat(response.coachingDirection()).isNull();
         }
 
         @Test
@@ -132,31 +131,41 @@ class ReportServiceWeeklyReadTest {
     }
 
     @Nested
-    @DisplayName("status 판정")
-    class StatusRule {
+    @DisplayName("narrative_status 판정 — core status 와 독립")
+    class NarrativeStatusRule {
 
         @Test
-        void 지난주인데_아직_안_채워졌으면_PENDING() {
+        void 지난주인데_아직_안_채워졌으면_pending() {
             when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
                     .thenReturn(Optional.empty());
 
             WeeklyReportResponse response = service.getWeeklyReport(userId, lastWeekStart);
 
-            assertThat(response.status()).isEqualTo(WeeklyReport.STATUS_PENDING);
-            assertThat(response.message()).isNotBlank();
+            assertThat(response.narrativeStatus()).isEqualTo(NarrativeStatus.PENDING);
         }
 
         @Test
-        void 더_과거_주차는_영영_안_채워지므로_PENDING_이_아니다() {
+        void 더_과거_주차는_영영_안_채워지므로_unavailable() {
             LocalDate olderWeek = lastWeekStart.minusWeeks(3);
             when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
                     .thenReturn(Optional.empty());
 
             WeeklyReportResponse response = service.getWeeklyReport(userId, olderWeek);
 
-            // PENDING 으로 두면 FE 가 무한히 로딩 UI 를 띄운다.
+            // pending 으로 두면 FE 가 과거 리포트에서 무한히 로딩 UI 를 띄운다.
+            assertThat(response.narrativeStatus()).isEqualTo(NarrativeStatus.UNAVAILABLE);
+        }
+
+        @Test
+        void 내러티브가_없어도_core_status_는_GENERATED_다() {
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+
+            WeeklyReportResponse response = service.getWeeklyReport(userId, lastWeekStart);
+
+            // 내러티브 부재가 리포트 전체를 PENDING 으로 만들면 집계까지 못 그린다 (명세 v1.1).
             assertThat(response.status()).isEqualTo(WeeklyReport.STATUS_GENERATED);
-            assertThat(response.narrative()).isNull();
+            assertThat(response.checkinCount()).isEqualTo(ENOUGH_CHECKINS);
         }
     }
 
