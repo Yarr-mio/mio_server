@@ -25,6 +25,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.Set;
 import java.util.UUID;
 
@@ -135,6 +136,92 @@ class ContextPreWarmerTest {
         assertThat(context.text()).isEqualTo("lexical memory");
         assertThat(elapsedMs).isLessThan(700);
         verify(lexicalRetriever).retrieveByKeywords(userId, "발표가 걱정돼", 3);
+    }
+
+    @Test
+    void 대기_상한_초과는_일반_실패와_다른_outcome_으로_계측된다() {
+        stubSlowEmbedding("상한 초과", 800);
+
+        preWarmer.buildContextSync(sessionId, userId, combined, profile, "상한 초과");
+
+        // 두 값이 합쳐져 있으면 지표만 보고 "외부 장애" 와 "상한이 짧다" 를 구별할 수 없다.
+        assertThat(retrievalOutcomeCount("timeout")).isEqualTo(1);
+        assertThat(retrievalOutcomeCount("failed")).isZero();
+    }
+
+    @Test
+    void 일반_실패는_여전히_failed_로_계측된다() {
+        RetrievalPlan plan = new RetrievalPlan(
+                List.of(RetrievalSource.VECTOR_EPISODE, RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(embeddingClient.embed(eq("외부 장애"), any(), any(), any()))
+                .thenThrow(new RuntimeException("upstream down"));
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("memory");
+
+        preWarmer.buildContextSync(sessionId, userId, combined, profile, "외부 장애");
+
+        assertThat(retrievalOutcomeCount("failed")).isEqualTo(1);
+        assertThat(retrievalOutcomeCount("timeout")).isZero();
+    }
+
+    @Test
+    void 버려진_호출의_왕복_시간도_기록된다() {
+        stubSlowEmbedding("버려진 호출", 600);
+
+        preWarmer.buildContextSync(sessionId, userId, combined, profile, "버려진 호출");
+
+        // 호출자는 250ms 에 포기했지만 임베딩 자체는 계속 돌아 완료된다.
+        // 그 표본이야말로 "상한을 얼마로 올려야 하는가" 의 유일한 근거다 —
+        // 여기서 기록이 없으면 타임아웃 카운터만 남아 260ms 인지 3초인지 알 수 없다.
+        awaitEmbeddingWaitSamples(1);
+        assertThat(embeddingWaitTimer().totalTime(TimeUnit.MILLISECONDS))
+                .as("버려진 호출의 실제 왕복 시간이 상한보다 크게 기록돼야 한다")
+                .isGreaterThan(500);
+    }
+
+    /** 상한(250ms)을 넘겨 완료되는 임베딩. 호출자는 포기하고 어휘 검색으로 계속한다. */
+    private void stubSlowEmbedding(String queryText, long embedMillis) {
+        RetrievalPlan plan = new RetrievalPlan(
+                List.of(RetrievalSource.VECTOR_EPISODE, RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(embeddingClient.embed(eq(queryText), any(), any(), any())).thenAnswer(invocation -> {
+            Thread.sleep(embedMillis);
+            return new float[]{0.1f};
+        });
+        when(lexicalRetriever.retrieveByKeywords(userId, queryText, 3)).thenReturn(List.of());
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of());
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("memory");
+    }
+
+    private double retrievalOutcomeCount(String outcome) {
+        io.micrometer.core.instrument.Counter counter = meterRegistry.find("mio.retrieval.outcome")
+                .tag("source", RetrievalSource.VECTOR_EPISODE.name())
+                .tag("outcome", outcome)
+                .counter();
+        return counter == null ? 0d : counter.count();
+    }
+
+    private io.micrometer.core.instrument.Timer embeddingWaitTimer() {
+        return meterRegistry.find("mio.retrieval.embedding.wait").timer();
+    }
+
+    /** 임베딩은 호출자가 포기한 뒤에 끝나므로, 표본이 들어올 때까지 짧게 기다린다. */
+    private void awaitEmbeddingWaitSamples(long expected) {
+        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+        while (System.nanoTime() < deadline) {
+            io.micrometer.core.instrument.Timer timer = embeddingWaitTimer();
+            if (timer != null && timer.count() >= expected) {
+                return;
+            }
+            try {
+                Thread.sleep(25);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new AssertionError("임베딩 왕복 시간 표본이 기록되지 않았다 — 버려진 호출의 계측이 유실됐다");
     }
 
     @Test
