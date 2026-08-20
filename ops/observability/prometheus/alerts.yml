@@ -88,7 +88,7 @@ groups:
           severity: warning
         annotations:
           summary: "임베딩 대기 상한 초과율이 20% 초과 — 벡터 검색이 버려지고 있다"
-          description: "턴 크리티컬 패스의 임베딩 대기 상한을 넘겨 벡터 검색 없이 응답하고 있습니다. 회상 품질이 조용히 떨어지는 경로입니다. 상한을 얼마로 올려야 하는지는 실제 왕복 분포로 판단하십시오 — histogram_quantile(0.95, sum(rate(mio_retrieval_embedding_wait_seconds_bucket[30m])) by (le))."
+          description: "턴 크리티컬 패스의 임베딩 대기 상한을 넘겨 벡터 검색 없이 응답하고 있습니다. 회상 품질이 조용히 떨어지는 경로입니다. 상한을 얼마로 올려야 하는지는 실제 왕복 분포로 판단하십시오 — histogram_quantile(0.95, sum(rate(mio_retrieval_embedding_wait_seconds_bucket{outcome='success'}[30m])) by (le))."
 
       - alert: MioContractViolationRatioHigh
         expr: sum(increase(mio_ai_contract_results_total{result="violated"}[15m])) / clamp_min(sum(increase(mio_ai_contract_results_total[15m])), 1) > 0.20 and sum(increase(mio_ai_contract_results_total[15m])) >= 20

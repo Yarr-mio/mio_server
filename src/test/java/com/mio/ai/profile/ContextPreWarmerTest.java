@@ -17,13 +17,18 @@ import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.memory.retrieval.MemoryContextResult;
 import com.mio.ai.memory.retrieval.MemoryContextStatus;
 import com.mio.session.repository.SessionCheckpointRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.Set;
@@ -33,6 +38,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -66,6 +73,8 @@ class ContextPreWarmerTest {
         preWarmer = new ContextPreWarmer(structuredRetriever, vectorRetriever, lexicalRetriever, embeddingClient,
                 fusionRanker, contextComposer, planner, safetyProfileBuilder, checkpointRepository,
                 redisTemplate, jdbcTemplate, workingMemory, ontologyRelationExpander, meterRegistry);
+        // Spring 컨텍스트 없이 생성하므로 @PostConstruct 가 돌지 않는다.
+        preWarmer.initEmbeddingWaitTimers();
         sessionId = UUID.randomUUID();
         userId = UUID.randomUUID();
         combined = mock(CombinedSignal.class);
@@ -174,10 +183,40 @@ class ContextPreWarmerTest {
         // 호출자는 250ms 에 포기했지만 임베딩 자체는 계속 돌아 완료된다.
         // 그 표본이야말로 "상한을 얼마로 올려야 하는가" 의 유일한 근거다 —
         // 여기서 기록이 없으면 타임아웃 카운터만 남아 260ms 인지 3초인지 알 수 없다.
-        awaitEmbeddingWaitSamples(1);
-        assertThat(embeddingWaitTimer().totalTime(TimeUnit.MILLISECONDS))
+        // 성공·실패를 태그로 나눈다 — 상한을 정하는 근거는 성공한 호출의 분포다.
+        awaitEmbeddingWaitSamples("success", 1L);
+        assertThat(embeddingWaitTimer("success").totalTime(TimeUnit.MILLISECONDS))
                 .as("버려진 호출의 실제 왕복 시간이 상한보다 크게 기록돼야 한다")
                 .isGreaterThan(500);
+    }
+
+    @Test
+    void 계측이_실패해도_임베딩_결과를_덮지_않는다() {
+        RetrievalPlan plan = new RetrievalPlan(
+                List.of(RetrievalSource.VECTOR_EPISODE, RetrievalSource.LEXICAL_EPISODE), 3, 200, "normal");
+        float[] embedding = {0.1f, 0.2f};
+        RetrievedItem episode = new RetrievedItem("episode-9", RetrievalSource.VECTOR_EPISODE,
+                "계측 실패", "normal", 0.9, 1);
+        when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
+        when(embeddingClient.embed(eq("계측 실패"), any(), any(), any())).thenReturn(embedding);
+        when(vectorRetriever.retrieveEpisodes(userId, embedding, 3)).thenReturn(List.of(episode));
+        when(lexicalRetriever.retrieveByKeywords(userId, "계측 실패", 3)).thenReturn(List.of());
+        when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
+        when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("live memory");
+
+        Timer broken = mock(Timer.class);
+        doThrow(new IllegalStateException("metrics down")).when(broken).record(anyLong(), any());
+        ReflectionTestUtils.setField(preWarmer, "embeddingWaitSuccessTimer", broken);
+
+        MemoryContextResult context = preWarmer.buildContextSync(sessionId, userId, combined, profile, "계측 실패");
+
+        // finally 안에서 예외가 새어 나가면 자바 의미론상 그 예외가 반환값을 대체한다.
+        // 그러면 성공한 임베딩이 outcome=failed 로 오분류돼 버려진다 —
+        // 이 클래스가 없애려는 문제를 관측 코드가 다시 만드는 셈이다.
+        assertThat(context.text()).isEqualTo("live memory");
+        verify(vectorRetriever).retrieveEpisodes(userId, embedding, 3);
+        assertThat(retrievalOutcomeCount("failed")).isZero();
+        assertThat(retrievalOutcomeCount("timeout")).isZero();
     }
 
     /** 상한(250ms)을 넘겨 완료되는 임베딩. 호출자는 포기하고 어휘 검색으로 계속한다. */
@@ -195,33 +234,27 @@ class ContextPreWarmerTest {
     }
 
     private double retrievalOutcomeCount(String outcome) {
-        io.micrometer.core.instrument.Counter counter = meterRegistry.find("mio.retrieval.outcome")
+        Counter counter = meterRegistry.find("mio.retrieval.outcome")
                 .tag("source", RetrievalSource.VECTOR_EPISODE.name())
                 .tag("outcome", outcome)
                 .counter();
         return counter == null ? 0d : counter.count();
     }
 
-    private io.micrometer.core.instrument.Timer embeddingWaitTimer() {
-        return meterRegistry.find("mio.retrieval.embedding.wait").timer();
+    private Timer embeddingWaitTimer(String outcome) {
+        return meterRegistry.find("mio.retrieval.embedding.wait").tag("outcome", outcome).timer();
     }
 
     /** 임베딩은 호출자가 포기한 뒤에 끝나므로, 표본이 들어올 때까지 짧게 기다린다. */
-    private void awaitEmbeddingWaitSamples(long expected) {
-        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
-        while (System.nanoTime() < deadline) {
-            io.micrometer.core.instrument.Timer timer = embeddingWaitTimer();
-            if (timer != null && timer.count() >= expected) {
-                return;
-            }
-            try {
-                Thread.sleep(25);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        throw new AssertionError("임베딩 왕복 시간 표본이 기록되지 않았다 — 버려진 호출의 계측이 유실됐다");
+    private void awaitEmbeddingWaitSamples(String outcome, long expected) {
+        Awaitility.await()
+                .atMost(Duration.ofSeconds(5))
+                .pollInterval(Duration.ofMillis(25))
+                .untilAsserted(() -> assertThat(embeddingWaitTimer(outcome))
+                        .as("버려진 호출의 왕복 시간 표본이 기록돼야 한다")
+                        .isNotNull()
+                        .extracting(Timer::count)
+                        .isEqualTo(expected));
     }
 
     @Test
