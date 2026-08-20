@@ -7,6 +7,7 @@ import com.mio.ai.llm.ModelRole;
 import com.mio.ai.llm.LlmClient;
 import com.mio.ai.llm.LlmRequest;
 import com.mio.ai.repository.UserSelfModelRepository;
+import com.mio.report.domain.ReportWeek;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -15,19 +16,33 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.*;
 
 /**
- * Tier 3 Worker — 매주 일요일 자정 실행.
+ * Tier 3 Worker — 매주 월요일 04:00 KST 실행 (이슈 #419).
  *
  * 처리:
- * 1. 지난 7일 intervention_outcomes 집계 → effective_interventions 갱신
+ * 1. 지난 주 intervention_outcomes 집계 → effective_interventions 갱신
  * 2. recurring trigger_tags 집계
- * 3. GPT-4o-mini로 narrative / coaching_direction 생성
+ * 3. LLM 으로 narrative / coaching_direction 생성
  * 4. user_self_model 갱신 (사용자별 독립 트랜잭션)
  * 5. weekly_reports.narrative / coaching_direction UPDATE
+ *
+ * <p><b>실행 시각이 {@link com.mio.report.job.ReportAggregationJob}(월 03:00) 뒤여야 한다.</b>
+ * 5번이 UPDATE 이므로 대상 행이 먼저 존재해야 하는데, 그 행을 만드는 것이 집계 job 이다.
+ * 이전에는 일요일 00:00 에 돌아 <b>행이 생기기 28시간 전</b>에 UPDATE 를 시도했고,
+ * 게다가 {@code week_start} 를 {@code 오늘 - 7일}(= 일요일)로 계산해 월요일만 저장되는
+ * 컬럼과 영영 매칭되지 않았다. 두 원인이 겹쳐 UPDATE 가 항상 0 rows 였다
+ * (프로덕션 확인: {@code weekly_reports} 9행 중 narrative 0행).
+ *
+ * <p>주차 계산은 {@link ReportWeek} 로 통일한다 — 집계 job · 알림 게이트 · 리포트 조회가
+ * 모두 같은 헬퍼를 쓰므로, 여기만 다르면 같은 종류의 불일치가 다시 생긴다.
+ *
+ * <p>부수 효과로 일요일 00:00 의 {@code DailyReflectionJob} 동시 발화도 해소된다 —
+ * 두 잡 모두 LLM 을 구동하므로 같은 시각에 겹치면 2 vCPU 를 함께 물었다.
  */
 @Slf4j
 @Component
@@ -59,12 +74,17 @@ public class WeeklyReflectionJob {
     private final UserSelfModelRepository selfModelRepository;
     private final ObjectMapper objectMapper;
     private final MemoryConsentChecker memoryConsentChecker;
+    /** 실행 시각을 주입받아 비-월요일 실행도 테스트할 수 있게 한다 (이슈 #415 선례). */
+    private final Clock clock;
 
-    @Scheduled(cron = "0 0 0 * * SUN", zone = "Asia/Seoul")
+    @Scheduled(cron = "0 0 4 * * MON", zone = "Asia/Seoul")
     public void run() {
-        log.info("[WeeklyReflectionJob] start");
-        LocalDate weekStart = LocalDate.now(KST).minusDays(7);
-        LocalDate weekEnd = LocalDate.now(KST).minusDays(1);
+        // 집계 job(월 03:00)이 weekly_reports 행을 만든 뒤에 돌아야 5번 UPDATE 가 성립한다.
+        // 주차 계산도 그쪽과 같은 헬퍼를 써야 week_start 가 일치한다 (이슈 #419).
+        LocalDate weekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(clock));
+        LocalDate weekEnd = ReportWeek.weekEndOf(weekStart);
+
+        log.info("[WeeklyReflectionJob] start weekStart={} weekEnd={}", weekStart, weekEnd);
 
         List<UUID> userIds = loadActiveUserIds(weekStart);
         log.info("[WeeklyReflectionJob] processing {} users", userIds.size());
@@ -231,7 +251,15 @@ public class WeeklyReflectionJob {
                     WHERE user_id = ? AND week_start = ?
                     """,
                     narrative, coachingDirection, userId, weekStart);
-            log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+            if (rows == 0) {
+                // 이 상태가 이슈 #419 의 증상이었다 — debug 로 남기면 "LLM 을 부르고 버리는"
+                // 상태가 조용히 유지된다. 집계 job 미실행·week_start 불일치를 즉시 드러낸다.
+                log.warn("[WeeklyReflectionJob] report row not found — narrative discarded."
+                        + " userId={} weekStart={} (ReportAggregationJob 이 먼저 실행됐는지 확인)",
+                        userId, weekStart);
+            } else {
+                log.debug("[WeeklyReflectionJob] updated report rows={} userId={}", rows, userId);
+            }
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] report update failed userId={}: {}", userId, e.getMessage());
         }
