@@ -103,6 +103,7 @@ class NotificationServiceTest {
     void setUp() {
         fixedClock = Clock.fixed(Instant.parse("2026-05-26T00:00:00Z"), ZoneOffset.of("+09:00"));
         notificationService = new NotificationService(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 fixedClock,
                 userRepository,
                 deviceTokenRepository,
@@ -145,6 +146,76 @@ class NotificationServiceTest {
 
         assertThat(token.isValid()).isFalse();
         verify(deviceTokenRepository).save(token);
+    }
+
+    @Test
+    @DisplayName("연속 실패 상한에 도달한 토큰은 발송 대상에서 빠진다 (#497)")
+    void sendTestNotification_skipsTokenAtFailureCap() {
+        DeviceToken token = tokenAtFailureCap();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+
+        notificationService.sendTestNotification(userId, "제목", "본문");
+
+        // 죽은 토큰 하나가 5분마다 APNs 를 두드리던 것이 이 지점에서 끊긴다.
+        verify(pushSender, never()).send(anyString(), anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    @DisplayName("상한에 도달해도 토큰을 무효화하지는 않는다 (#497)")
+    void sendTestNotification_doesNotInvalidateTokenAtFailureCap() {
+        DeviceToken token = tokenAtFailureCap();
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+
+        notificationService.sendTestNotification(userId, "제목", "본문");
+
+        // 무효화하면 apns-topic 설정 오류가 고쳐져도 스스로 회복되지 못한다 (#411, #418).
+        assertThat(token.isValid()).isTrue();
+    }
+
+    @Test
+    @DisplayName("쿨다운이 지난 토큰은 다시 발송을 시도한다 (#497)")
+    void sendTestNotification_retriesTokenAfterCooldown() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user)
+                .deviceId("device-1")
+                .platform("ios")
+                .token("abcd1234")
+                .build();
+        // 상한에 도달했지만 마지막 실패가 쿨다운보다 오래됐다.
+        OffsetDateTime longAgo = OffsetDateTime.now(fixedClock)
+                .minus(DeviceToken.FAILURE_COOLDOWN).minusHours(1);
+        for (int i = 0; i < DeviceToken.MAX_CONSECUTIVE_FAILURES; i++) {
+            token.recordSendFailure("APNS_400:DeviceTokenNotForTopic", longAgo);
+        }
+
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+        when(deviceTokenRepository.findByUser_IdAndIsValidTrue(userId)).thenReturn(List.of(token));
+        when(pushSender.send("abcd1234", "ios", "제목", "본문", Map.of()))
+                .thenReturn(PushSendResult.sent());
+
+        notificationService.sendTestNotification(userId, "제목", "본문");
+
+        // 영구 제외가 아니라 쿨다운이다 — 재시도 주기가 5분에서 24시간으로 내려갈 뿐이다.
+        verify(pushSender).send("abcd1234", "ios", "제목", "본문", Map.of());
+    }
+
+    /** 상한에 막 도달한(쿨다운 안에 있는) 토큰. */
+    private DeviceToken tokenAtFailureCap() {
+        DeviceToken token = DeviceToken.builder()
+                .user(user)
+                .deviceId("device-1")
+                .platform("ios")
+                .token("abcd1234")
+                .build();
+        OffsetDateTime justNow = OffsetDateTime.now(fixedClock);
+        for (int i = 0; i < DeviceToken.MAX_CONSECUTIVE_FAILURES; i++) {
+            token.recordSendFailure("APNS_400:DeviceTokenNotForTopic", justNow);
+        }
+        return token;
     }
 
     @Test
@@ -1288,6 +1359,7 @@ class NotificationServiceTest {
                              LocalDate completedEveningDate) {
         Clock clock = Clock.fixed(Instant.parse(utcInstant), ZoneOffset.of("+09:00"));
         NotificationService service = new NotificationService(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 clock,
                 userRepository,
                 deviceTokenRepository,
@@ -1388,6 +1460,7 @@ class NotificationServiceTest {
 
     private NotificationService serviceAt(Clock clock) {
         return new NotificationService(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 clock,
                 userRepository,
                 deviceTokenRepository,

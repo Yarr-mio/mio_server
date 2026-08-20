@@ -30,6 +30,30 @@ public class NotificationPersistenceService {
     private final ProactiveCareLogRepository proactiveCareLogRepository;
     private final StringRedisTemplate stringRedisTemplate;
 
+    /**
+     * 토큰별 발송 결과를 반영한다 (이슈 #497).
+     *
+     * <p>발송 루프에서 읽은 {@code DeviceToken} 은 detached 라 그 자리에서 바꿔도 저장되지
+     * 않는다. 그래서 결과만 들고 나와 여기서 다시 읽어 쓴다.
+     *
+     * <p>{@code persistNotificationResult} 와 합치지 않은 이유는 그 시그니처를 바꾸면 발송 결과
+     * 기록을 검증하는 기존 테스트 14곳의 단언이 함께 흔들리기 때문이다. 5분 주기 발송에서
+     * 짧은 쓰기 트랜잭션 하나가 늘어나는 비용이 그보다 싸다.
+     */
+    @Transactional
+    public void recordTokenSendOutcomes(List<TokenSendOutcome> outcomes) {
+        for (TokenSendOutcome outcome : outcomes) {
+            deviceTokenRepository.findById(outcome.tokenId()).ifPresent(token -> {
+                if (outcome.sent()) {
+                    token.recordSendSuccess();
+                } else {
+                    token.recordSendFailure(outcome.failureReason(), OffsetDateTime.now(clock));
+                }
+                deviceTokenRepository.save(token);
+            });
+        }
+    }
+
     @Transactional
     public void persistNotificationResult(
             UUID userId,
