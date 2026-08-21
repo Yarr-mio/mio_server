@@ -106,7 +106,7 @@ public class ReportService {
 
         // DB 커넥션 반납 후 LLM 호출
         ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
+                reportNarrativeService.generate("주간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
 
         return new WeeklyReportResponse(
                 null, data.periodStart(), data.periodEnd(), "GENERATED", false,
@@ -152,7 +152,7 @@ public class ReportService {
 
         // DB 커넥션 반납 후 LLM 호출
         ReportNarrativeService.NarrativeResult narrative =
-                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3());
+                reportNarrativeService.generate("월간", data.checkinCount(), data.avgEmotionScore(), data.distortionTop3(), userId);
 
         return new MonthlyReportResponse(
                 null, data.periodStart(), data.periodEnd(), "GENERATED", false,

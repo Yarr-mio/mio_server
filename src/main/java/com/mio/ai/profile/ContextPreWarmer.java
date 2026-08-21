@@ -132,7 +132,7 @@ public class ContextPreWarmer {
         try {
             boolean hasHistory = checkHasHistory(userId);
             RetrievalPlan plan = memoryRetrievalPlanner.plan(combined, profile, userId, hasHistory);
-            float[] queryEmbedding = embedIfNeeded(plan, queryText);
+            float[] queryEmbedding = embedIfNeeded(plan, queryText, userId, sessionId);
             Set<String> relatedDistortionCodes = plan.sources().contains(com.mio.ai.memory.retrieval.RetrievalSource.GRAPH_DISTORTION)
                     ? ontologyRelationExpander.expandCooccurringCodes(currentDistortionCode)
                     : Set.of();
@@ -149,13 +149,13 @@ public class ContextPreWarmer {
 
     // ── 실제 병렬 retrieval (CompletableFuture) ────────────────────
 
-    private float[] embedIfNeeded(RetrievalPlan plan, String queryText) {
+    private float[] embedIfNeeded(RetrievalPlan plan, String queryText, UUID userId, UUID sessionId) {
         if (!plan.sources().contains(com.mio.ai.memory.retrieval.RetrievalSource.VECTOR_EPISODE)
                 || queryText == null || queryText.isBlank()) {
             return null;
         }
         CompletableFuture<float[]> embeddingFuture = CompletableFuture.supplyAsync(
-                () -> embeddingClient.embed(queryText), retrievalPool);
+                () -> embeddingClient.embed(queryText, "RETRIEVAL_QUERY_EMBEDDING", userId, sessionId), retrievalPool);
         try {
             long timeoutMs = Math.min(plan.budgetMs(), MAX_EMBEDDING_WAIT_MS);
             return embeddingFuture.get(timeoutMs, TimeUnit.MILLISECONDS);

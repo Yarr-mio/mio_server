@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -62,7 +63,7 @@ class ReactiveOntologyActivatorTest {
         UserBelief otherBelief = mock(UserBelief.class);
         UUID matchingBeliefId = UUID.randomUUID();
 
-        when(turnOntologyExtractor.extract("발표에서 다들 나를 싫어하는 것 같아"))
+        when(turnOntologyExtractor.extract(eq("발표에서 다들 나를 싫어하는 것 같아"), any(), any()))
                 .thenReturn(new TurnOntologySignal("mind_reading", "core_other", "negative"));
         when(ontologyValidator.isValidDistortionCode("mind_reading")).thenReturn(true);
         when(beliefRepository.findByUser_IdAndStatus(userId, "active"))
@@ -80,7 +81,7 @@ class ReactiveOntologyActivatorTest {
 
     @Test
     void ignoresUnknownStructuredDistortionWithoutWritingWorkingMemory() {
-        when(turnOntologyExtractor.extract(anyString()))
+        when(turnOntologyExtractor.extract(anyString(), any(), any()))
                 .thenReturn(new TurnOntologySignal("invented_code", "core_self", "negative"));
         when(ontologyValidator.isValidDistortionCode("invented_code")).thenReturn(false);
 
@@ -95,7 +96,7 @@ class ReactiveOntologyActivatorTest {
     void doesNotActivateAmbiguousBeliefsThatShareKindAndPolarity() {
         UserBelief first = mock(UserBelief.class);
         UserBelief second = mock(UserBelief.class);
-        when(turnOntologyExtractor.extract("나는 아무것도 못하는 사람인 것 같아"))
+        when(turnOntologyExtractor.extract(eq("나는 아무것도 못하는 사람인 것 같아"), any(), any()))
                 .thenReturn(new TurnOntologySignal("overgeneralization", "core_self", "negative"));
         when(ontologyValidator.isValidDistortionCode("overgeneralization")).thenReturn(true);
         when(distortionRepository.findById("overgeneralization")).thenReturn(Optional.empty());
@@ -116,7 +117,7 @@ class ReactiveOntologyActivatorTest {
 
         activator.activateBeliefs(userId, sessionId, "발표에서 다들 나를 싫어하는 것 같아");
 
-        verify(turnOntologyExtractor, never()).extract(anyString());
+        verify(turnOntologyExtractor, never()).extract(anyString(), any(), any());
         verifyNoInteractions(beliefRepository, workingMemory);
     }
 }

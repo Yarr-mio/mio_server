@@ -74,7 +74,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-1", RetrievalSource.VECTOR_EPISODE,
                 "회의가 불안했던 날", "normal", 0.9, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("회의 때문에 불안해")).thenReturn(embedding);
+        when(embeddingClient.embed(eq("회의 때문에 불안해"), any(), any(), any())).thenReturn(embedding);
         when(vectorRetriever.retrieveEpisodes(userId, embedding, 3)).thenReturn(List.of(episode));
         when(lexicalRetriever.retrieveByKeywords(userId, "회의 때문에 불안해", 3)).thenReturn(List.of());
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
@@ -83,7 +83,7 @@ class ContextPreWarmerTest {
         String context = preWarmer.buildContextSync(sessionId, userId, combined, profile, "회의 때문에 불안해");
 
         assertThat(context).isEqualTo("live memory");
-        verify(embeddingClient).embed("회의 때문에 불안해");
+        verify(embeddingClient).embed(eq("회의 때문에 불안해"), any(), any(), any());
         verify(vectorRetriever).retrieveEpisodes(userId, embedding, 3);
         verify(lexicalRetriever).retrieveByKeywords(userId, "회의 때문에 불안해", 3);
     }
@@ -95,7 +95,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-2", RetrievalSource.LEXICAL_EPISODE,
                 "회의 전 긴장", "normal", 0.7, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("회의가 걱정돼")).thenThrow(new RuntimeException("timeout"));
+        when(embeddingClient.embed(eq("회의가 걱정돼"), any(), any(), any())).thenThrow(new RuntimeException("timeout"));
         when(lexicalRetriever.retrieveByKeywords(userId, "회의가 걱정돼", 3)).thenReturn(List.of(episode));
         when(fusionRanker.rank(any(), eq("normal"), eq(9))).thenReturn(List.of(episode));
         when(contextComposer.compose(any(), eq("normal"), eq(false))).thenReturn("lexical memory");
@@ -114,7 +114,7 @@ class ContextPreWarmerTest {
         RetrievedItem episode = new RetrievedItem("episode-3", RetrievalSource.LEXICAL_EPISODE,
                 "발표 전 긴장", "normal", 0.7, 1);
         when(planner.plan(combined, profile, userId, true)).thenReturn(plan);
-        when(embeddingClient.embed("발표가 걱정돼")).thenAnswer(invocation -> {
+        when(embeddingClient.embed(eq("발표가 걱정돼"), any(), any(), any())).thenAnswer(invocation -> {
             Thread.sleep(1_000);
             return new float[]{0.1f};
         });

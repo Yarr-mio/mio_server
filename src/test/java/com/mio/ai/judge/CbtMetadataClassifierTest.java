@@ -41,7 +41,9 @@ class CbtMetadataClassifierTest {
                 "그 관점을 기억해볼까요?",
                 new UserMessageSignal(45, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);
@@ -72,7 +74,9 @@ class CbtMetadataClassifierTest {
                 "물론이에요. 지금 떠오르는 이야기를 편하게 말해 주세요.",
                 new UserMessageSignal(45, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);

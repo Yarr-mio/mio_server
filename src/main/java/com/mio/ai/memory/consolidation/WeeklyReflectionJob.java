@@ -83,8 +83,8 @@ public class WeeklyReflectionJob {
 
         // LLM 호출 (트랜잭션 외부 — 커넥션 점유 방지)
         String context = buildContext(effectiveMap, recurringTriggers, dominantEmotions);
-        String narrative = generateText(NARRATIVE_SYSTEM, context);
-        String coachingDirection = generateText(DIRECTION_SYSTEM, context);
+        String narrative = generateText(NARRATIVE_SYSTEM, context, userId);
+        String coachingDirection = generateText(DIRECTION_SYSTEM, context, userId);
 
         // 사용자별 독립 트랜잭션으로 저장 (실패해도 다음 사용자에 영향 없음)
         updateSelfModel(userId, dominantEmotions, recurringTriggers, effectiveMap);
@@ -176,10 +176,11 @@ public class WeeklyReflectionJob {
                         .reduce((a, b) -> a + ", " + b).orElse("없음"));
     }
 
-    private String generateText(String systemPrompt, String context) {
+    private String generateText(String systemPrompt, String context, UUID userId) {
         try {
             return llmClient.completeText(LlmRequest.of("gpt-4o-mini", systemPrompt, context)
-                    .withMaxCompletionTokens(REFLECTION_MAX_COMPLETION_TOKENS));
+                    .withMaxCompletionTokens(REFLECTION_MAX_COMPLETION_TOKENS)
+                    .withAttribution("WEEKLY_REFLECTION", userId, null));
         } catch (Exception e) {
             log.warn("[WeeklyReflectionJob] LLM call failed: {}", e.getMessage());
             return null;

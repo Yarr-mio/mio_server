@@ -110,7 +110,7 @@ public class TodoRecommendationService {
 
         // LLM 개인화는 트랜잭션 밖에서 수행 (블로킹 HTTP 호출 동안 커넥션 점유 방지).
         List<String> actionTexts = actionPersonalizer.personalize(
-                input.sessionSummary(), input.triggerTags(), selected);
+                input.sessionSummary(), input.triggerTags(), selected, userId, sessionId);
 
         return persistTasks(userId, sessionId, selected, actionTexts);
     }

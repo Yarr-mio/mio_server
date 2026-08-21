@@ -37,11 +37,13 @@ public class CheckinAiResponseGenerator {
     private final JdbcTemplate jdbcTemplate;
 
     @Async
-    public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay) {
+    public void generateAndSave(UUID checkinId, String emotionType, int conditionScore, String timeOfDay,
+                                UUID userId) {
         try {
             String userMessage = buildPrompt(emotionType, conditionScore, timeOfDay);
             String response = llmClient.completeText(LlmRequest.of(MODEL, SYSTEM_PROMPT, userMessage)
-                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS));
+                    .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                    .withAttribution("CHECKIN_RESPONSE", userId, null));
 
             if (response == null || response.isBlank()) {
                 log.debug("[CheckinAiResponseGenerator] no response for checkinId={}", checkinId);

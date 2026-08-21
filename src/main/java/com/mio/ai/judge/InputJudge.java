@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -74,11 +75,13 @@ public class InputJudge {
         return combined.requiresJudge();
     }
 
-    public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile) {
+    public InputJudgeResult judge(String message, CombinedSignal combined, SafetyProfile profile,
+                                   UUID userId, UUID sessionId) {
         try {
             String contextPrompt = buildContextPrompt(profile, message);
             LlmRequest request = LlmRequest.of(JUDGE_MODEL, SYSTEM_PROMPT, contextPrompt)
-                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS);
+                    .withMaxCompletionTokens(JUDGE_MAX_COMPLETION_TOKENS)
+                    .withAttribution("INPUT_JUDGE", userId, sessionId);
             String responseJson = llmClient.completeJson(request);
             return parseJudgeResult(responseJson);
         } catch (Exception e) {

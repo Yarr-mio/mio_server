@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
@@ -85,7 +86,7 @@ public class TodoActionPersonalizer {
      *         실패 항목은 원본 {@link BehaviorTemplate#getActionTextKo()}로 채워진다.
      */
     public List<String> personalize(String sessionSummary, List<String> triggerTags,
-                                    List<BehaviorTemplate> templates) {
+                                    List<BehaviorTemplate> templates, UUID userId, UUID sessionId) {
         List<String> fallback = templates.stream().map(BehaviorTemplate::getActionTextKo).toList();
         if (templates.isEmpty() || sessionSummary == null || sessionSummary.isBlank()) {
             return fallback;
@@ -95,7 +96,8 @@ public class TodoActionPersonalizer {
             StringBuilder response = new StringBuilder();
             llmClient.stream(
                     LlmRequest.of(MODEL, SYSTEM_PROMPT, buildUserMessage(sessionSummary, triggerTags, templates))
-                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS),
+                            .withMaxCompletionTokens(MAX_COMPLETION_TOKENS)
+                            .withAttribution("TODO_PERSONALIZER", userId, sessionId),
                     response::append
             );
             List<String> personalized = parse(response.toString(), templates.size());

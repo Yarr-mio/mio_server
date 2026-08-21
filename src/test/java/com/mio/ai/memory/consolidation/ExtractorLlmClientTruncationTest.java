@@ -32,7 +32,7 @@ class ExtractorLlmClientTruncationTest {
         ExtractorLlmClient client = new ExtractorLlmClient(
                 stubClient(TRUNCATED_BUT_PARSEABLE, true), new ObjectMapper());
 
-        ExtractorResult result = client.extract("세션 요약 본문");
+        ExtractorResult result = client.extract("세션 요약 본문", null, null);
 
         assertThat(result.dominantEmotion())
                 .as("잘린 응답에서 읽은 감정을 저장하면 부분 분석 결과가 정본이 된다")
@@ -47,7 +47,7 @@ class ExtractorLlmClientTruncationTest {
         ExtractorLlmClient client = new ExtractorLlmClient(
                 stubClient(TRUNCATED_BUT_PARSEABLE, false), new ObjectMapper());
 
-        ExtractorResult result = client.extract("세션 요약 본문");
+        ExtractorResult result = client.extract("세션 요약 본문", null, null);
 
         assertThat(result.dominantEmotion())
                 .as("절단이 아니면 기존 동작을 바꾸지 않는다 — 이 값이 null 이면 회귀다")

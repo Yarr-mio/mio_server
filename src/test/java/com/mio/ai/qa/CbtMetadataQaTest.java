@@ -77,7 +77,9 @@ class CbtMetadataQaTest {
                 "위기 응답입니다.",
                 null,
                 0,
-                true  // crisisFlowTriggered=true
+                true,  // crisisFlowTriggered=true
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.NONE);
@@ -114,7 +116,9 @@ class CbtMetadataQaTest {
                 "어떤 근거로 그렇게 생각하시나요?",
                 new UserMessageSignal(40, "catastrophizing"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.SOCRATIC_ASKED);
@@ -179,7 +183,9 @@ class CbtMetadataQaTest {
                 "그렇군요! 이번에 새로운 시각을 갖게 되셨네요.",
                 new UserMessageSignal(60, "overgeneralization"),
                 1,
-                false
+                false,
+                null,
+                null
         );
 
         assertThat(result.state()).isEqualTo(CbtInterventionState.COMPLETED);
