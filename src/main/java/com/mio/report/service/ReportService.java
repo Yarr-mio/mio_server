@@ -15,6 +15,7 @@ import com.mio.report.dto.WeeklyReportResponse;
 import com.mio.session.domain.Session;
 import com.mio.session.repository.MessageRepository;
 import com.mio.session.repository.SessionRepository;
+import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.todo.domain.TaskStatus;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.repository.UserRepository;
@@ -50,6 +51,7 @@ public class ReportService {
 
     private final CheckinRepository checkinRepository;
     private final MessageRepository messageRepository;
+    private final SessionSummaryRepository sessionSummaryRepository;
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
     private final UserRepository userRepository;
@@ -199,7 +201,7 @@ public class ReportService {
     // ── 공통 집계 ─────────────────────────────────────────────────
 
     private List<DistortionDto> buildDistortionTop3(UUID userId, OffsetDateTime start, OffsetDateTime end) {
-        List<Object[]> rows = messageRepository.findBiasTypeDistribution(userId, start, end);
+        List<Object[]> rows = sessionSummaryRepository.findBiasTypeDistribution(userId, start, end);
         List<DistortionDto> result = new ArrayList<>();
         for (int i = 0; i < Math.min(3, rows.size()); i++) {
             String type = (String) rows.get(i)[0];
