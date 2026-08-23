@@ -82,4 +82,61 @@ class CrisisAnswerParserTest {
         // 서두의 "아니"만 부정으로 인정한다. 문장 중간 사용은 답변이 아니라 정정·부연이 많다.
         assertThat(parser.parse("그건 아니고 그냥 지쳤어요")).isEqualTo(CrisisAnswer.UNKNOWN);
     }
+
+    /**
+     * 부정 보조용언 {@code 않다} 를 이끄는 연결어미 {@code -지} 의 커버리지 축 (이슈 #504).
+     *
+     * <p>이 케이스들은 마커 목록에서 복사한 것이 아니라 <b>목록이 놓치는 형태</b>다.
+     * 한국어 부정은 어미에 후치하므로({@code -지 않다}) 위험 어휘와 부정 표지의 순서·거리가
+     * 판별 정보를 가진다. {@code 있지} 를 종결형 긍정 마커로 읽으면
+     * {@code "있지 않아요"}(= 없다)가 YES 로 확정되고, {@code IMMEDIATE_SUPPORT} 단계에서
+     * <b>곁에 아무도 없다고 답한 사용자가 COMPLETED 로 종결</b>된다.
+     *
+     * <p>확정 대신 UNKNOWN 인 이유: 이중부정({@code "없지 않아요"} = 있다)까지 정확히 풀려면
+     * 선행 서술어를 읽어야 하는데 그 판단은 임상·언어 검토 대상이다. UNKNOWN 은 handoff 로
+     * fail-closed 되고, {@code IMMEDIATE_SUPPORT} 에서는 NO 와 도착지가 같다.
+     */
+    @Test
+    @DisplayName("부정 보조용언 '-지 않다'가 붙은 답변을 긍정으로 확정하지 않는다")
+    void negationAuxiliaryIsNeverReadAsAffirmative() {
+        for (String answer : new String[]{
+                "있지 않아요",
+                "믿을 만한 사람이 있지 않아요",
+                "그런 사람은 있지 않습니다",
+                "딱히 있지 않네요",
+                "지금은 있지 않아요",
+                "연락할 사람이 있지가 않아요",
+                "있지는 않습니다",
+                "있진 않아요",
+                "계획은 세우지 않았어요",
+                "정해두지 않았어요",
+                "떠오르지 않아요"}) {
+            assertThat(parser.parse(answer))
+                    .as("'%s' 는 부정이다 — 긍정으로 확정하면 위기 플로우가 잘못 종결된다", answer)
+                    .isNotEqualTo(CrisisAnswer.YES);
+        }
+    }
+
+    /**
+     * 이중부정은 의미상 긍정이지만 선행 서술어를 읽어야 풀린다. 현재는 확정하지 않는 쪽이
+     * 안전하다 — {@code IMMEDIATE_SUPPORT} 에서 UNKNOWN 은 handoff 로 닫히고,
+     * 지원 인물이 있는 사용자를 핫라인으로 한 번 더 안내하는 것은 되돌릴 수 있는 비용이다.
+     */
+    @Test
+    @DisplayName("이중부정은 긍정으로 확정하지 않는다")
+    void doubleNegationIsNotResolvedToAffirmative() {
+        assertThat(parser.parse("연락할 사람이 없지 않아요")).isNotEqualTo(CrisisAnswer.YES);
+    }
+
+    /** 부정 표지 검사가 정상 긍정·부정 답변을 삼키지 않아야 한다 (회귀 방지). */
+    @Test
+    @DisplayName("부정 표지가 없는 평범한 답변은 그대로 확정한다")
+    void plainAnswersAreUnaffectedByNegationHandling() {
+        assertThat(parser.parse("네 있어요")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("한 명 있어요")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("이미 정했어요")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("도구는 벌써 구했어")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("아무도 없어요")).isEqualTo(CrisisAnswer.NO);
+        assertThat(parser.parse("아니에요")).isEqualTo(CrisisAnswer.NO);
+    }
 }
