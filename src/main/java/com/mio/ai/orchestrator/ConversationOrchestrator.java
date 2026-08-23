@@ -691,7 +691,8 @@ public class ConversationOrchestrator {
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs.get(), firstRenderedMs,
-                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult);
+                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult,
+                    judgeResult);  // InputJudge 판정 — trace 의 crisis_attribution 근거
 
             emitter.complete();
 
