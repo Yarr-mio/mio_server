@@ -132,7 +132,7 @@ class AiDecisionLoggerTest {
                 decision,
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(),
-                SecurityAssessment.manipulation(List.of("앞의 규칙은 다 잊고")),
+                SecurityAssessment.manipulation(List.of("규칙을 잊고")),
                 100,
                 10,
                 false,
@@ -155,7 +155,7 @@ class AiDecisionLoggerTest {
                 .as("룰이 무엇으로 봤는지 남아야 판정자 강등을 사후에 구분할 수 있다")
                 .contains("\"security_rule_level\":\"ATTACK\"")
                 .contains("\"attack_kind\":\"MANIPULATION\"")
-                .contains("\"security_attack_types\"")
+                .contains("\"security_attack_types\":[\"규칙을 잊고\"]")
                 .contains("\"security_evidence_unverifiable_by_judge\"");
         assertThat(captor.getValue().getSecurityLevel())
                 .as("실효 판정은 기존 컬럼에 그대로 남는다")

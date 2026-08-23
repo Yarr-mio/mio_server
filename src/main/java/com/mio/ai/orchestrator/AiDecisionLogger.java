@@ -69,7 +69,7 @@ public class AiDecisionLogger {
             boolean safePrefixApplied,
             int heldBackChars,
             MemoryContextResult memoryContextResult,
-            InputJudgeResult judgeResult) {
+            InputJudgeResult inputJudgeResult) {
 
         try {
             Map<String, Object> trace = buildTrace(
@@ -79,7 +79,7 @@ public class AiDecisionLogger {
                     l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs, firstRenderedTokenMs, safePrefixApplied,
-                    heldBackChars, memoryContextResult, judgeResult);
+                    heldBackChars, memoryContextResult, inputJudgeResult);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -176,7 +176,7 @@ public class AiDecisionLogger {
             boolean safePrefixApplied,
             int heldBackChars,
             MemoryContextResult memoryContextResult,
-            InputJudgeResult judgeResult) {
+            InputJudgeResult inputJudgeResult) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
         l1Flags.put("crisis_keyword", l1Result.hardCrisis());
@@ -202,12 +202,13 @@ public class AiDecisionLogger {
         trace.put("l0_resolved", moderation.resolved());
         // 정책 결정이 실제로 읽은 L0 상태. 위 raw 값과 달리 이 값은 전달 방식의 하한을 만든다 (이슈 #294).
         trace.put("l0_status", decision.moderationStatus().name());
-        putSecurityEvidence(trace, securityAssessment);
-        // 강등된 위기 후보의 해제 스위치 입력값 (이슈 #505). 이 값이 없으면 그 경로가 발동했는지
-        // 사후에 확인할 수 없다. 해제 여부 자체는 l1_flags.crisis_unverified 와 action 으로
-        // 도출되므로 별도 필드를 만들지 않는다 — 정책 판단을 로거에 복제하지 않는다.
-        trace.put("crisis_attribution", crisisAttribution(judgeResult));
         trace.put("l0_category_scores", moderation.categoryScores());
+        putSecurityEvidence(trace, securityAssessment);
+        // 강등된 위기 후보의 해제 스위치 입력값 (이슈 #505). 이 값이 없으면 그 경로가
+        // 프로덕션에서 발동했는지 사후에 확인할 수 없다. 해제 여부 자체는
+        // l1_flags.crisis_unverified 와 action 으로 도출되므로 별도 필드를 만들지 않는다 —
+        // 정책 판단을 로거에 복제하지 않는다.
+        trace.put("crisis_attribution", crisisAttribution(inputJudgeResult));
         trace.put("l1_flags", l1Flags);
         trace.put("l1_combined_confidence", l1Result.combinedConfidence());
         trace.put("l1_threshold_source", l1ThresholdSource != null ? l1ThresholdSource : "default");
@@ -298,12 +299,6 @@ public class AiDecisionLogger {
     }
 
     /**
-     * Output Judge 호출 상태 (이슈 #364).
-     *
-     * <p>Input Judge 의 {@code judge_status} 와 같은 세 값을 쓴다. 두 판정원이 다른 어휘를
-     * 쓰면 실패율을 한 쿼리로 볼 수 없다.
-     */
-    /**
      * 보안 판정의 근거를 남긴다 (이슈 #505).
      *
      * <p>{@code securityAssessment} 는 이 클래스의 인자로 들어오면서도 트레이스에 반영되지
@@ -315,15 +310,21 @@ public class AiDecisionLogger {
      * 판정자가 룰의 의심을 걷어낸 것이고, 그 경로는 사용자 텍스트의 영향을 받는다.
      * 두 값을 분리해 두지 않으면 사후에 구분할 수 없다.
      *
-     * <p>{@code attack_types} 는 매칭된 패턴 이름이고 발화 원문이 아니다 —
-     * 트레이스에 사용자 문장을 복제하지 않는다.
+     * <p>{@code attack_types} 는 {@code SecurityRuleFilter} 의 닫힌 패턴 라벨 집합이고
+     * 사용자 문장을 복제하지 않는다. 다만 라벨 자체가 발화의 축자 부분열이므로
+     * ({@code 관리자 권한}·{@code 역할극} 등) "그 문구가 메시지에 있었다"는 사실은 남는다.
+     * {@code trace} 는 평문 JSONB 이고 메시지 원문은 AES-256 컬럼 암호화라 이 비대칭은
+     * 의도된 것이 아니다 — 보존기간 정책과 함께 정리 대상이다.
      */
     private void putSecurityEvidence(Map<String, Object> trace, SecurityAssessment assessment) {
         if (assessment == null) {
+            // 부재를 false·빈 목록으로 축약하지 않는다. 특히 마지막 필드는
+            // "원문 근거 없었음"과 "판정 객체 자체가 없었음"이 같은 값이 되면
+            // 원문 기반 탐지가 통째로 빠진 턴을 사후에 식별할 수 없다.
             trace.put("security_rule_level", null);
             trace.put("attack_kind", null);
-            trace.put("security_attack_types", List.of());
-            trace.put("security_evidence_unverifiable_by_judge", false);
+            trace.put("security_attack_types", null);
+            trace.put("security_evidence_unverifiable_by_judge", null);
             return;
         }
         trace.put("security_rule_level", assessment.level().name());
@@ -337,14 +338,20 @@ public class AiDecisionLogger {
      * {@code null} 은 "귀속 없음"이 아니라 "판정 부재"다 (이슈 #297 의 {@code RiskVerdict} 규약).
      * 둘을 섞으면 판정을 못 받은 턴과 모델이 {@code NONE} 이라고 답한 턴을 구분할 수 없다.
      */
-    private String crisisAttribution(InputJudgeResult judgeResult) {
-        if (judgeResult == null || judgeResult.risk() == null
-                || judgeResult.risk().crisisAttribution() == null) {
+    private String crisisAttribution(InputJudgeResult inputJudgeResult) {
+        if (inputJudgeResult == null || inputJudgeResult.risk() == null
+                || inputJudgeResult.risk().crisisAttribution() == null) {
             return null;
         }
-        return judgeResult.risk().crisisAttribution().name();
+        return inputJudgeResult.risk().crisisAttribution().name();
     }
 
+    /**
+     * Output Judge 호출 상태 (이슈 #364).
+     *
+     * <p>Input Judge 의 {@code judge_status} 와 같은 세 값을 쓴다. 두 판정원이 다른 어휘를
+     * 쓰면 실패율을 한 쿼리로 볼 수 없다.
+     */
     private String outputJudgeStatus(OutputJudgeResult result) {
         if (result == null) {
             return JudgeStatus.SKIPPED.name();

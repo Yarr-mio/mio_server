@@ -692,7 +692,7 @@ public class ConversationOrchestrator {
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs.get(), firstRenderedMs,
                     firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult,
-                    judgeResult);
+                    judgeResult);  // InputJudge 판정 — trace 의 crisis_attribution 근거
 
             emitter.complete();
 
