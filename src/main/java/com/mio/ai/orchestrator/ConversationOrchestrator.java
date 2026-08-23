@@ -691,7 +691,8 @@ public class ConversationOrchestrator {
                     profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs.get(), firstRenderedMs,
-                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult);
+                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult,
+                    judgeResult);
 
             emitter.complete();
 

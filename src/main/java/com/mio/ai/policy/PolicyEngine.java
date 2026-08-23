@@ -8,6 +8,7 @@ import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.profile.SafetyProfile;
 import com.mio.ai.safety.CombinedSignal;
+import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.security.SecurityLevel;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,17 @@ import java.util.UUID;
 public class PolicyEngine {
 
     private static final String POLICY_VERSION = "v2.0-phase2";
+
+    /**
+     * {@code SafetyL1} 이 남기는 맥락 마커 시그널 (이슈 #505).
+     *
+     * <p>{@code CrisisContextMarkers} 는 {@code com.mio.ai.safety} 패키지 전용이라 상수를
+     * 직접 참조할 수 없다. 시그널 문자열은 이미 {@code AiDecisionLogger} 도 같은 방식으로
+     * 읽으므로, 계약을 한 곳에 모으는 것은 별도 정리 과제로 둔다.
+     */
+    private static final String CRISIS_MARKER_THIRD_PERSON = "crisis_context_marker:third_person";
+    private static final String CRISIS_MARKER_QUOTATION = "crisis_context_marker:quotation";
+    private static final String CRISIS_MARKER_PAST_RECOVERY = "crisis_context_marker:past_recovery";
 
     private final EffectiveSecurityResolver effectiveSecurityResolver;
 
@@ -73,7 +85,7 @@ public class PolicyEngine {
         // 2b. 맥락 마커로 강등된 위기 후보 (이슈 #255).
         // InputJudge가 위기 아님을 확인해준 경우에만 해제하고, 판정이 없거나 실패하면 위기를 유지한다(fail-closed).
         if (combined.hardCrisisUnverified()
-                && !crisisClearedByJudge(judgeResult, judgeStatus)) {
+                && !crisisClearedByJudge(judgeResult, judgeStatus, combined.l1Result())) {
             return crisisFlow(decisionId, effectiveSecurity, CrisisTrigger.L1_KEYWORD,
                     judgeStatus, moderationStatus);
         }
@@ -260,7 +272,7 @@ public class PolicyEngine {
      * 인용·과거면 해제하고, 명시적으로 본인 현재면 위험도가 낮아도 유지한다.
      */
     private boolean crisisClearedByJudge(
-            InputJudgeResult judgeResult, JudgeStatus judgeStatus) {
+            InputJudgeResult judgeResult, JudgeStatus judgeStatus, SafetyL1Result l1Result) {
         if (judgeStatus != JudgeStatus.SUCCEEDED
                 || judgeResult == null
                 || !hasUsableJudgeResult(judgeResult)) {
@@ -272,10 +284,12 @@ public class PolicyEngine {
             // 두 값이 어긋날 때 더 구체적인 쪽을 따른다.
             return false;
         }
-        if (isNonSelfAttribution(attribution)) {
-            // 위기 어휘가 타인·인용·과거 경험의 것이라고 명시적으로 판정한 경우다.
-            // 위험 주제라 모델이 위험도를 MEDIUM 이상으로 주더라도, 그 값 때문에 3인칭 걱정
-            // 발화가 본인 위기 개입을 받는 것이 이슈 #297 의 결함이었다.
+        if (isNonSelfAttribution(attribution)
+                && deterministicMarkerAgrees(l1Result)) {
+            // 위기 어휘가 타인·인용·과거 경험의 것이라고 명시적으로 판정했고,
+            // 결정론 마커도 같은 방향인 경우다. 위험 주제라 모델이 위험도를 MEDIUM 이상으로
+            // 주더라도, 그 값 때문에 3인칭 걱정 발화가 본인 위기 개입을 받는 것이
+            // 이슈 #297 의 결함이었다.
             return true;
         }
         RiskLevel riskLevel = judgeResult.risk().riskLevel();
@@ -287,6 +301,36 @@ public class PolicyEngine {
         return attribution == CrisisAttribution.THIRD_PARTY
                 || attribution == CrisisAttribution.QUOTED
                 || attribution == CrisisAttribution.SELF_PAST;
+    }
+
+    /**
+     * 귀속 판정을 결정론 마커로 교차 검증한다 (이슈 #505).
+     *
+     * <p>귀속 판정 하나만으로 위기가 해제되면, 판정자를 조종할 수 있는 사용자 텍스트가 곧
+     * 해제 스위치가 된다. 이 저장소는 보안 축에서 이미 같은 원칙을 지킨다 —
+     * {@code EffectiveSecurityResolver} 는 LLM 이 {@code SUSPICIOUS} 까지만 올리게 하고
+     * {@code ATTACK} 확정은 결정론 룰 전용으로 둔다. 안전 축에도 같은 규율을 적용한다.
+     *
+     * <p>요구하는 것은 <b>"화자 자신의 현재 위기가 아니다"는 결정론적 증거의 존재</b>이고,
+     * 두 계층이 <b>어느 종류인지까지 합의할 것을 요구하지는 않는다.</b> 둘은 서로 다른 단서를
+     * 보고, {@code CrisisContextMarkers} 는 메시지당 마커를 하나만 돌려준다
+     * ({@code markerNear} 가 부정 → 3인칭 → 인용 순으로 먼저 걸린 하나를 반환한다).
+     * 그래서 {@code "친구가 '죽고 싶다'고 했어요"} 는 마커가 {@code third_person} 인데
+     * 판정자는 {@code QUOTED} 라고 답할 수 있다 — 종류 일치를 요구하면 이슈 #297 이 고친
+     * 3인칭 걱정 발화의 위기 오탐이 되살아난다.
+     *
+     * <p>{@code negation} 은 비-자기 귀속의 증거로 세지 않는다. 부정은 "누구의 위기인가"가
+     * 아니라 "위기 진술이 아님"을 뜻하고, 그 판단은 위험도 쪽에서 한다.
+     * 마커가 아예 없는 강등(가시 구분자 우회)도 이 지름길을 타지 못한다 — 위기 어휘를 일부러
+     * 쪼갠 입력에 대해 판정자의 한마디로 위기를 푸는 것은 되돌릴 수 없는 권한이다.
+     */
+    private boolean deterministicMarkerAgrees(SafetyL1Result l1Result) {
+        if (l1Result == null || l1Result.signals() == null) {
+            return false;
+        }
+        return l1Result.signals().contains(CRISIS_MARKER_THIRD_PERSON)
+                || l1Result.signals().contains(CRISIS_MARKER_QUOTATION)
+                || l1Result.signals().contains(CRISIS_MARKER_PAST_RECOVERY);
     }
 
     /**
