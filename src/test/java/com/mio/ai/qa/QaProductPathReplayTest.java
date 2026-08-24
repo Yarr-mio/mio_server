@@ -9,6 +9,7 @@ import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
+import com.mio.ai.support.RecordingSseEmitter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
@@ -286,7 +287,7 @@ class QaProductPathReplayTest {
                 .as("[%s] SSE 이벤트 순서 (연속 delta 는 하나로 접음)", label)
                 .isEqualTo(expect.sseEvents());
 
-        assertFinalText(label, expect.finalText(), events);
+        assertFinalText(label, expect.finalText(), emitter);
         assertCrisis(label, expect.crisis(), events);
         assertDone(label, expect.done(), events);
 
@@ -312,12 +313,12 @@ class QaProductPathReplayTest {
     }
 
     private void assertFinalText(String label, QaReplayFixture.FinalText expect,
-                                 List<RecordingSseEmitter.CapturedEvent> events) {
+                                 RecordingSseEmitter emitter) {
         if (expect == null) {
             return;
         }
-        String finalText = finalVisibleText(events);
-        String everDelivered = everDeliveredText(events);
+        String finalText = finalVisibleText(emitter);
+        String everDelivered = emitter.everDeliveredText();
 
         if (expect.exact() != null) {
             assertThat(finalText).as("[%s] 최종 화면에 남는 텍스트", label).isEqualTo(expect.exact());
@@ -334,37 +335,15 @@ class QaProductPathReplayTest {
         }
     }
 
-    /** 사용자 화면에 최종적으로 남는 텍스트 — crisis > delta.replace > delta 누적 순으로 결정된다. */
-    private String finalVisibleText(List<RecordingSseEmitter.CapturedEvent> events) {
-        String crisisText = null;
-        String replaceText = null;
-        StringBuilder deltas = new StringBuilder();
-        for (RecordingSseEmitter.CapturedEvent event : events) {
-            switch (event.name()) {
-                case "crisis" -> crisisText = event.data().path("fixed_response").asText();
-                case "delta.replace" -> replaceText = event.data().path("safe_response").asText();
-                case "delta" -> deltas.append(event.data().path("chunk").asText());
-                default -> { }
-            }
-        }
-        if (crisisText != null) {
-            return crisisText;
-        }
-        return replaceText != null ? replaceText : deltas.toString();
-    }
-
-    /** 한 번이라도 클라이언트로 나간 텍스트 전부 — 덮어써진 delta 도 노출로 센다. */
-    private String everDeliveredText(List<RecordingSseEmitter.CapturedEvent> events) {
-        StringBuilder delivered = new StringBuilder();
-        for (RecordingSseEmitter.CapturedEvent event : events) {
-            switch (event.name()) {
-                case "crisis" -> delivered.append(event.data().path("fixed_response").asText());
-                case "delta.replace" -> delivered.append(event.data().path("safe_response").asText());
-                case "delta" -> delivered.append(event.data().path("chunk").asText());
-                default -> { }
-            }
-        }
-        return delivered.toString();
+    /**
+     * 사용자 화면에 최종적으로 남는 텍스트 — 핫라인 카드가 있으면 그것이 화면이고,
+     * 없으면 메시지 본문이다.
+     *
+     * <p>본문 누적·교체 규칙과 노출 누적 규칙은 {@link RecordingSseEmitter} 가 갖는다.
+     * 여기서는 이 테스트의 질문(무엇이 최종 화면인가)만 조합한다.
+     */
+    private String finalVisibleText(RecordingSseEmitter emitter) {
+        return emitter.crisisFixedResponse().orElseGet(emitter::messageBodyText);
     }
 
     private void assertCrisis(String label, QaReplayFixture.Crisis expect,
