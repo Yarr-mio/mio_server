@@ -15,6 +15,7 @@ import com.mio.ai.delivery.SafePrefixCatalog;
 import com.mio.ai.plan.ResponseAct;
 import com.mio.session.domain.MessageTurn;
 import com.mio.session.service.SessionMessagePersistenceService;
+import com.mio.ai.support.RecordingSseEmitter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
@@ -286,12 +287,12 @@ class ConversationOrchestratorContractIntegrationTest {
     void reviewedSafePrefixIsDeliveredBeforeTheGeneratedText() {
         String reply = "지금 어떤 감정이 가장 크게 느껴지나요?";
         streamReplies(reply);
-        RecordingEmitter emitter = new RecordingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
 
         orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "prefix-order-key");
 
         String prefix = safePrefixCatalog.reviewedCopy().get(ResponseAct.EMOTION_CHECK);
-        String stream = emitter.joined();
+        String stream = emitter.everDeliveredText();
         // 사용자가 먼저 읽는 것이 서버 문구여야 한다. 순서가 뒤집히면 이 기능은 지연을
         // 개선하지 않고 문장만 하나 늘린다.
         assertThat(stream).contains(prefix);
@@ -362,7 +363,7 @@ class ConversationOrchestratorContractIntegrationTest {
         streamReplies("지금 어떤 감정이 가장 크게 느껴지나요?");
 
         orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
-                new RecordingEmitter(), null);
+                new RecordingSseEmitter(objectMapper), null);
 
         String systemPrompt = capturedSystemPrompt();
         assertThat(systemPrompt).contains("[이미 전달됨]");
@@ -414,7 +415,7 @@ class ConversationOrchestratorContractIntegrationTest {
                 .thenReturn(OutputJudgeResult.crisisFlow());
         // 첫 문장이 사전 필터를 위반해 승인 게이트가 스트림을 멈춘다 — 조기 중단 경로.
         streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
-        RecordingEmitter emitter = new RecordingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
 
         orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
 
@@ -428,7 +429,7 @@ class ConversationOrchestratorContractIntegrationTest {
                 .thenReturn(OutputJudgeResult.crisisFlow());
         // 사전 필터는 통과하되 계약(질문 1개)을 위반해 스트림 종료 후 판정으로 넘어간다.
         streamReplies("그랬군요. 어떤 기분인가요? 언제부터였나요? 지금은 어떠세요?");
-        RecordingEmitter emitter = new RecordingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
 
         orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
 
@@ -443,7 +444,7 @@ class ConversationOrchestratorContractIntegrationTest {
         when(outputJudge.judge(anyString(), any(), any(), any()))
                 .thenReturn(OutputJudgeResult.crisisFlow());
         streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
-        RecordingEmitter emitter = new RecordingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
 
         orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, null);
 
@@ -456,11 +457,11 @@ class ConversationOrchestratorContractIntegrationTest {
      * <p>이벤트가 나갔는지가 아니라 <b>화면에 무엇이 남는지</b>로 판정한다. 지우는 이벤트가
      * 위기 안내 뒤에 가거나 다른 msg_id 로 나가면 이벤트 목록만으로는 통과해 버린다.
      */
-    private void assertPrefixClearedBeforeCrisis(RecordingEmitter emitter, ResponseAct act) {
+    private void assertPrefixClearedBeforeCrisis(RecordingSseEmitter emitter, ResponseAct act) {
         String prefix = safePrefixCatalog.reviewedCopy().get(act);
         List<String> names = emitter.eventNames();
 
-        assertThat(emitter.joined())
+        assertThat(emitter.everDeliveredText())
                 .as("이 턴은 애초에 prefix 를 받아야 한다 — 아니면 테스트가 아무것도 재현하지 않는다")
                 .contains(prefix);
         assertThat(names)
@@ -470,89 +471,10 @@ class ConversationOrchestratorContractIntegrationTest {
                 .as("지우는 신호가 위기 안내보다 먼저 나가야 한다 — 순서는 clear → crisis → done")
                 .isBetween(0, names.indexOf("crisis"));
         assertThat(names.get(names.size() - 1)).isEqualTo("done");
-        assertThat(emitter.renderedMessage())
+        assertThat(emitter.messageBodyText())
                 .as("핫라인 위에 서버 문구가 남으면 안 된다")
                 .doesNotContain(prefix)
                 .isEmpty();
-    }
-
-    /**
-     * 전송된 SSE 이벤트를 그대로 모으는 emitter.
-     *
-     * <p>실제 요청 없이 {@code SseEmitter} 를 쓰면 전송이 무시되므로, 전송 순서를 보려면
-     * 여기서 가로채는 수밖에 없다. {@code super.send} 는 부르지 않는다 — 부를 대상이 없다.
-     */
-    private static final class RecordingEmitter extends SseEmitter {
-        /** 전송 호출 하나가 원소 하나다. 순서를 봐야 하므로 호출을 합치지 않는다. */
-        private final List<String> events = new java.util.ArrayList<>();
-
-        private RecordingEmitter() {
-            super(30_000L);
-        }
-
-        @Override
-        public void send(SseEventBuilder builder) {
-            StringBuilder frame = new StringBuilder();
-            builder.build().forEach(part -> frame.append(String.valueOf(part.getData())));
-            events.add(frame.toString());
-        }
-
-        private String joined() {
-            return String.join("", events);
-        }
-
-        /** 전송된 이벤트 이름을 순서대로. SSE 프레임의 {@code event:<name>} 줄에서 뽑는다. */
-        private List<String> eventNames() {
-            List<String> names = new java.util.ArrayList<>();
-            for (String event : events) {
-                String name = nameOf(event);
-                if (name != null) {
-                    names.add(name);
-                }
-            }
-            return names;
-        }
-
-        /**
-         * 사용자 화면에 남는 텍스트.
-         *
-         * <p>{@code delta} 는 이어 붙이고 {@code delta.replace} 는 전부 갈아끼운다 — 그것이
-         * 이 PR 이 기대는 "메시지 전체 교체" 의미다. 위기 안내 위에 서버 문구가 남는지는
-         * 이벤트 목록이 아니라 <b>이 화면 상태</b>로 판정해야 한다.
-         */
-        private String renderedMessage() {
-            StringBuilder screen = new StringBuilder();
-            for (String event : events) {
-                String name = nameOf(event);
-                if ("delta".equals(name)) {
-                    screen.append(jsonField(event, "chunk"));
-                } else if ("delta.replace".equals(name)) {
-                    screen.setLength(0);
-                    screen.append(jsonField(event, "safe_response"));
-                }
-            }
-            return screen.toString();
-        }
-
-        private String nameOf(String event) {
-            for (String line : event.split("\n")) {
-                if (line.startsWith("event:")) {
-                    return line.substring("event:".length()).trim();
-                }
-            }
-            return null;
-        }
-
-        private String jsonField(String event, String field) {
-            String needle = "\"" + field + "\":\"";
-            int start = event.indexOf(needle);
-            if (start < 0) {
-                return "";
-            }
-            start += needle.length();
-            int end = event.indexOf('"', start);
-            return end < 0 ? "" : event.substring(start, end);
-        }
     }
 
     /** 암호화 컬럼이라 서비스 경로로 읽는다. */
