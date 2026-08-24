@@ -35,7 +35,7 @@ import java.util.function.ToLongFunction;
 @Slf4j
 public class AiDecisionLogger {
 
-    private static final String SCHEMA_VERSION = "v2.4";
+    private static final String SCHEMA_VERSION = "v2.5";
     private static final String CRISIS_MARKER_PREFIX = "crisis_context_marker:";
     private static final String PROMPT_VERSION = "phase2";
 
@@ -299,7 +299,7 @@ public class AiDecisionLogger {
     }
 
     /**
-     * 보안 판정의 근거를 남긴다 (이슈 #505).
+     * 보안 판정의 근거를 남긴다 (이슈 #505, #510).
      *
      * <p>{@code securityAssessment} 는 이 클래스의 인자로 들어오면서도 트레이스에 반영되지
      * 않아 그대로 버려졌다. 남는 것은 {@code security_level} 컬럼 하나였고, 그 값은 룰과
@@ -310,27 +310,34 @@ public class AiDecisionLogger {
      * 판정자가 룰의 의심을 걷어낸 것이고, 그 경로는 사용자 텍스트의 영향을 받는다.
      * 두 값을 분리해 두지 않으면 사후에 구분할 수 없다.
      *
-     * <p>{@code attack_types} 는 {@code SecurityRuleFilter} 의 닫힌 패턴 라벨 집합이고
-     * 사용자 문장을 복제하지 않는다. 다만 라벨 자체가 발화의 축자 부분열이므로
-     * ({@code 관리자 권한}·{@code 역할극} 등) "그 문구가 메시지에 있었다"는 사실은 남는다.
-     * {@code trace} 는 평문 JSONB 이고 메시지 원문은 AES-256 컬럼 암호화라 이 비대칭은
-     * 의도된 것이 아니다 — 보존기간 정책과 함께 정리 대상이다.
+     * <p><b>패턴 라벨은 남기지 않는다 (이슈 #510).</b> {@code SecurityRuleFilter} 의 라벨은
+     * 패턴 문자열 자체이고, 자해 질의 패턴은 {@code "자살 방법 알려줘"}·
+     * {@code "단계별 자해 방법"} 이다. 라벨을 적재하면 "이 사용자가 자살 방법을 물었다"가
+     * AES-256 없이 평문 JSONB 에 영구 남는다 — 메시지 원문은 컬럼 암호화하는데 {@code trace}
+     * 는 평문이라 비대칭이 생긴다. 이 클래스는 L1 시그널을 {@code crisis_context_marker:}
+     * 접두어로 필터링해 {@code crisis_keyword:*} 를 배제하는 규약을 이미 지키므로, 보안 축에도
+     * 같은 규약을 적용한다 — <b>등급·성격·개수만</b> 남긴다.
+     *
+     * <p>개수를 남기는 이유: 보안 축 재현율의 분모·분자가 되고, 어느 턴에서 여러 패턴이
+     * 동시에 걸렸는지가 오탐 분석의 단서다. 어떤 패턴이었는지는 평가셋에서 오프라인으로 본다.
+     *
+     * <p>부재는 값으로 축약하지 않는다. 특히 {@code unverifiable_by_judge} 를 부재 시
+     * {@code false} 로 두면 "원문 근거 없었음"과 "판정 객체 자체가 없었음"이 같은 값이 되어,
+     * 원문 기반 탐지가 통째로 빠진 턴을 식별할 수 없다.
      */
     private void putSecurityEvidence(Map<String, Object> trace, SecurityAssessment assessment) {
         if (assessment == null) {
-            // 부재를 false·빈 목록으로 축약하지 않는다. 특히 마지막 필드는
-            // "원문 근거 없었음"과 "판정 객체 자체가 없었음"이 같은 값이 되면
-            // 원문 기반 탐지가 통째로 빠진 턴을 사후에 식별할 수 없다.
             trace.put("security_rule_level", null);
             trace.put("attack_kind", null);
-            trace.put("security_attack_types", null);
+            trace.put("security_attack_pattern_count", null);
             trace.put("security_evidence_unverifiable_by_judge", null);
             return;
         }
         trace.put("security_rule_level", assessment.level().name());
         trace.put("attack_kind", assessment.attackKind() != null
                 ? assessment.attackKind().name() : null);
-        trace.put("security_attack_types", assessment.attackTypes());
+        trace.put("security_attack_pattern_count",
+                assessment.attackTypes() != null ? assessment.attackTypes().size() : null);
         trace.put("security_evidence_unverifiable_by_judge", assessment.unverifiableByJudge());
     }
 
