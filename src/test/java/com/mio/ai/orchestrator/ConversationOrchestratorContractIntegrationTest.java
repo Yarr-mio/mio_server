@@ -452,6 +452,53 @@ class ConversationOrchestratorContractIntegrationTest {
     }
 
     /**
+     * 판정자가 다시 쓴 본문도 결정론 필터를 지나야 한다 (이슈 #526).
+     *
+     * <p>{@code REWRITE} 는 판정자가 <b>본문을 직접 써서</b> 돌려주는 유일한 경로다. 그리고
+     * {@code OutputJudge} 프롬프트에는 생성 모델의 출력(= 사용자 입력에 영향받은 텍스트)이
+     * 구분자 없이 들어간다. 즉 이 경로가 결정론 필터를 우회해 임의 본문을 사용자에게
+     * 주입할 수 있는 <b>가장 짧은 길</b>이다.
+     *
+     * <p>고쳐 쓴 본문이 다시 위반이면 서버 고정 응답으로 내린다. 판정자에게 두 번째 기회를
+     * 주지 않는다 — 같은 판정자가 만든 위반을 같은 판정자에게 다시 물을 근거가 없다.
+     */
+    @Test
+    @DisplayName("판정자가 고쳐 쓴 본문이 다시 위반이면 사용자에게 보내지 않는다")
+    void rewrittenBodyThatStillViolatesIsNotDelivered() {
+        // 계약을 위반해 출력 판정으로 넘어가게 한다.
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        // 판정자가 고쳐 썼다고 주장하지만 본문은 역할 경계를 위반한다.
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite("저는 의사니까 제 말을 믿으세요."));
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "rewrite-refilter-key");
+
+        assertThat(emitter.everDeliveredText())
+                .as("판정자 본문이 결정론 필터를 우회해 사용자에게 닿으면 안 된다")
+                .doesNotContain("저는 의사");
+    }
+
+    /**
+     * 고쳐 쓴 본문이 깨끗하면 그대로 전달된다 (이슈 #526).
+     *
+     * <p>재검증이 REWRITE 경로 자체를 무력화하면 안 된다 — 그러면 판정자의 교정 능력을
+     * 통째로 버리는 것이고, 위반이 아닌 본문까지 고정 응답으로 대체된다.
+     */
+    @Test
+    @DisplayName("고쳐 쓴 본문이 필터를 통과하면 그대로 전달된다")
+    void cleanRewrittenBodyIsDelivered() {
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite("많이 힘드셨겠어요. 어떤 순간이 가장 무거웠나요?"));
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "rewrite-clean-key");
+
+        assertThat(emitter.everDeliveredText()).contains("많이 힘드셨겠어요");
+    }
+
+    /**
      * 위기 승격 턴의 사용자 화면 상태를 검증한다.
      *
      * <p>이벤트가 나갔는지가 아니라 <b>화면에 무엇이 남는지</b>로 판정한다. 지우는 이벤트가
