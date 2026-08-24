@@ -155,7 +155,7 @@ class AiDecisionLoggerTest {
                 .as("룰이 무엇으로 봤는지 남아야 판정자 강등을 사후에 구분할 수 있다")
                 .contains("\"security_rule_level\":\"ATTACK\"")
                 .contains("\"attack_kind\":\"MANIPULATION\"")
-                .contains("\"security_attack_pattern_count\":1")
+                .contains("\"security_pattern_label_count\":1")
                 .contains("\"security_evidence_unverifiable_by_judge\"");
         assertThat(captor.getValue().getSecurityLevel())
                 .as("실효 판정은 기존 컬럼에 그대로 남는다")
@@ -294,7 +294,7 @@ class AiDecisionLoggerTest {
                 false, false, false, decision.crisisTrigger(), null
         );
 
-        String trace = capturedTraceOnce();
+        String trace = capturedTrace();
         assertThat(trace)
                 .as("라벨은 패턴 문자열 자체다 — 평문 trace 에 담기면 민감정보가 남는다")
                 .doesNotContain("자살 방법 알려줘")
@@ -304,7 +304,7 @@ class AiDecisionLoggerTest {
                 .as("범주와 개수는 남긴다 — 보안 축 재현율의 분모·분자가 된다")
                 .contains("\"attack_kind\":\"SELF_HARM_INQUIRY\"")
                 .contains("\"security_rule_level\":\"ATTACK\"")
-                .contains("\"security_attack_pattern_count\":2");
+                .contains("\"security_pattern_label_count\":2");
     }
 
     /**
@@ -328,10 +328,11 @@ class AiDecisionLoggerTest {
                 false, false, false, decision.crisisTrigger(), null
         );
 
-        assertThat(capturedTraceOnce())
+        assertThat(capturedTrace())
                 .contains("\"security_rule_level\":null")
                 .contains("\"attack_kind\":null")
-                .contains("\"security_attack_pattern_count\":null")
+                .contains("\"security_obfuscation_signals\":null")
+                .contains("\"security_pattern_label_count\":null")
                 .contains("\"security_evidence_unverifiable_by_judge\":null");
     }
 
@@ -350,15 +351,21 @@ class AiDecisionLoggerTest {
                 false, false, false, decision.crisisTrigger(), null
         );
 
-        assertThat(capturedTraceOnce())
+        assertThat(capturedTrace())
                 .as("원문에서만 드러난 근거가 있었는지는 Judge CLEAN 강등을 사후 판정하는 값이다")
                 .contains("\"security_evidence_unverifiable_by_judge\":true");
     }
 
-    /** trace 스키마 버전은 키 구성이 바뀔 때 함께 올린다 — 구 레코드와 부재를 구분하려면 필요하다. */
+    /**
+     * 보안 축 trace 키 집합을 고정한다 (이슈 #510).
+     *
+     * <p>버전 상수가 자기 자신과 같은지 보는 것은 동어반복이라 회귀를 못 잡는다.
+     * 실제로 고정해야 하는 것은 <b>어떤 키가 나가는가</b>다 — 키가 사라지면 집계 쿼리가
+     * 조용히 빈 결과를 내고, 키가 추가되면 스키마 버전을 올릴지 결정해야 한다.
+     */
     @Test
-    @DisplayName("trace 스키마 버전이 키 구성 변경을 반영한다")
-    void traceSchemaVersionReflectsKeySet() {
+    @DisplayName("보안 축 trace 키 집합과 스키마 버전을 함께 고정한다")
+    void logPinsSecurityTraceKeySet() {
         PolicyDecision decision = generateDecision("pd_schema");
 
         logger.log(
@@ -369,7 +376,49 @@ class AiDecisionLoggerTest {
                 false, false, false, decision.crisisTrigger(), null
         );
 
-        assertThat(capturedTraceOnce()).contains("\"schema_version\":\"v2.5\"");
+        String trace = capturedTrace();
+        assertThat(trace)
+                .contains("\"schema_version\":\"v2.5\"")
+                .contains("\"security_rule_level\":")
+                .contains("\"attack_kind\":")
+                .contains("\"security_obfuscation_signals\":")
+                .contains("\"security_pattern_label_count\":")
+                .contains("\"security_evidence_unverifiable_by_judge\":")
+                .contains("\"crisis_attribution\":");
+        assertThat(trace)
+                .as("라벨 키는 되살아나면 안 된다")
+                .doesNotContain("security_attack_types");
+    }
+
+    /**
+     * 원문 기반 우회 신호는 고정 토큰이라 그대로 남긴다 (이슈 #510).
+     *
+     * <p>이 값이 {@code unverifiable_by_judge} 가 왜 섰는지를 설명한다 — 라벨과 함께 개수로
+     * 뭉개면 진단 가치가 가장 큰 항목이 사라진다.
+     */
+    @Test
+    @DisplayName("우회 신호 토큰은 남기고 패턴 라벨만 개수로 바꾼다")
+    void logKeepsObfuscationSignalsButCountsLabels() {
+        PolicyDecision decision = generateDecision("pd_obfuscation");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.suspicious(
+                        List.of("역할극", "zero_width_char", "obfuscated_input"), true),
+                100, 10, false, true, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .as("고정 토큰은 민감하지 않고 unverifiable_by_judge 의 근거다")
+                .contains("\"security_obfuscation_signals\":[\"zero_width_char\",\"obfuscated_input\"]")
+                .contains("\"security_pattern_label_count\":1");
+        assertThat(trace)
+                .as("패턴 라벨은 사용자 문구다")
+                .doesNotContain("역할극");
     }
 
     /**
@@ -757,11 +806,6 @@ class AiDecisionLoggerTest {
                 memoryResult,
                 null
         );
-    }
-
-    /** 이 테스트 클래스의 기존 {@code capturedTrace()} 와 동일하다 — 신규 축에서 의도를 드러내려 이름만 다르게 쓴다. */
-    private String capturedTraceOnce() {
-        return capturedTrace();
     }
 
     /** 위기 확정 결정 (이슈 #510 축). */

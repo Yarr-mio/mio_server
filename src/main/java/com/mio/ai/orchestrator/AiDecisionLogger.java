@@ -27,6 +27,7 @@ import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.ToLongFunction;
 
@@ -38,6 +39,17 @@ public class AiDecisionLogger {
     private static final String SCHEMA_VERSION = "v2.5";
     private static final String CRISIS_MARKER_PREFIX = "crisis_context_marker:";
     private static final String PROMPT_VERSION = "phase2";
+
+    /**
+     * {@code SecurityAssessment.attackTypes()} 안에서 <b>민감하지 않은</b> 항목 (이슈 #510).
+     *
+     * <p>그 리스트는 패턴 라벨(= 사용자 문구)과 원문 기반 우회 신호가 섞여 있다.
+     * 후자는 {@code SecurityRuleFilter.obfuscationSignals()} 가 만드는 고정 토큰 두 개뿐이고,
+     * 하필 {@code unverifiableByJudge} 의 산출 근거 그 자체다 — 라벨과 함께 개수로 뭉개면
+     * 진단 가치가 가장 큰 항목이 사라진다. 그래서 이 둘만 그대로 남기고 라벨은 개수로 바꾼다.
+     */
+    private static final Set<String> NON_SENSITIVE_SECURITY_SIGNALS =
+            Set.of("zero_width_char", "obfuscated_input");
 
     private final AiPolicyDecisionRepository repository;
     private final ObjectMapper objectMapper;
@@ -318,8 +330,17 @@ public class AiDecisionLogger {
      * 접두어로 필터링해 {@code crisis_keyword:*} 를 배제하는 규약을 이미 지키므로, 보안 축에도
      * 같은 규약을 적용한다 — <b>등급·성격·개수만</b> 남긴다.
      *
-     * <p>개수를 남기는 이유: 보안 축 재현율의 분모·분자가 되고, 어느 턴에서 여러 패턴이
-     * 동시에 걸렸는지가 오탐 분석의 단서다. 어떤 패턴이었는지는 평가셋에서 오프라인으로 본다.
+     * <p>라벨은 <b>개수만</b> 남긴다({@code security_pattern_label_count}). 보안 축 재현율의
+     * 분모·분자가 되고, 한 턴에 여러 패턴이 동시에 걸렸는지가 오탐 분석의 단서다. 어떤 패턴이
+     * 걸렸는지는 평가셋에서 오프라인으로 본다. 다만 이 개수는 계열을 구분하지 못한다 —
+     * 자해 질의 경로의 {@code attackTypes} 는 자해·조작·의심 세 계열의 합집합이므로
+     * ({@code SecurityRuleFilter} 의 self-harm 분기) 계열별 분해가 필요하면 별도 필드가 필요하다.
+     *
+     * <p>반면 원문 기반 우회 신호({@link #NON_SENSITIVE_SECURITY_SIGNALS})는 고정 토큰이라
+     * 그대로 남긴다 — 이 값이 {@code unverifiable_by_judge} 가 왜 섰는지를 설명한다.
+     *
+     * <p>근본 해결은 {@code trace} 의 보존기간·암호화 정책이다. 이 필터는 새 노출을 막을 뿐
+     * 이미 적재된 레코드를 정리하지 않는다 — <b>보존기간 정책과 함께 정리해야 하는 과제로 남는다.</b>
      *
      * <p>부재는 값으로 축약하지 않는다. 특히 {@code unverifiable_by_judge} 를 부재 시
      * {@code false} 로 두면 "원문 근거 없었음"과 "판정 객체 자체가 없었음"이 같은 값이 되어,
@@ -329,15 +350,20 @@ public class AiDecisionLogger {
         if (assessment == null) {
             trace.put("security_rule_level", null);
             trace.put("attack_kind", null);
-            trace.put("security_attack_pattern_count", null);
+            trace.put("security_obfuscation_signals", null);
+            trace.put("security_pattern_label_count", null);
             trace.put("security_evidence_unverifiable_by_judge", null);
             return;
         }
+        List<String> types = assessment.attackTypes();
+        List<String> signals = types.stream()
+                .filter(NON_SENSITIVE_SECURITY_SIGNALS::contains)
+                .toList();
         trace.put("security_rule_level", assessment.level().name());
         trace.put("attack_kind", assessment.attackKind() != null
                 ? assessment.attackKind().name() : null);
-        trace.put("security_attack_pattern_count",
-                assessment.attackTypes() != null ? assessment.attackTypes().size() : null);
+        trace.put("security_obfuscation_signals", signals);
+        trace.put("security_pattern_label_count", types.size() - signals.size());
         trace.put("security_evidence_unverifiable_by_judge", assessment.unverifiableByJudge());
     }
 
