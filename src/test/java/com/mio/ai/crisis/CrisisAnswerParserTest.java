@@ -198,6 +198,82 @@ class CrisisAnswerParserTest {
                 .isEqualTo(CrisisAnswer.YES);
     }
 
+    /**
+     * 경어 긍정 (이슈 #516).
+     *
+     * <p>경어 어휘가 없어서 존댓말로 답하는 사용자가 예·아니오 무관하게 전부 handoff 로
+     * 끊겼다 — 경어체 18건 중 판독된 것이 1건이었다. 정신건강 대화에서 존댓말은 드물지 않다.
+     *
+     * <p>완곡어와 달리 이건 개방집합이 아니다. 고정된 예/아니오 질문의 답변이고
+     * 한국어 경어 패러다임은 규칙적이다({@code 계시다}·{@code 있으시다}·{@code 없으시다}).
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "계세요",
+            "계십니다",
+            "옆에 계세요",
+            "어머니가 계세요",
+            "언니가 계셔서 괜찮아요",
+            "지금 같이 계세요",
+            "있으세요",
+            "있으십니다"})
+    @DisplayName("경어 긍정은 YES로 확정한다")
+    void honorificAffirmativeResolvesToYes(String answer) {
+        assertThat(parser.parse(answer)).isEqualTo(CrisisAnswer.YES);
+    }
+
+    /**
+     * 경어 부정 중 {@code 없으시다} 계열은 NO 로 확정된다 — 긍정 마커와 겹치지 않는다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {"없으세요", "없으십니다", "곁에 계신 분이 없어요"})
+    @DisplayName("'없으시다' 계열 경어 부정은 NO로 확정한다")
+    void honorificAbsenceResolvesToNo(String answer) {
+        assertThat(parser.parse(answer)).isEqualTo(CrisisAnswer.NO);
+    }
+
+    /**
+     * 전치 부정 {@code 안 계세요} 와 {@code 계시지 않다} 는 확정하지 않는다 (이슈 #516).
+     *
+     * <p>{@code 안계세} 를 부정 마커로 넣지 않으면 {@code 계세} 만 걸려 <b>YES 로 역전</b>된다.
+     * 넣으면 둘이 함께 매칭되어 혼합 → UNKNOWN 으로 fail-closed 된다. 즉 이 마커들은
+     * 정밀도를 위한 것이 아니라 <b>역전을 막는 장치</b>다.
+     *
+     * <p>{@code IMMEDIATE_SUPPORT} 에서 NO 와 UNKNOWN 의 도착지가 같으므로
+     * ({@code handoff()}) 실질 손실이 없다. 경어 존재 표현은 주로 이 단계에서 나타난다 —
+     * "죽고 싶은 생각이 있나요?" 에는 오지 않는다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "안 계세요",
+            "안 계십니다",
+            "아무도 안 계세요",
+            "연락드릴 분이 안 계세요",
+            "부모님도 안 계세요",
+            "계시지 않아요",
+            "계시지 못해요"})
+    @DisplayName("경어 부정은 긍정으로 확정되지 않는다")
+    void honorificNegationIsNeverAffirmative(String answer) {
+        assertThat(parser.parse(answer))
+                .as("'%s' 가 YES 로 확정되면 곁에 아무도 없는 사용자가 COMPLETED 로 종결된다", answer)
+                .isNotEqualTo(CrisisAnswer.YES);
+    }
+
+    /**
+     * {@code 계신} 은 마커에 넣지 않는다 (이슈 #516).
+     *
+     * <p>명사 수식 위치({@code 계신 분})에 주로 오므로 넣으면 {@code "계신가요 아무도"} 가
+     * YES 로 역전된다. 빼도 {@code "계신 분이 있어요"} 는 뒤따르는 {@code 있어} 가 판정하므로
+     * 손실이 없다.
+     */
+    @Test
+    @DisplayName("'계신'은 답변 마커가 아니다 — 뒤따르는 서술어가 판정한다")
+    void honorificModifierFormIsNotAnAnswerMarker() {
+        assertThat(parser.parse("계신 분이 있어요")).isEqualTo(CrisisAnswer.YES);
+        assertThat(parser.parse("곁에 계신 분이 없어요")).isEqualTo(CrisisAnswer.NO);
+        assertThat(parser.parse("계신가요 아무도")).isNotEqualTo(CrisisAnswer.YES);
+    }
+
     /** 평범한 구어 긍정. 어간+{@code -지} 를 마커에서 빼면 이것들이 UNKNOWN 으로 떨어진다. */
     @ParameterizedTest(name = "[{index}] {0}")
     @ValueSource(strings = {"있지", "있지요", "그런 사람 있지", "한 명 있지"})
@@ -219,15 +295,20 @@ class CrisisAnswerParserTest {
     }
 
     /**
-     * 차단 목록 밖의 부정 형태 — 현재 동작을 고정한다. 전부 마커가 없어 UNKNOWN 이지만,
-     * 그건 목록이 덮어서가 아니라 <b>매칭할 마커가 우연히 없어서</b>다. 마커 목록이 넓어지면
-     * 이 축이 먼저 깨지므로 회귀 감지 지점으로 남겨 둔다.
+     * 차단 목록 밖의 부정 형태 — 현재 동작을 고정한다. 마커 목록이 넓어지면 이 축이 먼저
+     * 깨지므로 회귀 감지 지점으로 남겨 둔다.
+     *
+     * <p>실제로 그렇게 작동했다 — 이슈 #516 이 경어 어휘를 추가할 때 여기 있던
+     * {@code "없으십니다"} 가 UNKNOWN → NO 로 바뀌어 이 테스트가 먼저 실패했다.
+     * 의도된 변경이라 그 케이스를 경어 축으로 옮겼다.
+     *
+     * <p>남은 것은 두 부류다. {@code 계시지 않아요}·{@code 안 계세요} 는 차단·혼합으로
+     * UNKNOWN 인 것이고, 나머지는 <b>매칭할 마커가 우연히 없어서</b> UNKNOWN 이다.
      */
     @ParameterizedTest(name = "[{index}] {0}")
     @ValueSource(strings = {
             "계시지 않아요",
             "안 계세요",
-            "없으십니다",
             "그런 생각 안 들어요",
             "떠오르지 않아요",
             "계획은 세우지 않았어요",
