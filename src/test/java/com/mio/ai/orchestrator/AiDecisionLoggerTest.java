@@ -76,8 +76,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -137,8 +136,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 true,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -209,8 +207,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 true,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 MemoryCacheOutcome.live(),
@@ -259,7 +256,7 @@ class AiDecisionLoggerTest {
                 UUID.randomUUID(), UUID.randomUUID(), decision,
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(), SecurityAssessment.clean(),
-                100, 10, false, false, null, null, "default",
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -290,7 +287,7 @@ class AiDecisionLoggerTest {
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(),
                 SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘", "단계별 자해 방법")),
-                100, 10, true, false, null, null, "default",
+                100, 10, true, false, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -324,7 +321,7 @@ class AiDecisionLoggerTest {
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(),
                 null,
-                100, 10, false, false, null, null, "default",
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -347,7 +344,7 @@ class AiDecisionLoggerTest {
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(),
                 SecurityAssessment.suspicious(List.of("역할극"), true),
-                100, 10, false, true, null, null, "default",
+                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -372,7 +369,7 @@ class AiDecisionLoggerTest {
                 UUID.randomUUID(), UUID.randomUUID(), decision,
                 new ModerationResult(false, Map.of(), Map.of()),
                 SafetyL1Result.clear(), SecurityAssessment.clean(),
-                100, 10, false, false, null, null, "default",
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -407,7 +404,7 @@ class AiDecisionLoggerTest {
                 SafetyL1Result.clear(),
                 SecurityAssessment.suspicious(
                         List.of("역할극", "zero_width_char", "obfuscated_input"), true),
-                100, 10, false, true, null, null, "default",
+                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
                 false, false, false, decision.crisisTrigger(), null
         );
 
@@ -458,8 +455,7 @@ class AiDecisionLoggerTest {
                 10,
                 true,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -516,8 +512,7 @@ class AiDecisionLoggerTest {
                 10,
                 true,
                 false,
-                OutputPreFilterResult.pass(),
-                null,
+                new OutputGuardOutcome(OutputPreFilterResult.pass(), null, false),
                 "default",
                 false,
                 false,
@@ -561,8 +556,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -596,8 +590,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -630,8 +623,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 true,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -790,8 +782,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                OutputPreFilterResult.pass(),
-                judgeResult,
+                new OutputGuardOutcome(OutputPreFilterResult.pass(), judgeResult, false),
                 "default",
                 false,
                 MemoryCacheOutcome.live(),
@@ -845,8 +836,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,

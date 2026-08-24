@@ -67,8 +67,7 @@ public class AiDecisionLogger {
             long llmTtftMs,
             boolean crisisFlowTriggered,
             boolean inputJudgeCalled,
-            OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult,
+            OutputGuardOutcome outputGuard,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
             MemoryCacheOutcome memoryCache,
@@ -87,7 +86,7 @@ public class AiDecisionLogger {
             Map<String, Object> trace = buildTrace(
                     moderation, l1Result, securityAssessment, llmTtftMs, totalPipelineMs,
                     crisisFlowTriggered, decision,
-                    inputJudgeCalled, preFilterResult, outputJudgeResult,
+                    inputJudgeCalled, outputGuard,
                     l1ThresholdSource, safetyProfileCacheHit, memoryCache,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs, firstRenderedTokenMs, safePrefixApplied,
@@ -131,8 +130,7 @@ public class AiDecisionLogger {
             long llmTtftMs,
             boolean crisisFlowTriggered,
             boolean inputJudgeCalled,
-            OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult,
+            OutputGuardOutcome outputGuard,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
             boolean memoryCacheHit,
@@ -142,7 +140,7 @@ public class AiDecisionLogger {
         // 편의 오버로드는 staleness 를 받지 않는다 — 폴백 경로를 지나지 않는 호출용이다.
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
-                preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
+                outputGuard, l1ThresholdSource, safetyProfileCacheHit,
                 memoryCacheHit ? MemoryCacheOutcome.fallback(null) : MemoryCacheOutcome.live(),
                 safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
                 ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
@@ -162,7 +160,7 @@ public class AiDecisionLogger {
             boolean crisisFlowTriggered) {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
-                false, OutputPreFilterResult.pass(), null,
+                false, OutputGuardOutcome.preFilterOnly(OutputPreFilterResult.pass()),
                 "default", false, MemoryCacheOutcome.live(), false, decision.crisisTrigger(), null,
                 ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
     }
@@ -176,8 +174,7 @@ public class AiDecisionLogger {
             boolean crisisFlowTriggered,
             PolicyDecision decision,
             boolean inputJudgeCalled,
-            OutputPreFilterResult preFilterResult,
-            OutputJudgeResult outputJudgeResult,
+            OutputGuardOutcome outputGuard,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
             MemoryCacheOutcome memoryCache,
@@ -289,12 +286,18 @@ public class AiDecisionLogger {
         trace.put("contract_result", contractResult != null
                 ? contractResult.logValue() : ResponseContractResult.notApplicable().logValue());
         trace.put("contract_violations", contractResult != null ? contractResult.violations() : List.of());
+        OutputPreFilterResult preFilterResult = outputGuard.preFilter();
+        OutputJudgeResult outputJudgeResult = outputGuard.judge();
         trace.put("output_pre_filter_result", preFilterResult != null
                 ? (preFilterResult.passed() ? "PASS" : "FAIL") : null);
         trace.put("output_pre_filter_fail_reasons", preFilterResult != null
                 ? preFilterResult.failReasons() : null);
         trace.put("output_judge_action", outputJudgeResult != null
                 ? outputJudgeResult.action().name() : null);
+        // 판정자가 고쳐 쓴 본문이 다시 위반이어서 거부됐는가 (이슈 #526). 이 값이 없으면
+        // "판정이 고쳐 썼다" 와 "고쳐 쓴 것이 다시 위반이었다" 를 구분할 수 없고, 그러면
+        // 재검증이 실제로 발동하는지 알 수 없다.
+        trace.put("rewrite_rejected", outputGuard.rewriteRejected());
         // action 만으로는 "위험하다고 판정해서 REPLACE" 와 "판정을 못 받아서 REPLACE" 가
         // 구별되지 않는다 (이슈 #364). Input Judge 의 judge_status 와 같은 계약이다.
         //   SKIPPED   → Judge 를 부르지 않았다 (pre-filter 통과)

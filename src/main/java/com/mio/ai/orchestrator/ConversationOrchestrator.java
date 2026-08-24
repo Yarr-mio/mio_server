@@ -344,6 +344,9 @@ public class ConversationOrchestrator {
             // 출력 가드가 승격시킨 위기는 decision.action() 이 GENERATE 라 결정에 경로가 없다.
             CrisisTrigger appliedCrisisTrigger = null;
             OutputPreFilterResult preFilterResult = OutputPreFilterResult.pass();
+            // 판정자가 고쳐 쓴 본문을 재검증에서 거부했는지 — trace 로 나간다 (이슈 #526).
+            // 로거 호출과 같은 스코프에 둔다.
+            AtomicBoolean rewriteRejected = new AtomicBoolean(false);
             // 전달 계측 (이슈 #306). 첫 생성 토큰 지연(llmTtftMs)과 구분해서 남긴다 —
             // 하나로 재면 서버가 먼저 보내는 문구만으로도 수치가 좋아진다.
             AtomicLong firstSubstantiveTokenMs = new AtomicLong(-1);
@@ -411,6 +414,7 @@ public class ConversationOrchestrator {
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
                 boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
+                RewriteGuard rewriteGuard = new RewriteGuard(responsePlan, rewriteRejected);
 
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
@@ -431,7 +435,7 @@ public class ConversationOrchestrator {
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
                                     finishedReasonRef, crisisSeverityRef, turn, turnPersisted,
-                                    firstSubstantiveTokenMs, startMs, deliveredPrefix);
+                                    firstSubstantiveTokenMs, startMs, deliveredPrefix, rewriteGuard);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
                                 crisisContextRef.set(true);
@@ -589,11 +593,12 @@ public class ConversationOrchestrator {
                             }
                             recordCrisisOutcome(crisisResult, finishedReasonRef, crisisSeverityRef);
                         } else {
+                            // BUFFER 경로와 같은 재검증을 쓴다 (이슈 #526). 두 경로가 각자
+                            // REWRITE 를 처리하면 한쪽만 고쳐지고, 실제로 그렇게 됐다.
                             String replacedContent = switch (judgeActionResult.action()) {
-                                case REWRITE -> judgeActionResult.rewrittenContent() != null
-                                        ? judgeActionResult.rewrittenContent()
-                                        : "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
-                                case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+                                case REWRITE -> rewrittenBodyOrSafeFixed(
+                                        judgeActionResult, SAFE_FIXED_RESPONSE, rewriteGuard);
+                                case REPLACE -> SAFE_FIXED_RESPONSE;
                                 case SEND, CRISIS_FLOW -> null;
                             };
 
@@ -693,7 +698,8 @@ public class ConversationOrchestrator {
                     resolveFinishedReason(finishedReasonRef));
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
-                    inputJudgeCalled, preFilterResult, judgeActionResult,
+                    inputJudgeCalled,
+                    new OutputGuardOutcome(preFilterResult, judgeActionResult, rewriteRejected.get()),
                     profile.source(), safetyProfileCacheHit, memoryCache,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs.get(), firstRenderedMs,
@@ -953,6 +959,74 @@ public class ConversationOrchestrator {
                 base.severity(), base.fixedResponse() + " " + crisisFixedFlowCoordinator.initialResponse());
     }
 
+    /**
+     * 서버 고정 안전 응답. {@code REPLACE} 와 <b>재검증에 실패한 {@code REWRITE}</b> 가 같은
+     * 문구를 쓴다 — 고쳐 쓴 것이 다시 위반이면 REPLACE 로 내리는 것과 같기 때문이다.
+     */
+    private static final String SAFE_FIXED_RESPONSE = "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
+
+    /**
+     * 판정자가 다시 쓴 본문을 결정론 필터에 다시 통과시킨다 (이슈 #526).
+     *
+     * <p>{@code REWRITE} 는 판정자가 <b>본문을 직접 써서</b> 돌려주는 유일한 경로다. 그리고
+     * {@code OutputJudge} 프롬프트에는 생성 모델의 출력(= 사용자 입력에 영향받은 텍스트)이
+     * 구분자 없이 들어간다. 즉 이 경로가 결정론 필터를 우회해 임의 본문을 사용자에게 주입할
+     * 수 있는 <b>가장 짧은 길</b>이다.
+     *
+     * <p><b>판정자에게 두 번째 기회를 주지 않는다.</b> 고쳐 쓴 본문이 다시 위반이면 서버 고정
+     * 응답으로 내린다 — 같은 판정자가 만든 위반을 같은 판정자에게 다시 물을 근거가 없고,
+     * 재호출은 과금과 지연을 늘리면서 같은 실패를 반복할 수 있다.
+     *
+     * <p>재검증은 {@code REWRITE} 에만 적용한다. {@code REPLACE}·{@code CRISIS_FLOW} 의 본문은
+     * 서버 고정 문구이므로 검사할 이유가 없고, 오탐이 나면 위기 응답을 망친다.
+     */
+    private String rewrittenBodyOrSafeFixed(
+            OutputJudgeResult result, String originalContent, RewriteGuard guard) {
+        String rewritten = result.rewrittenContent();
+        if (rewritten == null) {
+            return originalContent;
+        }
+        // 재검증은 **의미** 규칙만 본다. 어조·형식으로 판정자를 거부하지 않는다.
+        //
+        // check() 는 역할 주장·진단·의존 강화·지침 유출·자해 방법을 본다.
+        // checkWithCrisisContext() 는 그 위에 CRISIS_MISMATCH 어조 휴리스틱을 얹는데
+        // 그건 쓰지 않는다 — 우리가 판정자에게 고치라고 시킨 바로 그 항목이고, 키워드만
+        // 보므로 정상 위로 문구(`힘내요`·`괜찮아질 거야`)가 걸린다. 그러면 판정자의 교정이
+        // 가장 필요한 위기 인접 턴에서 매번 고정 문구로 대체된다 (이슈 #528).
+        //
+        // 계약은 **금지 요소만** 본다. 정체성 단정·결과 보장·진단 귀속은 OutputPreFilter 의
+        // 다섯 범주에 대응하는 것이 없고 임상 제약이다 — `당신은 정말 좋은 사람이에요.
+        // 꼭 좋아질 거예요.` 가 check() 를 통과한다. 반면 질문 수·문장 수는 형식이라
+        // 빼둔다: 고정 문구가 계약을 만족하는 것도 아니어서 형식 위반을 다른 형식 위반으로
+        // 바꾸는 셈이고, 안전을 얻지 못하면서 코칭만 잃는다.
+        OutputPreFilterResult recheck = mergeContractViolations(
+                outputPreFilter.check(rewritten),
+                responseContractValidator.validateForbiddenElements(guard.responsePlan(), rewritten));
+        if (recheck.passed()) {
+            return rewritten;
+        }
+        log.warn("OutputJudge REWRITE body still violated the deterministic filter — "
+                + "falling back to the fixed safe response. reasons={}", recheck.failReasons());
+        guard.rejected().set(true);
+        return SAFE_FIXED_RESPONSE;
+    }
+
+    /**
+     * {@code REWRITE} 재검증 결과를 밖으로 실어 내는 통로 (이슈 #526).
+     *
+     * <p>{@code resolveOutputJudgeAction} 은 이미 파라미터가 16개다. 거부 여부를 파라미터로
+     * 더 붙이는 대신 이 값으로 묶는다.
+     *
+     * <p>{@code inputHadRiskSignal} 은 들고 다니지 않는다 — 재검증이 어조 휴리스틱
+     * ({@code CRISIS_MISMATCH})을 쓰지 않으므로 필요가 없다. {@code responsePlan} 은
+     * 계약의 금지 요소가 계획별로 다르므로 필요하다(고위험 계획은 {@code advice}·
+     * {@code cbt_intervention} 을 추가로 금지한다).
+     *
+     * @param responsePlan 금지 요소 재검증 기준
+     * @param rejected     재검증이 본문을 거부했는지 — trace 로 나간다
+     */
+    private record RewriteGuard(ResponsePlan responsePlan, AtomicBoolean rejected) {}
+
     private String resolveOutputJudgeAction(
             OutputJudgeResult result,
             String originalContent,
@@ -969,11 +1043,12 @@ public class ConversationOrchestrator {
             AtomicBoolean turnPersisted,
             AtomicLong firstSubstantiveTokenMs,
             long pipelineStartedAtMs,
-            String deliveredPrefix) throws IOException {
+            String deliveredPrefix,
+            RewriteGuard rewriteGuard) throws IOException {
 
         return switch (result.action()) {
             case SEND -> originalContent;
-            case REWRITE -> result.rewrittenContent() != null ? result.rewrittenContent() : originalContent;
+            case REWRITE -> rewrittenBodyOrSafeFixed(result, originalContent, rewriteGuard);
             case REPLACE -> "지금 많이 힘드시겠어요. 잠시 함께 이야기 나눠볼게요.";
             case CRISIS_FLOW -> {
                 // 전송 전에 결말을 저장한다 (이슈 P0-A 리뷰 반영).
