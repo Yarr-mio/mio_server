@@ -414,8 +414,7 @@ public class ConversationOrchestrator {
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
                 boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
-                RewriteGuard rewriteGuard =
-                        new RewriteGuard(responsePlan, inputHadRiskSignal, rewriteRejected);
+                RewriteGuard rewriteGuard = new RewriteGuard(rewriteRejected);
 
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
@@ -987,9 +986,16 @@ public class ConversationOrchestrator {
         if (rewritten == null) {
             return originalContent;
         }
-        OutputPreFilterResult recheck = mergeContractViolations(
-                outputPreFilter.checkWithCrisisContext(rewritten, guard.inputHadRiskSignal()),
-                responseContractValidator.validate(guard.responsePlan(), rewritten));
+        // 내용 안전만 본다 (리뷰 반영). check() 는 역할 주장·진단·의존 강화·지침 유출·
+        // 자해 방법 다섯 가지를 보고, checkWithCrisisContext() 는 그 위에 CRISIS_MISMATCH
+        // 어조 휴리스틱을 얹는다. 후자를 재검증에 넣으면 안 된다 — 그건 우리가 판정자에게
+        // 고치라고 시킨 바로 그 항목이고, 키워드만 보므로 정상 위로 문구
+        // (`힘내요`·`괜찮아질 거야`)가 걸린다. 그러면 판정자의 교정이 가장 필요한 위기 인접
+        // 턴에서 매번 고정 문구로 대체된다.
+        //
+        // 계약 검증도 넣지 않는다. 계약 위반은 형식 문제이고 고정 문구가 계약을 만족하는
+        // 것도 아니므로, 안전을 얻지 못하면서 오거부 경로만 늘린다.
+        OutputPreFilterResult recheck = outputPreFilter.check(rewritten);
         if (recheck.passed()) {
             return rewritten;
         }
@@ -1000,17 +1006,18 @@ public class ConversationOrchestrator {
     }
 
     /**
-     * {@code REWRITE} 재검증에 필요한 것만 묶는다 (이슈 #526).
+     * {@code REWRITE} 재검증 결과를 밖으로 실어 내는 통로 (이슈 #526).
      *
-     * <p>{@code resolveOutputJudgeAction} 은 이미 파라미터가 16개다. 여기에 두 개를 더 붙이면
-     * 읽을 수 없어진다. 그리고 세 값은 같은 목적으로만 쓰이므로 함께 다니는 것이 맞다.
+     * <p>{@code resolveOutputJudgeAction} 은 이미 파라미터가 16개다. 거부 여부를 파라미터로
+     * 더 붙이는 대신 이 값으로 묶는다.
      *
-     * @param responsePlan        계약 재검증 기준
-     * @param inputHadRiskSignal  위기 문맥 판정에 쓰는 입력측 신호
-     * @param rejected            재검증이 본문을 거부했는지 — trace 로 나간다
+     * <p>처음에는 {@code responsePlan}·{@code inputHadRiskSignal} 도 함께 들고 다녔는데,
+     * 재검증 범위를 내용 안전으로 좁히면서 둘 다 필요 없어졌다 — 좁힌 검사는 응답 계획도
+     * 입력측 신호도 보지 않는다.
+     *
+     * @param rejected 재검증이 본문을 거부했는지 — trace 로 나간다
      */
-    private record RewriteGuard(
-            ResponsePlan responsePlan, boolean inputHadRiskSignal, AtomicBoolean rejected) {}
+    private record RewriteGuard(AtomicBoolean rejected) {}
 
     private String resolveOutputJudgeAction(
             OutputJudgeResult result,

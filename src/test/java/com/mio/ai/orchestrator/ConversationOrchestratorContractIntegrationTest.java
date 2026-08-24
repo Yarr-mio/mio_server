@@ -452,6 +452,38 @@ class ConversationOrchestratorContractIntegrationTest {
     }
 
     /**
+     * 재검증은 <b>내용 안전</b>만 본다 — 어조·형식으로 판정자를 거부하지 않는다 (이슈 #526 리뷰).
+     *
+     * <p>{@code CRISIS_MISMATCH} 는 "위기 입력에 가벼운 응답" 을 잡는 어조 휴리스틱이고,
+     * 키워드만 본다({@code 힘내요}·{@code 괜찮아질 거야} 등). <b>그건 우리가 판정자에게
+     * 고치라고 시킨 바로 그 항목이다.</b> 재검증에 다시 넣으면 판정자가 위로 문구를 쓸 때마다
+     * 거부되고 고정 문구로 대체된다 — 판정자의 교정이 가장 필요한 위기 인접 턴에서.
+     *
+     * <p>그리고 그 대체는 개선이 아니다. 고정 문구는 이 휴리스틱을 통과하지만 코칭으로서는
+     * 훨씬 나쁘다. 즉 안전을 얻는 것이 아니라 품질만 잃는다.
+     *
+     * <p>재검증이 거부해야 하는 것은 <b>주입된 내용</b>이다 — 역할 주장·진단·의존 강화·
+     * 지침 유출·자해 방법. 그 경우에만 고정 문구가 판정자 본문보다 실제로 낫다.
+     */
+    @Test
+    @DisplayName("위로 표현이 든 고쳐 쓴 본문을 어조 휴리스틱으로 거부하지 않는다")
+    void rewriteIsNotRejectedForComfortingToneOnACrisisTurn() {
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        // CRISIS_MISMATCH 키워드('힘내요'·'괜찮아질 거야')를 담았지만 내용 안전 위반은 없다.
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite(
+                        "많이 힘드셨겠어요. 지금 느끼는 감정은 자연스러운 거예요. "
+                                + "혼자 두지 않을게요, 곧 괜찮아질 거야."));
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "rewrite-tone-key");
+
+        assertThat(emitter.everDeliveredText())
+                .as("어조 휴리스틱으로 거부하면 위기 턴마다 같은 고정 문구가 나간다")
+                .contains("많이 힘드셨겠어요");
+    }
+
+    /**
      * 판정자가 다시 쓴 본문도 결정론 필터를 지나야 한다 (이슈 #526).
      *
      * <p>{@code REWRITE} 는 판정자가 <b>본문을 직접 써서</b> 돌려주는 유일한 경로다. 그리고
