@@ -121,6 +121,49 @@ class CrisisAnswerParserTest {
     }
 
     /**
+     * {@code -지 못하다} 도 부정 보조용언이다 (이슈 #512, 리뷰 지적).
+     *
+     * <p>{@code 못} 은 {@code 않} 과 동급인데 부정 슬롯에서 빠져 있었다.
+     * {@code "곁에 있지 못해요"}(= 아무도 못 있다)가 {@code 있지} 마커에 걸려
+     * {@code IMMEDIATE_SUPPORT} 에서 {@code COMPLETED} 로 종결됐다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "곁에 있지 못해요",
+            "있지 못해요",
+            "있지는 못해요",
+            "있지도 못합니다",
+            "없지 못해요"})
+    @DisplayName("'-지 못하다'도 확정하지 않는다")
+    void inabilityNegationIsNotResolved(String answer) {
+        assertThat(parser.parse(answer)).isEqualTo(CrisisAnswer.UNKNOWN);
+    }
+
+    /**
+     * 오타·조사 삽입으로 차단을 비껴가는 형태 (이슈 #512).
+     *
+     * <p>{@code 않}→{@code 안} 은 한국어에서 가장 흔한 표기 오류 중 하나이고,
+     * {@code 있지도 아니해요} 처럼 조사가 끼면 {@code 있지아니} 연속 매칭이 깨진다.
+     * 그러면 {@code 있지} 가 긍정 마커로 걸려 {@code IMMEDIATE_SUPPORT} 에서
+     * {@code COMPLETED} 로 종결된다 — 곁에 아무도 없다고 답한 사용자다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "옆에 아무도 있지 안아요",
+            "있지는 안아요",
+            "있지 안습니다",
+            "있지도 아니해요",
+            "있지가 아니라",
+            "없지 안아요",
+            "있지를 안아요"})
+    @DisplayName("'않→안' 오타와 조사 삽입도 확정하지 않는다")
+    void typoAndParticleVariantsAreNotResolved(String answer) {
+        assertThat(parser.parse(answer))
+                .as("'%s' 는 부정이다 — 오타 때문에 긍정으로 확정되면 위기 플로우가 잘못 닫힌다", answer)
+                .isEqualTo(CrisisAnswer.UNKNOWN);
+    }
+
+    /**
      * 양보 연결어미 {@code -지만} 도 같은 자리다. 부정 보조용언은 아니지만 결과가 같다 —
      * {@code "없지만 …"} 은 뜻이 부정인데 뒤에 긍정 마커가 오면 YES 로 뒤집히고,
      * {@code "있지만 연락은 안 해요"} 는 뜻이 부정인데 {@code 있지} 때문에 YES 가 된다.

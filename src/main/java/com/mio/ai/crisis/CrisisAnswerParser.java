@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * 고정 handoff 로 fail-closed 처리한다.
  *
  * <p>마커 스캔보다 먼저 보는 것이 하나 있다 — 존재 서술어 어간에 {@code -지} 계열 어미가
- * 붙은 형태({@link #EXISTENCE_POLARITY_BLOCKERS}). 한국어 부정은 어미에 후치하므로
+ * 붙은 형태({@link #EXISTENCE_POLARITY_BLOCKER}). 한국어 부정은 어미에 후치하므로
  * ({@code -지 않다}) 어간만 읽으면 부정문이 긍정으로 확정된다. 이 형태가 있으면 극성을
  * 해소하지 않고 UNKNOWN 으로 닫는다 (이슈 #504).
  */
@@ -31,9 +31,9 @@ public class CrisisAnswerParser {
      * 붙은 형태만 인정해, 답이 아닌 문장은 UNKNOWN 으로 남아 handoff 로 닫히게 한다.
      *
      * <p>{@code 있지}·{@code 없지} 는 그대로 둔다. {@code -지} 가 부정 보조용언 {@code 않다} 를
-     * 이끄는 자리이기도 하지만, 그 충돌은 {@link #EXISTENCE_POLARITY_BLOCKERS} 가 마커 스캔보다
-     * 먼저 걸러낸다 (이슈 #504). 마커를 지우면 {@code "있지"}·{@code "있지요"} 같은 평범한 구어
-     * 긍정을 잃고, {@code "없지만"} 이 부정 증거를 통째로 잃어 YES 로 뒤집힌다.
+     * 이끄는 자리이기도 하지만, 그 충돌은 {@link #EXISTENCE_POLARITY_BLOCKER} 가 마커 스캔보다
+     * 먼저 걸러낸다 (이슈 #504). 마커를 지우면 {@code "있지"}·{@code "있지요"} 같은 평범한
+     * 구어 긍정을 잃는다.
      */
     private static final List<String> YES_MARKERS = List.of(
             "있어", "있습", "있다", "있음", "있네", "있죠", "있지", "있는데",
@@ -59,32 +59,36 @@ public class CrisisAnswerParser {
      */
     private static final List<String> NO_PREFIXES = List.of("아니");
 
-    /** 존재 서술어 어간. {@code -지} 계열 어미와 결합할 때 극성이 모호해지는 두 형태다. */
-    private static final List<String> EXISTENCE_STEMS = List.of("있", "없");
-
     /**
-     * {@code -지} 계열 어미 — 앞의 존재 서술어를 <b>답으로 확정할 수 없게</b> 만드는 형태.
-     *
-     * <p>{@code -지 않다}(부정 보조용언)와 {@code -지만}(양보 연결어미) 둘 다 포함한다.
-     * 종류는 다르지만 결과가 같다 — 어느 쪽이든 {@code 있지}·{@code 없지} 를 종결형 답변으로
-     * 읽으면 문장의 뜻과 반대가 된다.
-     */
-    private static final List<String> POLARITY_SUFFIXES = List.of(
-            "지않", "진않", "지는않", "지가않", "지도않", "질않", "지를않", "지아니", "지만");
-
-    /**
-     * 존재 서술어 어간에 {@code -지} 계열 어미가 붙은 형태 (이슈 #504).
+     * 존재 서술어 어간에 {@code -지} 계열 어미가 붙어 극성이 모호해지는 형태 (이슈 #504, #512).
      *
      * <p>한국어 부정은 어미에 후치한다({@code -지 않다}). 그래서 서술어 어간만 읽으면
      * {@code "있지 않아요"}(= 없다)가 긍정으로, {@code "없지만 …"}(= 없다)이 부정 증거 없이
      * 남는다. {@code IMMEDIATE_SUPPORT} 단계에서 그 오판독은 곁에 아무도 없다고 답한 사용자를
      * {@code COMPLETED} 로 종결시키고 "그 사람에게 연락하라"고 안내한다 — 안전의 반대 방향이다.
      *
+     * <p><b>리터럴 목록이 아니라 정규식이다 (이슈 #512).</b> 처음에는 18개 문자열을 열거했는데
+     * {@code 않}→{@code 안} 오타와 조사 삽입({@code "있지도 아니해요"})이 연속 매칭을 깨고
+     * 그대로 통과했다. {@code 않}→{@code 안} 은 한국어에서 가장 흔한 표기 오류 중 하나다.
+     * 어간 + 어미 + 부정을 각각의 자리로 쓰면 그 변형이 함께 덮인다.
+     *
+     * <p>부정 슬롯에 {@code 못} 도 넣는다 — {@code 않} 과 동급인데 빠져 있었고,
+     * {@code "곁에 있지 못해요"} 가 긍정으로 확정됐다. {@code 있지못}·{@code 없지못} 은
+     * 부정 외 용례가 없어 오탐 위험도 없다.
+     *
+     * <p><b>{@code 안} 분기에는 오탐이 남는다.</b> 판단 단위가 낱말이 아니라 음절열이기 때문이다 —
+     * {@link #NON_ANSWER_CHARS} 가 공백을 지우므로 {@code "있지, 안 그래도 연락하려 했어요"} 가
+     * {@code 있지안…} 으로 붙어 걸린다({@code 안심}·{@code 안방} 도 같다). 방향은 전부
+     * handoff 안전측이지만 손실은 0이 아니다 — 명확히 긍정으로 답한 사용자가 핫라인 안내를 받는다.
+     * 특히 {@code MEANS_ACCESS} 에서는 지원 인물 확인 단계를 건너뛰게 되고, 이 정규식이 그
+     * 트리거 집합을 넓혔다. 낱말 경계를 보려면 형태소 경계 인식이 필요하고 그건 별도 과제다.
+     *
+     * <p>{@code 있지}·{@code 있지요} 단독은 계속 긍정으로 확정된다.
+     *
      * <p><b>어간에 붙은 형태만 본다.</b> {@code -지 않} 전체를 차단하면
      * {@code "계획은 세우지 않았지만 도구는 구했어요"} 처럼 <b>다른</b> 서술어가 부정되고 준비
      * 완료 진술이 따라오는 문장까지 삼켜, 이 클래스가 명시한 규율(준비 행동 동사는 부정 서두
-     * 뒤에 나와도 긍정 증거다)을 깨뜨린다. 충돌은 {@code 있}·{@code 없} 어간에만 있으므로
-     * 그 자리만 막는다.
+     * 뒤에 나와도 긍정 증거다)을 깨뜨린다. 충돌은 {@code 있}·{@code 없} 어간에만 있다.
      *
      * <p><b>극성을 해소하지 않고 UNKNOWN 으로 닫는다.</b> 이중부정
      * ({@code "없지 않아요"} = 있다)까지 정확히 풀려면 선행 서술어를 읽어야 하고, 그 판단을
@@ -92,10 +96,13 @@ public class CrisisAnswerParser {
      * 처리하며 {@code IMMEDIATE_SUPPORT} 에서는 NO 와 도착지가 같다. 나머지 단계에서는
      * 핫라인 우선으로 보수화되는 방향이다 — 단 {@code MEANS_ACCESS} 는 YES·NO 도착지가 같아
      * (둘 다 {@code IMMEDIATE_SUPPORT}) UNKNOWN 이 지원 인물 확인 단계를 건너뛰게 만든다.
+     *
+     * <p>남은 사각지대는 이슈 #509 · #512 에 정리했다 — 전치 부정({@code "안 있어요"}),
+     * 절단·간투사({@code "있지를"}), 경어({@code "안 계세요"}), 이중부정 마커 충돌.
      */
-    private static final List<String> EXISTENCE_POLARITY_BLOCKERS = EXISTENCE_STEMS.stream()
-            .flatMap(stem -> POLARITY_SUFFIXES.stream().map(suffix -> stem + suffix))
-            .toList();
+    private static final Pattern EXISTENCE_POLARITY_BLOCKER = Pattern.compile(
+            "(?:있|없)(?:지(?:는|가|도|를)?|진|질)(?:않|안|아니|못)"
+                    + "|(?:있|없)지만");
 
     /** 매 턴 호출되는 경로라 정규식을 미리 컴파일한다. */
     private static final Pattern NON_ANSWER_CHARS = Pattern.compile("[^가-힣a-z]");
@@ -110,7 +117,7 @@ public class CrisisAnswerParser {
 
         // 극성이 뒤집히는 자리이므로 마커 스캔보다 먼저 본다. 마커를 먼저 읽으면
         // 부정문 안의 서술어 어간이 그 문장의 답으로 확정된다.
-        if (containsAny(normalized, EXISTENCE_POLARITY_BLOCKERS)) {
+        if (EXISTENCE_POLARITY_BLOCKER.matcher(normalized).find()) {
             return CrisisAnswer.UNKNOWN;
         }
 
