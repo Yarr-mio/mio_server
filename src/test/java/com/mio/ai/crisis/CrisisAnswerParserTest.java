@@ -199,6 +199,73 @@ class CrisisAnswerParserTest {
     }
 
     /**
+     * 고립 표현이 존재 긍정을 지운다 (이슈 #516 리뷰).
+     *
+     * <p>{@code "혼자 있어요"} 는 곁에 아무도 없다는 뜻인데 {@code 있어} 마커가 걸려 YES 로
+     * 확정됐다 — develop 에서 이미 그랬고, 경어 마커를 추가하면 {@code "혼자 계세요"} 까지
+     * 같은 경로로 들어온다. {@code IMMEDIATE_SUPPORT} 에서 이 오판독은 혼자인 사용자를
+     * {@code COMPLETED} 로 종결시킨다.
+     *
+     * <p>고립 표현은 <b>독립 부정 증거로 쓰지 않는다.</b> 존재·동의 긍정을 무효화할 뿐이다.
+     * NO 마커로 넣으면 {@code CURRENT_INTENT} 에서 {@code "혼자 있을 때 그런 생각이 들어요"} 가
+     * NO 로 확정돼 계획·수단 질문을 건너뛰는 <b>역방향 완화</b>가 생긴다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "혼자 있어요",
+            "저 혼자 있어요",
+            "혼자 계세요",
+            "그냥 혼자 계셔요",
+            "네 혼자 있어요",
+            "혼자예요 맞아요"})
+    @DisplayName("고립 표현이 있으면 존재 긍정으로 확정하지 않는다")
+    void isolationCancelsExistenceAffirmative(String answer) {
+        assertThat(parser.parse(answer))
+                .as("'%s' 가 YES 로 확정되면 혼자인 사용자가 COMPLETED 로 종결된다", answer)
+                .isNotEqualTo(CrisisAnswer.YES);
+    }
+
+    /**
+     * 고립 표현은 준비 행동 진술을 지우지 않는다 (이슈 #516 리뷰).
+     *
+     * <p>이 클래스의 규율은 준비 행동 동사가 부정 문맥 뒤에 나와도 긍정 증거라는 것이다.
+     * {@code PLAN}·{@code MEANS} 단계의 {@code "혼자 정했어요"} 는 에스컬레이션 대상이므로
+     * 고립 표현으로 무효화하면 안 된다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {"혼자 정했어요", "혼자 준비했어요", "혼자 구했어요"})
+    @DisplayName("고립 표현은 준비 행동 진술을 지우지 않는다")
+    void isolationDoesNotEraseePreparationStatements(String answer) {
+        assertThat(parser.parse(answer)).isEqualTo(CrisisAnswer.YES);
+    }
+
+    /**
+     * 경어 존재 서술어는 낱말 첫머리에서만 인정한다 (이슈 #516 리뷰).
+     *
+     * <p>{@code -계} 로 끝나는 명사 + 종결어미가 {@code 계세}·{@code 계십} 로 붙는다
+     * ({@code 관계세요}·{@code 단계세요}). 어절 경계를 지운 형태로 보면 존재 서술어와
+     * 구별되지 않아 무관한 발화가 YES 로 확정된다.
+     *
+     * <p>이 오탐은 {@code 안심}·{@code 안방} 류와 <b>방향이 다르다.</b> 그것들은 UNKNOWN 으로
+     * 떨어져 handoff 안전측이지만, 이건 YES 로 확정돼 플로우를 종결시킨다. 그래서 같은
+     * "낱말 경계 없음" 한계로 묶어 두지 않고 이 마커들만 경계에 고정한다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "무슨 관계세요",
+            "저희 무슨 관계세요",
+            "그런 관계세요",
+            "그거랑 관계십니다",
+            "단계세요",
+            "다음 단계세요"})
+    @DisplayName("'-계' 명사 + 종결어미는 경어 존재 서술어가 아니다")
+    void nounEndingInGyeIsNotAnExistenceVerb(String answer) {
+        assertThat(parser.parse(answer))
+                .as("'%s' 는 답변이 아니므로 확정하면 안 된다", answer)
+                .isEqualTo(CrisisAnswer.UNKNOWN);
+    }
+
+    /**
      * 경어 긍정 (이슈 #516).
      *
      * <p>경어 어휘가 없어서 존댓말로 답하는 사용자가 예·아니오 무관하게 전부 handoff 로

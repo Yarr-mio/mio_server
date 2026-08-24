@@ -35,12 +35,56 @@ public class CrisisAnswerParser {
      * 먼저 걸러낸다 (이슈 #504). 마커를 지우면 {@code "있지"}·{@code "있지요"} 같은 평범한
      * 구어 긍정을 잃는다.
      */
-    private static final List<String> YES_MARKERS = List.of(
-            "있어", "있습", "있다", "있음", "있네", "있죠", "있지", "있는데",
-            "그래", "맞아", "정했", "준비", "구했", "yes",
-            // 경어 (이슈 #516). `계신` 은 넣지 않는다 — 명사 수식 위치가 대부분이라
-            // "계신가요 아무도" 가 YES 로 역전되고, "계신 분이 있어요" 는 뒤따르는 `있어` 가 판정한다.
-            "계세", "계십", "계셔", "있으세", "있으십");
+    private static final List<String> EXISTENCE_YES_MARKERS = List.of(
+            "있어", "있습", "있다", "있음", "있네", "있죠", "있지", "있는데");
+
+    /**
+     * 동의 표현. 존재 여부를 직접 서술하지 않고 질문에 동의만 한다.
+     *
+     * <p>존재 마커와 같은 부류로 묶는다 — 고립 표현과 함께 나타나면 "없다는 데 동의"이므로
+     * 긍정 증거가 아니다 ({@link #ISOLATION_TERMS}).
+     */
+    private static final List<String> AGREEMENT_YES_MARKERS = List.of("그래", "맞아", "yes");
+
+    /**
+     * 준비 행동 동사. 부정 문맥 뒤에 나와도 긍정 증거다 — 이 클래스의 규율이고,
+     * 고립 표현으로도 무효화하지 않는다. {@code "혼자 정했어요"} 는 {@code PLAN} 단계에서
+     * 에스컬레이션 대상이다.
+     */
+    private static final List<String> PREPARATION_YES_MARKERS = List.of("정했", "준비", "구했");
+
+    /**
+     * 경어 존재 서술어 (이슈 #516). <b>낱말 첫머리에서만 인정한다.</b>
+     *
+     * <p>{@code -계} 로 끝나는 명사 + 종결어미가 {@code 계세}·{@code 계십} 로 붙는다
+     * ({@code 관계세요}·{@code 단계세요}). 어절 경계를 지운 형태로는 존재 서술어와 구별되지
+     * 않아 답변이 아닌 발화가 YES 로 확정됐다.
+     *
+     * <p>이 오탐은 {@code 안심}·{@code 안방} 류와 <b>방향이 다르다.</b> 그것들은 UNKNOWN 으로
+     * 떨어져 handoff 안전측이지만 이건 플로우를 종결시킨다. 그래서 다른 마커와 달리
+     * 경계를 보존한 형태({@link #BOUNDARY_NORMALIZED})에 대고 맞춘다.
+     *
+     * <p>대가는 붙여 쓴 입력이다 — {@code "옆에계세요"} 는 경계가 없어 UNKNOWN 으로 떨어진다.
+     * 방향은 handoff 안전측이고, 반대(무관한 발화의 종결)보다 낫다.
+     *
+     * <p>{@code 계신} 은 넣지 않는다 — 명사 수식 위치가 대부분이라 넣으면
+     * {@code "계신가요 아무도"} 가 YES 로 역전되고, {@code "계신 분이 있어요"} 는 뒤따르는
+     * {@code 있어} 가 판정하므로 손실이 없다.
+     */
+    private static final Pattern HONORIFIC_EXISTENCE_YES = Pattern.compile(
+            "(?:^| )(?:계세|계십|계셔|있으세|있으십)");
+
+    /**
+     * 고립 표현 (이슈 #516 리뷰). 존재·동의 긍정을 무효화한다.
+     *
+     * <p>{@code "혼자 있어요"} 는 곁에 아무도 없다는 뜻인데 {@code 있어} 가 걸려 YES 로
+     * 확정됐다. 경어 마커를 넣으면 {@code "혼자 계세요"} 도 같은 경로로 들어온다.
+     *
+     * <p><b>독립 부정 증거로는 쓰지 않는다.</b> NO 마커로 넣으면 {@code CURRENT_INTENT} 에서
+     * {@code "혼자 있을 때 그런 생각이 들어요"} 가 NO 로 확정돼 계획·수단 질문을 건너뛰는
+     * 역방향 완화가 생긴다. 무효화만 하면 증거가 사라져 UNKNOWN → handoff 로 닫힌다.
+     */
+    private static final List<String> ISOLATION_TERMS = List.of("혼자");
 
     /** 한 음절 인정어. 다른 단어의 일부로 흔히 나타나서(반응·언니네) 서두에서만 인정한다. */
     private static final List<String> YES_PREFIXES = List.of("네", "예", "응");
@@ -119,6 +163,14 @@ public class CrisisAnswerParser {
     /** 매 턴 호출되는 경로라 정규식을 미리 컴파일한다. */
     private static final Pattern NON_ANSWER_CHARS = Pattern.compile("[^가-힣a-z]");
 
+    /**
+     * 어절 경계를 공백 하나로 남기는 정규화. {@link #HONORIFIC_EXISTENCE_YES} 전용이다.
+     *
+     * <p>나머지 마커는 경계를 지운 형태를 본다 — {@code 안계세} 처럼 전치 부정과 서술어가
+     * 붙어야 잡히는 항목이 있기 때문이다({@code "안 계세요"} → {@code 안계세요}).
+     */
+    private static final Pattern BOUNDARY_NORMALIZED = Pattern.compile("[^가-힣a-z]+");
+
     public CrisisAnswer parse(String raw) {
         if (raw == null || raw.isBlank()) {
             return CrisisAnswer.UNKNOWN;
@@ -133,8 +185,19 @@ public class CrisisAnswerParser {
             return CrisisAnswer.UNKNOWN;
         }
 
-        boolean yes = containsAny(normalized, YES_MARKERS)
+        String spaced = BOUNDARY_NORMALIZED
+                .matcher(raw.toLowerCase(Locale.ROOT)).replaceAll(" ");
+
+        boolean existenceYes = containsAny(normalized, EXISTENCE_YES_MARKERS)
+                || HONORIFIC_EXISTENCE_YES.matcher(spaced).find();
+        boolean agreementYes = containsAny(normalized, AGREEMENT_YES_MARKERS)
                 || startsWithAny(normalized, YES_PREFIXES);
+        boolean preparationYes = containsAny(normalized, PREPARATION_YES_MARKERS);
+
+        // 고립 표현은 존재·동의 긍정만 지운다. 준비 행동 진술은 남긴다.
+        boolean isolated = containsAny(normalized, ISOLATION_TERMS);
+
+        boolean yes = preparationYes || ((existenceYes || agreementYes) && !isolated);
         boolean no = containsAny(normalized, NO_MARKERS)
                 || startsWithAny(normalized, NO_PREFIXES);
 
