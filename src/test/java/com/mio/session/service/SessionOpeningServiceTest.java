@@ -212,8 +212,15 @@ class SessionOpeningServiceTest {
 
         InitialAssistantMessageResponse response = sessionOpeningService.createOpening(session, user);
 
-        assertThat(response.content()).contains("난 미오야");
-        assertThat(response.content()).doesNotContain("가");
+        // 자기소개 세트의 문구와 정확히 일치해야 한다. 특정 음절의 부재로 단언하면
+        // ("반가워, 난 미오야…" 처럼) 문구가 그 음절을 품고 있을 때 무작위 선택에 따라
+        // 통과·실패가 갈리는 flaky 테스트가 된다.
+        List<String> introductions = OpeningMessageCatalog
+                .messagesFor("mio", OpeningAudience.FIRST_SESSION).stream()
+                .map(OpeningMessage::content)
+                .toList();
+        assertThat(introductions).contains(response.content());
+        assertThat(response.content()).doesNotContain(":", "{", "}");
     }
 
     @Test
