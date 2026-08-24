@@ -218,6 +218,20 @@ public class SessionConsolidator {
             return null;
         }
 
+        // 0. 사용자 발화 존재 게이트 (이슈 #530)
+        //
+        // 선제 인사가 도입되면서 "메시지 0건" 이 더 이상 "대화 없음" 과 같지 않다. 오프닝만
+        // 저장된 세션은 conversationText 가 비어 있지 않으므로 아래 isBlank 가드를 통과하고,
+        // 검수된 인사 한 문장으로 요약·감정·인지 왜곡·Todo 를 만들어 낸다. 사용자가 하지 않은
+        // 말에서 CBT 패턴을 뽑는 셈이다.
+        //
+        // 그래서 요약 가능 여부를 message_count 가 아니라 사용자 메시지 존재 여부로 판단한다.
+        // 종결 상태는 기존 메시지 0건 세션과 동일하게 호출자가 failed 로 마감한다.
+        if (!hasUserMessage(sessionId)) {
+            log.info("SessionConsolidator: no user message, skipping consolidation sessionId={}", sessionId);
+            return null;
+        }
+
         // 1. 대화 컨텍스트 구성 (체크포인트 요약 + 잔여 메시지)
         String conversationText = buildConversationContext(sessionId);
         if (conversationText.isBlank()) {
@@ -337,6 +351,25 @@ public class SessionConsolidator {
      * 체크포인트 요약 + 마지막 체크포인트 이후 잔여 메시지를 합쳐 반환한다.
      * 체크포인트가 없으면 전체 메시지를 그대로 반환한다 (기존 동작).
      */
+    /**
+     * 세션에 사용자 발화가 하나라도 있는지 (이슈 #530).
+     *
+     * <p>조회가 실패하면 {@code false} 로 본다. 판단 근거를 얻지 못한 상태에서 요약을 진행하면
+     * 최악의 경우 인사 한 줄로 LLM 을 돌려 없는 패턴을 만들어 내므로, 만들지 않는 쪽으로
+     * fail-closed 한다.
+     */
+    private boolean hasUserMessage(UUID sessionId) {
+        try {
+            Boolean exists = jdbcTemplate.queryForObject(
+                    "SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ? AND role = 'user')",
+                    Boolean.class, sessionId);
+            return Boolean.TRUE.equals(exists);
+        } catch (Exception e) {
+            log.warn("SessionConsolidator: user message check failed, skipping sessionId={}", sessionId, e);
+            return false;
+        }
+    }
+
     private String buildConversationContext(UUID sessionId) {
         List<SessionCheckpoint> checkpoints =
                 checkpointRepository.findBySession_IdOrderByCheckpointSeqAsc(sessionId);
