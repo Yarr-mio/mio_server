@@ -414,7 +414,7 @@ public class ConversationOrchestrator {
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
                 boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
-                RewriteGuard rewriteGuard = new RewriteGuard(rewriteRejected);
+                RewriteGuard rewriteGuard = new RewriteGuard(responsePlan, rewriteRejected);
 
                 if (deliveryMode == DeliveryMode.BUFFER) {
                     // Buffer: complete first, then OutputGuard, then SSE
@@ -986,16 +986,22 @@ public class ConversationOrchestrator {
         if (rewritten == null) {
             return originalContent;
         }
-        // 내용 안전만 본다 (리뷰 반영). check() 는 역할 주장·진단·의존 강화·지침 유출·
-        // 자해 방법 다섯 가지를 보고, checkWithCrisisContext() 는 그 위에 CRISIS_MISMATCH
-        // 어조 휴리스틱을 얹는다. 후자를 재검증에 넣으면 안 된다 — 그건 우리가 판정자에게
-        // 고치라고 시킨 바로 그 항목이고, 키워드만 보므로 정상 위로 문구
-        // (`힘내요`·`괜찮아질 거야`)가 걸린다. 그러면 판정자의 교정이 가장 필요한 위기 인접
-        // 턴에서 매번 고정 문구로 대체된다.
+        // 재검증은 **의미** 규칙만 본다. 어조·형식으로 판정자를 거부하지 않는다.
         //
-        // 계약 검증도 넣지 않는다. 계약 위반은 형식 문제이고 고정 문구가 계약을 만족하는
-        // 것도 아니므로, 안전을 얻지 못하면서 오거부 경로만 늘린다.
-        OutputPreFilterResult recheck = outputPreFilter.check(rewritten);
+        // check() 는 역할 주장·진단·의존 강화·지침 유출·자해 방법을 본다.
+        // checkWithCrisisContext() 는 그 위에 CRISIS_MISMATCH 어조 휴리스틱을 얹는데
+        // 그건 쓰지 않는다 — 우리가 판정자에게 고치라고 시킨 바로 그 항목이고, 키워드만
+        // 보므로 정상 위로 문구(`힘내요`·`괜찮아질 거야`)가 걸린다. 그러면 판정자의 교정이
+        // 가장 필요한 위기 인접 턴에서 매번 고정 문구로 대체된다 (이슈 #528).
+        //
+        // 계약은 **금지 요소만** 본다. 정체성 단정·결과 보장·진단 귀속은 OutputPreFilter 의
+        // 다섯 범주에 대응하는 것이 없고 임상 제약이다 — `당신은 정말 좋은 사람이에요.
+        // 꼭 좋아질 거예요.` 가 check() 를 통과한다. 반면 질문 수·문장 수는 형식이라
+        // 빼둔다: 고정 문구가 계약을 만족하는 것도 아니어서 형식 위반을 다른 형식 위반으로
+        // 바꾸는 셈이고, 안전을 얻지 못하면서 코칭만 잃는다.
+        OutputPreFilterResult recheck = mergeContractViolations(
+                outputPreFilter.check(rewritten),
+                responseContractValidator.validateForbiddenElements(guard.responsePlan(), rewritten));
         if (recheck.passed()) {
             return rewritten;
         }
@@ -1011,13 +1017,15 @@ public class ConversationOrchestrator {
      * <p>{@code resolveOutputJudgeAction} 은 이미 파라미터가 16개다. 거부 여부를 파라미터로
      * 더 붙이는 대신 이 값으로 묶는다.
      *
-     * <p>처음에는 {@code responsePlan}·{@code inputHadRiskSignal} 도 함께 들고 다녔는데,
-     * 재검증 범위를 내용 안전으로 좁히면서 둘 다 필요 없어졌다 — 좁힌 검사는 응답 계획도
-     * 입력측 신호도 보지 않는다.
+     * <p>{@code inputHadRiskSignal} 은 들고 다니지 않는다 — 재검증이 어조 휴리스틱
+     * ({@code CRISIS_MISMATCH})을 쓰지 않으므로 필요가 없다. {@code responsePlan} 은
+     * 계약의 금지 요소가 계획별로 다르므로 필요하다(고위험 계획은 {@code advice}·
+     * {@code cbt_intervention} 을 추가로 금지한다).
      *
-     * @param rejected 재검증이 본문을 거부했는지 — trace 로 나간다
+     * @param responsePlan 금지 요소 재검증 기준
+     * @param rejected     재검증이 본문을 거부했는지 — trace 로 나간다
      */
-    private record RewriteGuard(AtomicBoolean rejected) {}
+    private record RewriteGuard(ResponsePlan responsePlan, AtomicBoolean rejected) {}
 
     private String resolveOutputJudgeAction(
             OutputJudgeResult result,

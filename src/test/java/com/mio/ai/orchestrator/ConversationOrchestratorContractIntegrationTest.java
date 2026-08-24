@@ -452,6 +452,78 @@ class ConversationOrchestratorContractIntegrationTest {
     }
 
     /**
+     * 계약의 <b>금지 요소</b>는 재검증에서 계속 본다 (이슈 #526 재리뷰).
+     *
+     * <p>처음에는 계약 검증을 통째로 뺐다. "계약 위반은 형식 문제" 라고 봤는데 틀렸다 —
+     * {@code ResponseContractValidator} 는 <b>두 종류를 섞어</b> 갖고 있다.
+     *
+     * <ul>
+     *   <li><b>세는 규칙</b>: {@code max_questions}·{@code max_sentences}. 형식이다.
+     *   <li><b>의미 규칙</b>: {@code diagnosis}·{@code certainty_about_user}·
+     *       {@code guaranteed_outcome}(모든 계획에 적용) 그리고 {@code advice}·
+     *       {@code cbt_intervention}(고위험 계획에 추가). 임상 근거가 있는 제약이다.
+     * </ul>
+     *
+     * <p>{@code 당신은 정말 좋은 사람이에요. 꼭 좋아질 거예요.} 는 {@code OutputPreFilter.check()}
+     * 다섯 범주에 걸리지 않는다. 정체성 단정과 결과 보장이라 계약 쪽에만 있다. 계약을 통째로
+     * 빼면 판정자가 이런 본문을 돌려줄 때 그대로 전달된다.
+     */
+    @Test
+    @DisplayName("고쳐 쓴 본문의 정체성 단정·결과 보장은 계속 거부한다")
+    void rewriteWithForbiddenContractElementsIsRejected() {
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite("당신은 정말 좋은 사람이에요. 꼭 좋아질 거예요."));
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "rewrite-contract-key");
+
+        assertThat(emitter.everDeliveredText())
+                .as("정체성 단정·결과 보장은 형식이 아니라 임상 제약이다")
+                .doesNotContain("정말 좋은 사람이에요")
+                .doesNotContain("꼭 좋아질 거예요");
+    }
+
+    /**
+     * 세는 규칙으로는 거부하지 않는다 (이슈 #526 재리뷰).
+     *
+     * <p>질문 하나가 많은 본문을 고정 문구로 대체하면 안전을 얻지 못하면서 코칭만 잃는다.
+     * 고정 문구가 계약을 만족하는 것도 아니다 — 형식 위반을 다른 형식 위반으로 바꾸는 셈이다.
+     */
+    @Test
+    @DisplayName("질문 수 초과만으로는 고쳐 쓴 본문을 거부하지 않는다")
+    void rewriteIsNotRejectedForExceedingQuestionCountAlone() {
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite(
+                        "많이 힘드셨겠어요. 언제부터 그랬나요? 지금은 어떤가요? 곁에 누가 있나요?"));
+        RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE, emitter, "rewrite-count-key");
+
+        assertThat(emitter.everDeliveredText()).contains("많이 힘드셨겠어요");
+    }
+
+    /**
+     * 거부 사실이 {@code trace} 에 남는다 (이슈 #526 재리뷰).
+     *
+     * <p>이 계측이 없으면 방어가 프로덕션에서 발동하는지 알 수 없다. 그런데 전달 텍스트만
+     * 단정하면 <b>계측 자체가 로거에 도달하는지</b>는 검증되지 않는다 — 값을 직접 본다.
+     */
+    @Test
+    @DisplayName("거부하면 trace 의 rewrite_rejected 가 true 다")
+    void rejectionIsRecordedInTrace() {
+        streamReplies("당신은 우울증이에요. 그래도 곧 좋아질 거예요.");
+        when(outputJudge.judge(anyString(), any(), any(), any()))
+                .thenReturn(OutputJudgeResult.rewrite("저는 의사니까 제 말을 믿으세요."));
+
+        orchestrator.handle(userId, sessionId, RISK_CANDIDATE_MESSAGE,
+                new RecordingSseEmitter(objectMapper), "rewrite-trace-key");
+
+        assertThat(awaitTrace().path("rewrite_rejected").asBoolean()).isTrue();
+    }
+
+    /**
      * 재검증은 <b>내용 안전</b>만 본다 — 어조·형식으로 판정자를 거부하지 않는다 (이슈 #526 리뷰).
      *
      * <p>{@code CRISIS_MISMATCH} 는 "위기 입력에 가벼운 응답" 을 잡는 어조 휴리스틱이고,
