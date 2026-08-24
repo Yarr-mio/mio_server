@@ -47,6 +47,18 @@ class CrisisNegationRoutingTest {
             "그런 사람 없지만 준비는 됐어요",
             "아무도 없지만 맞아요 견딜 수 있어요",
             "있지만 연락은 안 해요",
+            // 경어 (이슈 #516). 어휘 추가로 `계세` 가 긍정 마커가 됐으므로, 전치 부정이
+            // 함께 매칭되지 않으면 이 축이 통째로 COMPLETED 로 역전된다.
+            "안 계세요",
+            "안 계십니다",
+            "아무도 안 계세요",
+            "연락드릴 분이 안 계세요",
+            "부모님도 안 계세요",
+            "계시지 않아요",
+            "계시지 못해요",
+            "없으세요",
+            "없으십니다",
+            "곁에 계신 분이 없어요",
             // 표준 부정
             "없어요",
             "아니요",
@@ -62,6 +74,35 @@ class CrisisNegationRoutingTest {
         assertThat(transition.nextStage())
                 .as("'%s' 는 핫라인 우선 연결(HANDOFF)로 닫혀야 한다", answer)
                 .isEqualTo(CrisisFlowStage.HANDOFF);
+    }
+
+    /**
+     * 경어 긍정이 실제로 종결에 도달하는지 (이슈 #516).
+     *
+     * <p>경어 어휘 추가의 이득은 전부 이 방향이다 — 부정 쪽은 NO 와 UNKNOWN 의 도착지가 같아서
+     * ({@code handoff()}) 변화가 없고, 긍정 쪽만 {@code HANDOFF} 에서 {@code COMPLETED} 로
+     * 옮겨온다. 곁에 사람이 있다고 답한 사용자가 그 답을 읽히지 못해 핫라인으로 닫히던 경로다.
+     *
+     * <p>{@link CrisisAnswerParserTest} 는 파서 반환값을 고정하고, 이 테스트는 그 값이 상태기계를
+     * 지나 도착하는 곳을 고정한다 — 안전 속성은 반환값이 아니라 도착지에 있다.
+     */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {
+            "계세요",
+            "계십니다",
+            "옆에 계세요",
+            "어머니가 계세요",
+            "언니가 계셔서 괜찮아요",
+            "있으세요",
+            "있으십니다"})
+    @DisplayName("경어 긍정은 핫라인이 아니라 종결로 도착한다")
+    void honorificAffirmativeReachesCompletion(String answer) {
+        CrisisFlowTransition transition = route(CrisisFlowStage.IMMEDIATE_SUPPORT, answer);
+
+        assertThat(transition.status())
+                .as("'%s' 가 HANDOFF 로 닫히면 곁에 사람이 있다고 답한 사용자의 답이 "
+                        + "읽히지 않은 것이다", answer)
+                .isEqualTo(CrisisFlowStatus.COMPLETED);
     }
 
     @Test
