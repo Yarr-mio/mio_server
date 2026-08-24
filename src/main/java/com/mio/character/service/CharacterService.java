@@ -1,6 +1,7 @@
 package com.mio.character.service;
 
 import com.mio.character.domain.CharacterPersona;
+import com.mio.character.domain.OpeningMessageCatalog;
 import com.mio.character.dto.*;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
@@ -36,13 +37,9 @@ public class CharacterService {
         CATALOG_MAP = Collections.unmodifiableMap(map);
     }
 
-    private static final Map<String, String> GREETINGS = Map.of(
-            "mio",   "안녕! 나 미오야 🐧 오늘 어떤 하루를 보냈어?",
-            "bau",   "안녕! 나 바우야 🐕 오늘 뭘 해봤어?",
-            "rumi",  "안녕, 나 루미야 🦉 무엇이 너를 괴롭히고 있어?",
-            "momo",  "안녕... 나 모모야 🐻 오늘 어떤 하루였어?",
-            "chichi","안녕, 치치야 😺 뭐가 문제야, 말해봐."
-    );
+    // 인사 카피는 OpeningMessageCatalog 가 단일 출처다 (이슈 #530). 세션 선제 인사와 같은
+    // 문구를 쓰기 위해 이관했고, 이 엔드포인트는 계속 대표 문구 1종만 고정 반환한다 —
+    // 로테이션을 여기 적용하면 기존 API 의 동작이 바뀐다.
 
     private final UserRepository userRepository;
 
@@ -80,7 +77,7 @@ public class CharacterService {
                 request.characterId(),
                 c.name(),
                 changed,
-                GREETINGS.get(request.characterId())
+                OpeningMessageCatalog.representativeMessage(request.characterId())
         );
     }
 

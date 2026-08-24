@@ -2,6 +2,7 @@ package com.mio.session.controller;
 
 import com.mio.common.response.ApiResponse;
 import com.mio.session.dto.*;
+import com.mio.session.service.SessionMessageHistoryService;
 import com.mio.session.service.SessionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,24 @@ import com.mio.common.error.ErrorCode;
 public class SessionController {
 
     private final SessionService sessionService;
+    private final SessionMessageHistoryService sessionMessageHistoryService;
+
+    /**
+     * 세션 대화 이력 조회 (이슈 #531).
+     *
+     * <p>앱 재진입 시 진행 중이던 대화를 화면에 되살리는 경로다. 오래된 순서로 반환하며
+     * {@code cursor} 로 이어 받는다.
+     */
+    @GetMapping("/{sessionId}/messages")
+    public ResponseEntity<ApiResponse<SessionMessagesResponse>> getSessionMessages(
+            @PathVariable UUID sessionId,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) Integer limit,
+            Principal principal) {
+        UUID userId = resolveUserId(principal);
+        return ResponseEntity.ok(ApiResponse.ok(
+                sessionMessageHistoryService.getHistory(userId, sessionId, cursor, limit)));
+    }
 
     @GetMapping("/active")
     public ResponseEntity<ApiResponse<ActiveSessionResponse>> getActiveSession(
