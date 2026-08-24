@@ -6,6 +6,7 @@ import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.ai.profile.ContextPreWarmer;
 import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
+import com.mio.session.domain.MessageRole;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SessionStatus;
 import com.mio.session.domain.SummaryStatus;
@@ -63,6 +64,7 @@ public class SessionService {
     private final ApplicationEventPublisher eventPublisher;
     private final ContextPreWarmer contextPreWarmer;
     private final StringRedisTemplate redisTemplate;
+    private final SessionOpeningService sessionOpeningService;
 
     @Transactional
     public SessionResponse createSession(UUID userId, CreateSessionRequest request) {
@@ -91,24 +93,48 @@ public class SessionService {
 
         try {
             Session saved = sessionRepository.save(session);
+
+            // 선제 인사는 세션과 같은 트랜잭션에서 저장한다 (이슈 #530). 세션만 있고 인사가
+            // 없는 중간 상태를 만들지 않기 위해서다. LLM 은 호출하지 않는다 — 사용자 발화
+            // 전에는 안전·CBT 추론을 실행할 근거가 없다.
+            InitialAssistantMessageResponse initialMessage =
+                    sessionOpeningService.createOpening(saved, user);
+
             // pre-warming은 커밋 후 실행 — 트랜잭션 롤백 시 고아 캐시 방지
             UUID savedSessionId = saved.getId();
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
+                        appendOpeningToWorkingMemory(savedSessionId, initialMessage);
                         contextPreWarmer.preWarm(savedSessionId, userId);
                     }
                 });
             } else {
+                appendOpeningToWorkingMemory(savedSessionId, initialMessage);
                 contextPreWarmer.preWarm(savedSessionId, userId);
             }
-            return SessionResponse.from(saved);
+            return SessionResponse.from(saved, initialMessage);
         } catch (DataIntegrityViolationException e) {
             if (isActiveSessionUniqueViolation(e)) {
                 throw new BusinessException(ErrorCode.SESSION_ALREADY_ACTIVE);
             }
             throw e;
+        }
+    }
+
+    /**
+     * 오프닝을 세션 버퍼에 넣어 첫 턴 history 앞에 놓는다 (이슈 #530).
+     *
+     * <p>커밋 후에 실행한다 — 롤백된 세션의 발화가 Redis 에 남으면 다음 턴 프롬프트가 존재하지
+     * 않는 대화를 참조한다. 실패해도 예외를 전파하지 않는다. 이미 커밋된 세션·인사를
+     * 사용자에게 돌려주지 못하게 만드는 대가가, 첫 턴 문맥에서 인사 한 줄이 빠지는 것보다 크다.
+     */
+    private void appendOpeningToWorkingMemory(UUID sessionId, InitialAssistantMessageResponse opening) {
+        try {
+            workingMemory.appendMessage(sessionId, MessageRole.ASSISTANT.value(), opening.content());
+        } catch (Exception e) {
+            log.warn("Failed to append session opening to working memory: sessionId={}", sessionId, e);
         }
     }
 
@@ -119,7 +145,11 @@ public class SessionService {
             throw new BusinessException(ErrorCode.ONBOARDING_REQUIRED);
         }
         return sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE)
-                .map(ActiveSessionResponse::fromActive)
+                .map(active -> ActiveSessionResponse.fromActive(
+                        active,
+                        // 저장된 인사를 그대로 돌려준다. 새로 만들지 않는다 — 재진입마다
+                        // 인사가 늘어나면 대화창에 같은 말풍선이 쌓인다 (이슈 #530).
+                        sessionOpeningService.findOpening(active.getId()).orElse(null)))
                 .orElseGet(() -> {
                     Session lastEnded = sessionRepository
                             .findTopByUser_IdAndStatusOrderByEndedAtDesc(userId, SessionStatus.ENDED)
