@@ -274,13 +274,19 @@ public class ConversationOrchestrator {
             SessionDelta sessionDelta = workingMemory.getSessionDelta(sessionId);
             List<WorkingMessage> recentWorkingMessages = workingMemory.getRecentMessages(sessionId);
             recentWorkingMessages = recentWorkingMessages != null ? new ArrayList<>(recentWorkingMessages) : new ArrayList<>();
-            String cachedMemory = contextPreWarmer.getCachedContext(sessionId);
+            // 위험도에 맞는 변형을 읽는다. 위험도 판정은 ContextPreWarmer 가 갖는다 —
+            // 여기서 다시 계산하면 굽는 쪽과 갈라질 수 있고, 갈라지면 이슈 #522 가 재발한다.
+            String cachedMemory = contextPreWarmer.getCachedContext(sessionId, combined);
             MemoryContextResult liveMemoryResult = contextPreWarmer.buildContextSync(
                     sessionId, userId, combined, profile, normalized, userSignal.biasType());
             String liveMemory = liveMemoryResult.text();
             boolean memoryCacheFallbackUsed = (liveMemory == null || liveMemory.isBlank())
                     && cachedMemory != null && !cachedMemory.isBlank();
             String memoryContext = memoryCacheFallbackUsed ? cachedMemory : liveMemory;
+            // 폴백이 얼마나 낡은 문맥을 주입했는지. 폴백을 쓰지 않은 턴은 해당 없음이다.
+            MemoryCacheOutcome memoryCache = memoryCacheFallbackUsed
+                    ? MemoryCacheOutcome.fallback(contextPreWarmer.getCachedContextAgeMs(sessionId, combined))
+                    : MemoryCacheOutcome.live();
             String checkpointSummary = contextPreWarmer.getCachedCheckpoint(sessionId);
 
             // 6. Policy decision (10-step)
@@ -688,7 +694,7 @@ public class ConversationOrchestrator {
             decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
                     securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
                     inputJudgeCalled, preFilterResult, judgeActionResult,
-                    profile.source(), safetyProfileCacheHit, memoryCacheFallbackUsed,
+                    profile.source(), safetyProfileCacheHit, memoryCache,
                     profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs.get(), firstRenderedMs,
                     firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult,

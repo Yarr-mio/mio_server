@@ -71,7 +71,7 @@ public class AiDecisionLogger {
             OutputJudgeResult outputJudgeResult,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
-            boolean memoryCacheHit,
+            MemoryCacheOutcome memoryCache,
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
             LlmUsage llmUsage,
@@ -88,7 +88,7 @@ public class AiDecisionLogger {
                     moderation, l1Result, securityAssessment, llmTtftMs, totalPipelineMs,
                     crisisFlowTriggered, decision,
                     inputJudgeCalled, preFilterResult, outputJudgeResult,
-                    l1ThresholdSource, safetyProfileCacheHit, memoryCacheHit,
+                    l1ThresholdSource, safetyProfileCacheHit, memoryCache,
                     safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
                     firstSubstantiveTokenMs, firstRenderedTokenMs, safePrefixApplied,
                     heldBackChars, memoryContextResult, inputJudgeResult);
@@ -139,10 +139,12 @@ public class AiDecisionLogger {
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
             LlmUsage llmUsage) {
+        // 편의 오버로드는 staleness 를 받지 않는다 — 폴백 경로를 지나지 않는 호출용이다.
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
                 preFilterResult, outputJudgeResult, l1ThresholdSource, safetyProfileCacheHit,
-                memoryCacheHit, safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
+                memoryCacheHit ? MemoryCacheOutcome.fallback(null) : MemoryCacheOutcome.live(),
+                safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
                 ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
     }
 
@@ -161,7 +163,7 @@ public class AiDecisionLogger {
         log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
                 totalPipelineMs, llmTtftMs, crisisFlowTriggered,
                 false, OutputPreFilterResult.pass(), null,
-                "default", false, false, false, decision.crisisTrigger(), null,
+                "default", false, MemoryCacheOutcome.live(), false, decision.crisisTrigger(), null,
                 ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
     }
 
@@ -178,7 +180,7 @@ public class AiDecisionLogger {
             OutputJudgeResult outputJudgeResult,
             String l1ThresholdSource,
             boolean safetyProfileCacheHit,
-            boolean memoryCacheHit,
+            MemoryCacheOutcome memoryCache,
             boolean safetyProfileDegraded,
             CrisisTrigger appliedCrisisTrigger,
             LlmUsage llmUsage,
@@ -231,7 +233,11 @@ public class AiDecisionLogger {
         // 근거 조회에 실패해 보수적 기본값으로 채운 프로파일인지 (이슈 #261).
         // 위기 이력을 확인하지 못한 턴은 임계값·force_judge 가 실제 이력과 무관하게 결정된다.
         trace.put("safety_profile_degraded", safetyProfileDegraded);
-        trace.put("memory_cache_hit", memoryCacheHit);
+        trace.put("memory_cache_hit", memoryCache.fallbackUsed());
+        // 폴백이 주입한 문맥의 나이 (이슈 #522). 폴백을 쓰지 않은 턴과 나이를 읽지 못한 턴이
+        // 둘 다 null 로 나오는데, 그 구별은 memory_cache_hit 이 한다 — 그래서 두 값을 한
+        // 객체로 묶었다. 0 으로 적지 않는다: "방금 구운 문맥" 과 뭉개져 관측을 낙관하게 만든다.
+        trace.put("context_staleness_ms", memoryCache.stalenessMs());
         // 검색이 실패한 턴과 "관련 기억이 없는" 턴을 구분한다 (이슈 #364, §10.1).
         //   retrieval_status == null      → 이 턴은 검색을 돌리지 않았다 (호환 오버로드 경로)
         //   OK                            → 계획한 소스가 전부 응답했다. 결과가 비어도 정상이다
