@@ -48,6 +48,20 @@ import java.util.concurrent.TimeoutException;
 public class ContextPreWarmer {
 
     private static final String CONTEXT_CACHE_KEY = "session:%s:context_cache";
+
+    /**
+     * 위험 턴용 캐시 변형 (이슈 #522).
+     *
+     * <p>사전 웜업은 사용자의 <b>다음</b> 발화를 모르므로 그 턴의 위험도를 알 수 없다. 그래서
+     * 지금까지 {@code highRisk=false} 하나만 구웠고, 라이브 검색이 비어 폴백이 채택되면
+     * {@link ContextComposer} 의 highRisk 필터를 <b>거치지 않은</b> 에피소드·신념 기억이
+     * 위기 턴 프롬프트에 들어갔다. 조립이 끝난 문자열이라 사후 재필터도 불가능하다.
+     *
+     * <p>모르는 값을 굽는 시점에 정할 수는 없으니 <b>두 변형을 모두 굽는다.</b> 채택 시점에
+     * 실제 위험도로 고른다. 같은 랭킹 결과에 조립만 한 번 더 하는 것이고 조립은 2,000자 이내
+     * 문자열 빌드라 비용이 사실상 없다.
+     */
+    private static final String CONTEXT_CACHE_KEY_HIGH_RISK = "session:%s:context_cache:high_risk";
     private static final Duration CONTEXT_TTL = Duration.ofMinutes(5);
     private static final Duration CHECKPOINT_TTL = Duration.ofHours(2);
     private static final long MAX_EMBEDDING_WAIT_MS = 250;
@@ -125,8 +139,10 @@ public class ContextPreWarmer {
                     sessionId, userId, plan, null, null, Set.of(), ConcurrentHashMap.newKeySet());
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
             String context = contextComposer.compose(ranked, plan.sensitivityCap(), false);
+            String highRiskContext = contextComposer.compose(ranked, plan.sensitivityCap(), true);
 
-            // 3. Redis 캐싱
+            // 3. Redis 캐싱 — 위험도별 두 변형. 채택 시점에 고른다 (이슈 #522).
+            cacheVariant(CONTEXT_CACHE_KEY_HIGH_RISK.formatted(sessionId), highRiskContext, sessionId);
             if (context != null && !context.isBlank()) {
                 redisTemplate.opsForValue().set(
                         CONTEXT_CACHE_KEY.formatted(sessionId), context, CONTEXT_TTL
@@ -152,13 +168,71 @@ public class ContextPreWarmer {
         }
     }
 
-    public String getCachedContext(UUID sessionId) {
+    /**
+     * 위험도에 맞는 캐시 변형을 읽는다 (이슈 #522).
+     *
+     * <p>호출자는 {@link CombinedSignal} 만 넘기고 위험도를 스스로 해석하지 않는다. 굽는 쪽과
+     * 채택하는 쪽이 각자 계산하면 정의가 갈라질 수 있고, 갈라지는 순간 이 결함이 그대로
+     * 돌아온다. 판정은 {@link #isHighRisk(CombinedSignal)} 하나뿐이다.
+     *
+     * <p><b>변형이 없으면 다른 변형으로 대체하지 않는다.</b> TTL 이 지났거나 이 수정 배포 전에
+     * 구워진 캐시가 남아 있을 수 있다. 그때 일반 변형을 대신 쓰면 필터 미적용 내용이 위기 턴에
+     * 들어가는 원래 결함이 된다 — 기억 없이 가는 편이 필터 안 된 기억보다 안전하다.
+     */
+    public String getCachedContext(UUID sessionId, CombinedSignal combined) {
         try {
-            return redisTemplate.opsForValue().get(CONTEXT_CACHE_KEY.formatted(sessionId));
+            return redisTemplate.opsForValue().get(contextCacheKey(sessionId, combined));
         } catch (Exception e) {
             log.warn("ContextPreWarmer.getCachedContext failed", e);
             return null;
         }
+    }
+
+    /**
+     * 채택된 캐시의 나이(ms). 읽을 수 없으면 {@code null} (이슈 #522).
+     *
+     * <p>폴백이 얼마나 낡은 문맥을 주입했는지 알 수 없으면 이 경로의 품질을 사후에 판정할 수
+     * 없다. 남은 TTL 로 역산하므로 <b>값 형식을 바꾸지 않는다</b> — 굽는 쪽에 타임스탬프를
+     * 심으면 기존 캐시와 호환이 깨진다.
+     *
+     * <p>못 읽으면 0 이 아니라 {@code null} 이다. 0 은 "방금 구웠다" 는 뜻이 되어 관측을
+     * 거짓으로 낙관하게 만든다.
+     */
+    public Long getCachedContextAgeMs(UUID sessionId, CombinedSignal combined) {
+        try {
+            Long remaining = redisTemplate.getExpire(
+                    contextCacheKey(sessionId, combined), TimeUnit.MILLISECONDS);
+            if (remaining == null || remaining < 0) {
+                return null;
+            }
+            return Math.max(0L, CONTEXT_TTL.toMillis() - remaining);
+        } catch (Exception e) {
+            log.warn("ContextPreWarmer.getCachedContextAgeMs failed", e);
+            return null;
+        }
+    }
+
+    /**
+     * 고위험 턴 판정. <b>이 프로젝트에서 이 정의는 여기 한 곳뿐이어야 한다</b> —
+     * 캐시를 굽는 쪽과 채택하는 쪽이 같은 판정을 써야 이슈 #522 가 재발하지 않는다.
+     */
+    private static boolean isHighRisk(CombinedSignal combined) {
+        return combined != null && (combined.hardCrisis() || combined.riskCandidate());
+    }
+
+    private static String contextCacheKey(UUID sessionId, CombinedSignal combined) {
+        return isHighRisk(combined)
+                ? CONTEXT_CACHE_KEY_HIGH_RISK.formatted(sessionId)
+                : CONTEXT_CACHE_KEY.formatted(sessionId);
+    }
+
+    private void cacheVariant(String key, String value, UUID sessionId) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        redisTemplate.opsForValue().set(key, value, CONTEXT_TTL);
+        log.debug("ContextPreWarmer: cached context variant key={} sessionId={} length={}",
+                key, sessionId, value.length());
     }
 
     public String getCachedCheckpoint(UUID sessionId) {
@@ -201,7 +275,7 @@ public class ContextPreWarmer {
             List<List<RetrievedItem>> results = retrieveParallel(
                     sessionId, userId, plan, queryEmbedding, queryText, relatedDistortionCodes, failedSources);
             List<RetrievedItem> ranked = fusionRanker.rank(results, plan.sensitivityCap(), plan.maxK() * 3);
-            boolean highRisk = combined.hardCrisis() || combined.riskCandidate();
+            boolean highRisk = isHighRisk(combined);
             String text = contextComposer.compose(ranked, plan.sensitivityCap(), highRisk);
             return MemoryContextResult.partial(text, failedSources, historyProbe.degraded());
         } catch (Exception e) {
