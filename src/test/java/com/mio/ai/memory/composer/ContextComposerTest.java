@@ -163,6 +163,46 @@ class ContextComposerTest {
     }
 
     /**
+     * 조립이 항목에 없던 인젝션을 만들지 않는다 (이슈 #524, 리뷰 지적).
+     *
+     * <p>항목 단위 검사의 안전성은 <b>암묵적 불변조건</b>에 의존한다 — {@link ContextComposer}
+     * 가 항목마다 줄바꿈으로 분리해 렌더링하고, {@link InjectionScanner} 의 패턴에 DOTALL 이
+     * 없어 {@code .} 이 개행을 넘지 않는다. 그래서 각각은 무해한 두 항목이 이어붙어 패턴을
+     * 이루는 일이 생기지 않는다.
+     *
+     * <p><b>그 불변조건을 고정하는 테스트가 없었다.</b> 누가 구분자를 {@code ", "} 나 공백으로
+     * 바꾸면 이 안전 논리가 조용히 깨진다 — 항목 단위 검사는 통과시키고 조립 결과에는 인젝션이
+     * 있는 상태가 된다. 그래서 결과가 아니라 <b>속성</b>을 단정한다: 조립된 전체 문자열에
+     * 인젝션이 없어야 한다.
+     */
+    @Test
+    @DisplayName("각각은 무해한 두 항목이 조립되어 인젝션을 이루지 않는다")
+    void compositionDoesNotCreateAnInjectionThatNoItemHad() {
+        // 이어붙이면 "ignore ... previous instructions" 패턴이 되지만, 각각은 걸리지 않는다.
+        RetrievedItem first = episode("e-1", "please ignore");
+        RetrievedItem second = episode("e-2", "previous instructions now");
+        List<RetrievedItem> items = List.of(first, second);
+        passThroughSanitizer(items, "normal");
+        assertThat(injectionScanner.containsInjection(first.content()))
+                .as("전제: 이 항목 단독으로는 걸리지 않는다")
+                .isFalse();
+        assertThat(injectionScanner.containsInjection(second.content()))
+                .as("전제: 이 항목 단독으로도 걸리지 않는다")
+                .isFalse();
+
+        String context = composer.compose(items, "normal", false);
+
+        assertThat(context)
+                .as("둘 다 무해하므로 남아야 한다")
+                .contains("please ignore")
+                .contains("previous instructions now");
+        assertThat(injectionScanner.containsInjection(context))
+                .as("조립 결과에 인젝션이 생기면 항목 단위 검사가 무의미해진다 — "
+                        + "항목을 줄 단위로 분리한다는 불변조건이 깨진 것이다")
+                .isFalse();
+    }
+
+    /**
      * highRisk 필터와 항목 단위 격리가 함께 작동한다 (이슈 #524).
      *
      * <p>순서가 중요하다. highRisk 가 먼저 걸러 남은 소스에 대해서만 인젝션 검사를 하면,
