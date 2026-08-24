@@ -155,7 +155,7 @@ class AiDecisionLoggerTest {
                 .as("룰이 무엇으로 봤는지 남아야 판정자 강등을 사후에 구분할 수 있다")
                 .contains("\"security_rule_level\":\"ATTACK\"")
                 .contains("\"attack_kind\":\"MANIPULATION\"")
-                .contains("\"security_attack_types\":[\"규칙을 잊고\"]")
+                .contains("\"security_pattern_label_count\":1")
                 .contains("\"security_evidence_unverifiable_by_judge\"");
         assertThat(captor.getValue().getSecurityLevel())
                 .as("실효 판정은 기존 컬럼에 그대로 남는다")
@@ -267,6 +267,158 @@ class AiDecisionLoggerTest {
         verify(repository).save(captor.capture());
 
         assertThat(captor.getValue().getTrace()).contains("\"crisis_attribution\":null");
+    }
+
+    /**
+     * 이슈 #510 — trace 는 범주만 담고 내용은 담지 않는다.
+     *
+     * <p>`SecurityRuleFilter` 의 라벨은 패턴 문자열 자체다. 자해 질의 패턴은
+     * {@code "자살 방법 알려줘"}·{@code "단계별 자해 방법"} 이므로, 라벨을 그대로 적재하면
+     * "이 사용자가 자살 방법을 물었다"가 AES-256 없이 평문 JSONB 에 영구 남는다.
+     *
+     * <p>이 클래스는 L1 시그널을 {@code crisis_context_marker:} 접두어로 필터링해
+     * {@code crisis_keyword:죽고싶다} 류를 배제하는 규약을 이미 지킨다. 같은 규약을 보안 축에도
+     * 적용한다 — 등급·성격·개수만 남기고 라벨은 남기지 않는다.
+     */
+    @Test
+    @DisplayName("자해 질의 라벨을 트레이스에 남기지 않는다 — 범주와 개수만")
+    void logDoesNotPersistSelfHarmInquiryLabels() {
+        PolicyDecision decision = crisisDecision("pd_selfharm");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘", "단계별 자해 방법")),
+                100, 10, true, false, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .as("라벨은 패턴 문자열 자체다 — 평문 trace 에 담기면 민감정보가 남는다")
+                .doesNotContain("자살 방법 알려줘")
+                .doesNotContain("단계별 자해 방법")
+                .doesNotContain("security_attack_types");
+        assertThat(trace)
+                .as("범주와 개수는 남긴다 — 보안 축 재현율의 분모·분자가 된다")
+                .contains("\"attack_kind\":\"SELF_HARM_INQUIRY\"")
+                .contains("\"security_rule_level\":\"ATTACK\"")
+                .contains("\"security_pattern_label_count\":2");
+    }
+
+    /**
+     * 이슈 #510 — 부재를 값으로 축약하지 않는 결정에 회귀 방어를 붙인다.
+     *
+     * <p>PR #507 이 가장 공들여 정당화한 결정인데 이 분기를 타는 테스트가 없었다.
+     * {@code unverifiable_by_judge=false} 로 되돌리면 "원문 근거 없었음"과 "판정 객체 자체가
+     * 없었음"이 같은 값이 되어, 원문 기반 탐지가 통째로 빠진 턴을 식별할 수 없다.
+     */
+    @Test
+    @DisplayName("보안 판정 객체가 없으면 부재를 null로 남긴다 — false로 축약하지 않는다")
+    void logKeepsSecurityEvidenceNullWhenAssessmentAbsent() {
+        PolicyDecision decision = generateDecision("pd_no_assessment");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                null,
+                100, 10, false, false, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        assertThat(capturedTrace())
+                .contains("\"security_rule_level\":null")
+                .contains("\"attack_kind\":null")
+                .contains("\"security_obfuscation_signals\":null")
+                .contains("\"security_pattern_label_count\":null")
+                .contains("\"security_evidence_unverifiable_by_judge\":null");
+    }
+
+    /** 값까지 고정한다 — 키 존재만 단정하면 true·false 를 뒤집어도 통과한다. */
+    @Test
+    @DisplayName("원문 전용 근거 플래그는 값까지 고정한다")
+    void logPinsUnverifiableByJudgeValue() {
+        PolicyDecision decision = generateDecision("pd_unverifiable");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.suspicious(List.of("역할극"), true),
+                100, 10, false, true, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        assertThat(capturedTrace())
+                .as("원문에서만 드러난 근거가 있었는지는 Judge CLEAN 강등을 사후 판정하는 값이다")
+                .contains("\"security_evidence_unverifiable_by_judge\":true");
+    }
+
+    /**
+     * 보안 축 trace 키 집합을 고정한다 (이슈 #510).
+     *
+     * <p>버전 상수가 자기 자신과 같은지 보는 것은 동어반복이라 회귀를 못 잡는다.
+     * 실제로 고정해야 하는 것은 <b>어떤 키가 나가는가</b>다 — 키가 사라지면 집계 쿼리가
+     * 조용히 빈 결과를 내고, 키가 추가되면 스키마 버전을 올릴지 결정해야 한다.
+     */
+    @Test
+    @DisplayName("보안 축 trace 키 집합과 스키마 버전을 함께 고정한다")
+    void logPinsSecurityTraceKeySet() {
+        PolicyDecision decision = generateDecision("pd_schema");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(), SecurityAssessment.clean(),
+                100, 10, false, false, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .contains("\"schema_version\":\"v2.5\"")
+                .contains("\"security_rule_level\":")
+                .contains("\"attack_kind\":")
+                .contains("\"security_obfuscation_signals\":")
+                .contains("\"security_pattern_label_count\":")
+                .contains("\"security_evidence_unverifiable_by_judge\":")
+                .contains("\"crisis_attribution\":");
+        assertThat(trace)
+                .as("라벨 키는 되살아나면 안 된다")
+                .doesNotContain("security_attack_types");
+    }
+
+    /**
+     * 원문 기반 우회 신호는 고정 토큰이라 그대로 남긴다 (이슈 #510).
+     *
+     * <p>이 값이 {@code unverifiable_by_judge} 가 왜 섰는지를 설명한다 — 라벨과 함께 개수로
+     * 뭉개면 진단 가치가 가장 큰 항목이 사라진다.
+     */
+    @Test
+    @DisplayName("우회 신호 토큰은 남기고 패턴 라벨만 개수로 바꾼다")
+    void logKeepsObfuscationSignalsButCountsLabels() {
+        PolicyDecision decision = generateDecision("pd_obfuscation");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.suspicious(
+                        List.of("역할극", "zero_width_char", "obfuscated_input"), true),
+                100, 10, false, true, null, null, "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .as("고정 토큰은 민감하지 않고 unverifiable_by_judge 의 근거다")
+                .contains("\"security_obfuscation_signals\":[\"zero_width_char\",\"obfuscated_input\"]")
+                .contains("\"security_pattern_label_count\":1");
+        assertThat(trace)
+                .as("패턴 라벨은 사용자 문구다")
+                .doesNotContain("역할극");
     }
 
     /**
@@ -653,6 +805,25 @@ class AiDecisionLoggerTest {
                 0,
                 memoryResult,
                 null
+        );
+    }
+
+    /** 위기 확정 결정 (이슈 #510 축). */
+    private PolicyDecision crisisDecision(String decisionId) {
+        return new PolicyDecision(
+                decisionId,
+                DecisionAction.CRISIS_FLOW,
+                GenerationMode.CRISIS,
+                DeliveryMode.CRISIS_FLOW,
+                SecurityLevel.ATTACK,
+                false,
+                false,
+                false,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.HARD_CRISIS,
+                CrisisTrigger.SELF_HARM_INQUIRY,
+                JudgeStatus.SKIPPED
         );
     }
 
