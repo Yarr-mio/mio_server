@@ -92,7 +92,13 @@ public class SessionService {
                 .build();
 
         try {
-            Session saved = sessionRepository.save(session);
+            // saveAndFlush 인 이유: 아래 선제 인사 생성이 sessions 를 조회하므로 Hibernate 가
+            // 그 시점에 이 INSERT 를 자동 flush 한다. 그러면 활성 세션 unique 위반이 조회
+            // 호출부에서 터지고, 그 호출부가 조회 실패를 폴백 처리하면서 위반을 삼킨다.
+            // 그 뒤 트랜잭션은 이미 abort 상태라 후속 문장이 전부 실패하고, 아래 catch 가
+            // 잡지 못하는 예외로 끝나 409 대신 500 이 나간다. 여기서 명시적으로 flush 해서
+            // 경합을 이 try 안에서 확정한다.
+            Session saved = sessionRepository.saveAndFlush(session);
 
             // 선제 인사는 세션과 같은 트랜잭션에서 저장한다 (이슈 #530). 세션만 있고 인사가
             // 없는 중간 상태를 만들지 않기 위해서다. LLM 은 호출하지 않는다 — 사용자 발화

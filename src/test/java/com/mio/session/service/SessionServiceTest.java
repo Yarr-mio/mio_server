@@ -75,7 +75,7 @@ class SessionServiceTest {
 
     private final InitialAssistantMessageResponse openingResponse = new InitialAssistantMessageResponse(
             UUID.randomUUID(), "assistant", "session_opening",
-            "안녕! 나 미오야 🐧 오늘 어떤 하루를 보냈어?",
+            "안녕! 난 미오야 🐧 오늘 어떤 하루를 보냈어?",
             OffsetDateTime.now(ZoneOffset.UTC));
 
     @BeforeEach
@@ -110,7 +110,7 @@ class SessionServiceTest {
                 .user(mockUser)
                 .characterId("mio")
                 .build();
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest("mio"));
 
@@ -127,7 +127,7 @@ class SessionServiceTest {
                 .user(mockUser)
                 .characterId("mio")
                 .build();
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest(null));
 
@@ -167,7 +167,7 @@ class SessionServiceTest {
     void createSession_uniqueViolation_throwsBusinessException() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
-        when(sessionRepository.save(any()))
+        when(sessionRepository.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("uq_sessions_one_active_per_user")));
 
         assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
@@ -181,7 +181,7 @@ class SessionServiceTest {
     void createSession_otherIntegrityViolation_propagates() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
-        when(sessionRepository.save(any()))
+        when(sessionRepository.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("other_constraint")));
 
         assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
@@ -224,7 +224,7 @@ class SessionServiceTest {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
         Session session = Session.builder().user(mockUser).characterId("mio").build();
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest("mio"));
 
@@ -239,7 +239,7 @@ class SessionServiceTest {
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
         Session session = Session.builder().user(mockUser).characterId("mio").build();
         ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         sessionService.createSession(userId, new CreateSessionRequest("mio"));
 
@@ -253,7 +253,7 @@ class SessionServiceTest {
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
         Session session = Session.builder().user(mockUser).characterId("mio").build();
         ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
         doThrow(new IllegalStateException("redis down"))
                 .when(workingMemory).appendMessage(any(), anyString(), anyString());
 

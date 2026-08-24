@@ -15,8 +15,11 @@ import com.mio.user.domain.User;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -25,6 +28,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Pattern;
 
 /**
  * 세션 선제 인사 저장·조회 (이슈 #530, 원본 추적 #428).
@@ -57,6 +61,15 @@ public class SessionOpeningService {
     private static final int NICKNAME_MIN_LENGTH = 2;
     private static final int NICKNAME_MAX_LENGTH = 13;
 
+    /**
+     * 인사말에 넣을 닉네임에서 제거하는 문자 — 글자·숫자·공백·{@code _ - .} 이외 전부.
+     *
+     * <p>줄바꿈·콜론·괄호처럼 대화 구조를 흉내낼 수 있는 문자를 지운다. 자세한 이유는
+     * {@link #usableNickname(User)} 주석에 있다.
+     */
+    private static final Pattern DISALLOWED_IN_NICKNAME =
+            Pattern.compile("[^\\p{IsAlphabetic}\\p{IsDigit} _.-]");
+
     private final MessageRepository messageRepository;
     private final SessionRepository sessionRepository;
     private final MessageEncryptor messageEncryptor;
@@ -67,11 +80,17 @@ public class SessionOpeningService {
      *
      * <p>호출자(세션 생성)의 트랜잭션 안에서 실행된다. 세션당 1건은
      * {@code uq_messages_session_opening} 이 최종 보장한다.
+     *
+     * <p>{@code MANDATORY} 로 못박은 이유: 트랜잭션 없이 호출되면 세션과 인사가 각각 다른
+     * 트랜잭션에서 커밋되어, 이 클래스가 막으려던 "세션만 있고 인사가 없는 상태" 가 조용히
+     * 생긴다. 주석으로만 남기면 나중에 배치·재시도 경로에서 깨져도 아무 신호가 없다.
      */
+    @Transactional(propagation = Propagation.MANDATORY)
     public InitialAssistantMessageResponse createOpening(Session session, User user) {
-        OpeningAudience audience = resolveAudience(session, user);
+        String nickname = usableNickname(user);
+        OpeningAudience audience = resolveAudience(session, user, nickname);
         OpeningMessage selected = select(user.getId(), session.getCharacterId(), audience);
-        String rendered = selected.render(usableNickname(user));
+        String rendered = selected.render(nickname);
 
         byte[] ciphertext = messageEncryptor.encrypt(rendered.getBytes(StandardCharsets.UTF_8));
         Message saved = messageRepository.save(Message.builder()
@@ -101,9 +120,11 @@ public class SessionOpeningService {
      *
      * <p>닉네임이 없거나 형식이 어긋나면 재방문이어도 자기소개 세트를 쓴다. 그 세트는 이름을
      * 부르지 않으므로 빈 이름이 문장에 노출될 경로가 없다.
+     *
+     * @param nickname {@link #usableNickname(User)} 결과. 쓸 수 없으면 null
      */
-    private OpeningAudience resolveAudience(Session session, User user) {
-        if (usableNickname(user) == null) {
+    private OpeningAudience resolveAudience(Session session, User user, String nickname) {
+        if (nickname == null) {
             return OpeningAudience.FIRST_SESSION;
         }
         return hasPreviousSession(session, user)
@@ -118,7 +139,12 @@ public class SessionOpeningService {
     private boolean hasPreviousSession(Session session, User user) {
         try {
             return sessionRepository.existsByUser_IdAndIdNot(user.getId(), session.getId());
-        } catch (Exception e) {
+        } catch (DataIntegrityViolationException e) {
+            // 이 조회는 대기 중인 세션 INSERT 를 auto-flush 시킬 수 있다. 그때 나는 활성 세션
+            // unique 위반은 "조회 실패" 가 아니라 세션 생성 경합이므로, 삼키면 호출부가 409 로
+            // 변환할 기회를 잃고 abort 된 트랜잭션이 500 으로 끝난다.
+            throw e;
+        } catch (DataAccessException e) {
             meterRegistry.counter(AUDIENCE_LOOKUP_FAILED_METRIC).increment();
             log.warn("Failed to check previous sessions, treating as first session: userId={}",
                     user.getId(), e);
@@ -127,21 +153,30 @@ public class SessionOpeningService {
     }
 
     /**
-     * 인사말에 넣을 수 있는 닉네임. 없으면 {@code null}.
+     * 인사말에 넣을 수 있는 닉네임. 쓸 수 없으면 {@code null} (자기소개 세트로 폴백된다).
      *
-     * <p>가입 계약(2~13자)을 벗어난 값은 쓰지 않는다. 한 글자나 비정상적으로 긴 값이
-     * 문장에 들어가면 인사가 깨진 것처럼 보인다.
+     * <p>가입 계약(2~13자)을 벗어난 값은 쓰지 않는다. 한 글자나 비정상적으로 긴 값이 문장에
+     * 들어가면 인사가 깨진 것처럼 보인다.
+     *
+     * <p><b>왜 문자 종류까지 제한하는가</b> — 이 인사말은 저장 후 {@code role=assistant} 로
+     * WorkingMemory 에 적재되어 다음 턴 프롬프트의 대화 이력에 들어간다. 즉 닉네임은 사용자
+     * 입력 중 유일하게 <b>모델이 "자기가 한 말"로 보는 자리</b>에 들어가는 값이고, 이 경로는
+     * 설계상 SafetyL1·InputJudge·SecurityRuleFilter 를 타지 않는다(LLM 을 부르지 않으므로).
+     *
+     * <p>13자로는 긴 지시문을 넣을 수 없지만 {@code \n} 이나 {@code System:} 같은 <b>구조</b>를
+     * 끼워 넣기에는 충분하다. 그래서 이름에 쓰일 법한 문자만 남기고 나머지는 제거한다. 제거 후
+     * 길이 계약을 못 지키면 이름을 부르지 않는다.
      */
     private String usableNickname(User user) {
         String nickname = user.getNickname();
         if (nickname == null || nickname.isBlank()) {
             return null;
         }
-        String trimmed = nickname.trim();
-        if (trimmed.length() < NICKNAME_MIN_LENGTH || trimmed.length() > NICKNAME_MAX_LENGTH) {
+        String sanitized = DISALLOWED_IN_NICKNAME.matcher(nickname).replaceAll("").trim();
+        if (sanitized.length() < NICKNAME_MIN_LENGTH || sanitized.length() > NICKNAME_MAX_LENGTH) {
             return null;
         }
-        return trimmed;
+        return sanitized;
     }
 
     /**
@@ -205,7 +240,10 @@ public class SessionOpeningService {
             List<String> recent = messageRepository.findRecentOpeningVariants(
                     userId, MessageKind.SESSION_OPENING, PageRequest.of(0, 1));
             return recent.isEmpty() ? null : recent.get(0);
-        } catch (Exception e) {
+        } catch (DataIntegrityViolationException e) {
+            // 위와 같은 이유 — 무결성 위반은 폴백 대상이 아니다.
+            throw e;
+        } catch (DataAccessException e) {
             meterRegistry.counter(LOOKUP_FAILED_METRIC).increment();
             log.warn("Failed to load previous opening variant, selecting from full set: userId={}", userId, e);
             return null;

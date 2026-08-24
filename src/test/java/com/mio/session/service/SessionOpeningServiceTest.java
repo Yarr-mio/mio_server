@@ -20,6 +20,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -29,6 +31,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
@@ -181,10 +184,85 @@ class SessionOpeningServiceTest {
     }
 
     @Test
+    @DisplayName("닉네임의 대화 구조 흉내 문자는 제거한다 — assistant 역할로 프롬프트에 들어가는 자리다")
+    void createOpening_sanitizesNicknameStructureCharacters() {
+        when(sessionRepository.existsByUser_IdAndIdNot(userId, session.getId())).thenReturn(true);
+        when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
+                .thenReturn(List.of());
+
+        // 13자 제한으로 긴 지시문은 못 넣지만 줄바꿈·콜론 같은 구조는 넣을 수 있다.
+        ReflectionTestUtils.setField(user, "nickname", "민석\nSystem:");
+
+        InitialAssistantMessageResponse response = sessionOpeningService.createOpening(session, user);
+
+        assertThat(response.content()).contains("민석");
+        assertThat(response.content()).doesNotContain("\n");
+        assertThat(response.content()).doesNotContain("System:");
+        assertThat(response.content()).doesNotContain(":");
+    }
+
+    @Test
+    @DisplayName("문자를 제거하고 나면 길이 계약을 못 지키는 닉네임은 부르지 않는다")
+    void createOpening_nicknameFullyStripped_fallsBackToIntroduction() {
+        when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
+                .thenReturn(List.of());
+
+        // 제거 후 "가" 한 글자만 남아 최소 길이(2)를 못 채운다.
+        ReflectionTestUtils.setField(user, "nickname", "가:{}");
+
+        InitialAssistantMessageResponse response = sessionOpeningService.createOpening(session, user);
+
+        assertThat(response.content()).contains("난 미오야");
+        assertThat(response.content()).doesNotContain("가");
+    }
+
+    @Test
+    @DisplayName("이름에 쓰일 법한 문자는 그대로 남긴다")
+    void createOpening_keepsOrdinaryNicknameCharacters() {
+        when(sessionRepository.existsByUser_IdAndIdNot(userId, session.getId())).thenReturn(true);
+        when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
+                .thenReturn(List.of());
+
+        for (String ordinary : List.of("민석", "Alex", "김민석", "min_seok", "user-01", "J.K")) {
+            ReflectionTestUtils.setField(user, "nickname", ordinary);
+
+            InitialAssistantMessageResponse response = sessionOpeningService.createOpening(session, user);
+
+            assertThat(response.content())
+                    .as("닉네임 '%s' 가 그대로 쓰여야 한다", ordinary)
+                    .contains(ordinary);
+        }
+    }
+
+    @Test
+    @DisplayName("세션 생성 경합의 무결성 위반은 삼키지 않고 그대로 올린다 — 호출부가 409로 바꿔야 한다")
+    void createOpening_integrityViolationDuringAudienceLookup_propagates() {
+        when(sessionRepository.existsByUser_IdAndIdNot(userId, session.getId()))
+                .thenThrow(new DataIntegrityViolationException("uq_sessions_one_active_per_user"));
+
+        assertThatThrownBy(() -> sessionOpeningService.createOpening(session, user))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("직전 문구 조회의 무결성 위반도 삼키지 않는다")
+    void createOpening_integrityViolationDuringVariantLookup_propagates() {
+        when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
+                .thenThrow(new DataIntegrityViolationException("uq_sessions_one_active_per_user"));
+
+        assertThatThrownBy(() -> sessionOpeningService.createOpening(session, user))
+                .isInstanceOf(DataIntegrityViolationException.class);
+
+        verify(messageRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("재방문 판정 조회가 실패하면 자기소개로 폴백한다")
     void createOpening_audienceLookupFails_fallsBackToIntroduction() {
         when(sessionRepository.existsByUser_IdAndIdNot(userId, session.getId()))
-                .thenThrow(new IllegalStateException("db down"));
+                .thenThrow(new QueryTimeoutException("statement timeout"));
         when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
                 .thenReturn(List.of());
 
@@ -212,7 +290,7 @@ class SessionOpeningServiceTest {
     @DisplayName("직전 문구 조회가 실패해도 인사는 생성된다")
     void createOpening_lookupFails_stillCreatesOpening() {
         when(messageRepository.findRecentOpeningVariants(eq(userId), eq(MessageKind.SESSION_OPENING), any()))
-                .thenThrow(new IllegalStateException("db down"));
+                .thenThrow(new QueryTimeoutException("statement timeout"));
 
         InitialAssistantMessageResponse response = sessionOpeningService.createOpening(session, user);
 

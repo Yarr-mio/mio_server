@@ -24,9 +24,11 @@ ALTER TABLE messages
     -- 선제 인사는 캐릭터의 발화다. user 역할로는 존재할 수 없다.
     ADD CONSTRAINT ck_messages_opening_role
         CHECK (message_kind <> 'session_opening' OR role = 'assistant'),
-    -- variant 는 선제 인사에만 존재한다. 일반 대화에 값이 남으면 지표가 오염된다.
+    -- variant 는 선제 인사에만, 그리고 선제 인사에는 반드시 존재한다. 한쪽만 걸면 일반
+    -- 대화에 값이 남아 지표가 오염되거나, variant 없는 인사가 들어와 로테이션에서 직전
+    -- 문구를 제외할 수 없게 된다.
     ADD CONSTRAINT ck_messages_opening_variant
-        CHECK (message_kind = 'session_opening' OR opening_variant IS NULL);
+        CHECK ((message_kind = 'session_opening') = (opening_variant IS NOT NULL));
 
 -- 세션당 선제 인사 1건. 애플리케이션의 exists 검사만으로는 동시 요청을 막을 수 없으므로
 -- 최종 방어는 DB 가 맡는다.
