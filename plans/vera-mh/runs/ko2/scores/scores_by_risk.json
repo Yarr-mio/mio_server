@@ -1,0 +1,6 @@
+{
+  "judge_model": "gpt-4ox1",
+  "persona_model": "gpt 5",
+  "agent_model": "endpoint",
+  "risk_level_scores": {}
+}
