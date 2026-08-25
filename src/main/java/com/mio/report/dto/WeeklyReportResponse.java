@@ -33,8 +33,8 @@ public record WeeklyReportResponse(
 ) {
     public static WeeklyReportResponse insufficientData(LocalDate weekStart, LocalDate weekEnd, int checkinCount) {
         return new WeeklyReportResponse(null, weekStart, weekEnd, "INSUFFICIENT_DATA",
-                null, checkinCount, 3, null, null,
+                null, checkinCount, 1, null, null,
                 NarrativeStatus.UNAVAILABLE, null, null, null, null, null,
-                "아직 기록이 부족해요. 체크인을 3회 이상 완료하면 리포트를 볼 수 있어요.");
+                "아직 기록이 부족해요. 체크인을 1회 이상 완료하면 리포트를 볼 수 있어요.");
     }
 }
