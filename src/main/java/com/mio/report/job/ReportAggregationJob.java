@@ -29,7 +29,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ReportAggregationJob {
 
-    private static final int MIN_CHECKIN_COUNT = 3;
+    private static final int MIN_CHECKIN_COUNT = 1;
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
     private final UserRepository userRepository;

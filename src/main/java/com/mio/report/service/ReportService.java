@@ -36,8 +36,8 @@ import java.util.*;
 @RequiredArgsConstructor
 public class ReportService {
 
-    private static final int WEEKLY_MIN_CHECKINS  = 3;
-    private static final int MONTHLY_MIN_CHECKINS = 7;
+    private static final int WEEKLY_MIN_CHECKINS  = 1;
+    private static final int MONTHLY_MIN_CHECKINS = 3;
     private static final int DAYS_MAX = 90;
 
     private static final Map<String, String> BIAS_LABELS = Map.of(
