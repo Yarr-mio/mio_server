@@ -27,6 +27,12 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(authService.login(request)));
     }
 
+    /** 탈퇴 30일 이내 계정 복구 확정 (이슈 #538). */
+    @PostMapping("/login/restore")
+    public ResponseEntity<ApiResponse<LoginResponse>> restoreLogin(@Valid @RequestBody LoginRequest request) {
+        return ResponseEntity.ok(ApiResponse.ok(authService.restoreAndLogin(request)));
+    }
+
     @GetMapping("/signup/status")
     public ResponseEntity<ApiResponse<SignupStatusResponse>> getSignupStatus(
             @AuthenticationPrincipal String userId) {
