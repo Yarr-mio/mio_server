@@ -13,7 +13,7 @@ import com.mio.report.dto.ReportCommonDto.SessionSummaryDto;
 import com.mio.report.dto.ReportCommonDto.TodoSummaryDto;
 import com.mio.report.dto.WeeklyReportResponse;
 import com.mio.session.domain.Session;
-import com.mio.session.repository.MessageRepository;
+import com.mio.session.repository.CbtReconstructionRepository;
 import com.mio.session.repository.SessionRepository;
 import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.todo.domain.TaskStatus;
@@ -50,7 +50,7 @@ public class ReportService {
     );
 
     private final CheckinRepository checkinRepository;
-    private final MessageRepository messageRepository;
+    private final CbtReconstructionRepository cbtReconstructionRepository;
     private final SessionSummaryRepository sessionSummaryRepository;
     private final SessionRepository sessionRepository;
     private final BehaviorTaskRepository behaviorTaskRepository;
@@ -95,7 +95,7 @@ public class ReportService {
 
             return new ReportDbData(
                     resolvedStart, weekEnd, (int) checkinCount, false,
-                    roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
+                    roundScore(cbtReconstructionRepository.findAvgEmotionScoreAfter(userId, start, end)),
                     buildDistortionTop3(userId, start, end),
                     buildTodoSummary(userId, start, end),
                     buildSessionSummary(userId, start, end)
@@ -141,7 +141,7 @@ public class ReportService {
 
             return new ReportDbData(
                     resolvedStart, monthEnd, (int) checkinCount, false,
-                    roundScore(messageRepository.findAvgEmotionScore(userId, start, end)),
+                    roundScore(cbtReconstructionRepository.findAvgEmotionScoreAfter(userId, start, end)),
                     buildDistortionTop3(userId, start, end),
                     buildTodoSummary(userId, start, end),
                     buildSessionSummary(userId, start, end)

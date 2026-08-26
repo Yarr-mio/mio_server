@@ -102,6 +102,41 @@ class ReportAggregationJobTest {
         assertThat(captor.getValue().getWeekEnd()).isEqualTo(EXPECTED_WEEK_END);
     }
 
+    @org.junit.jupiter.api.Test
+    @DisplayName("CBT 개입 후 사용자가 입력한 감정 점수가 있으면 평균을 리포트에 채운다 (이슈 #540)")
+    void computeAvgEmotionScore_withCbtScores_fillsReportAverage() {
+        ReportAggregationJob job = jobAt(Clock.fixed(
+                OffsetDateTime.parse("2026-08-10T03:00:00+09:00").toInstant(), KST));
+        stubOneCandidateUserWithCheckins();
+        when(weeklyReportRepository.findByUser_IdAndWeekStart(any(), any())).thenReturn(Optional.empty());
+        when(jdbcTemplate.queryForObject(anyString(), eq(Double.class), any(), any(), any()))
+                .thenReturn(62.5);
+
+        job.run();
+
+        org.mockito.ArgumentCaptor<WeeklyReport> captor =
+                org.mockito.ArgumentCaptor.forClass(WeeklyReport.class);
+        verify(weeklyReportRepository).save(captor.capture());
+        assertThat(captor.getValue().getAvgEmotionScore()).isEqualTo(62.5);
+    }
+
+    @org.junit.jupiter.api.Test
+    @DisplayName("그 주에 CBT 감정 점수 제출이 없으면 리포트 감정 점수는 null이다 (이슈 #540)")
+    void computeAvgEmotionScore_withoutCbtScores_leavesReportAverageNull() {
+        ReportAggregationJob job = jobAt(Clock.fixed(
+                OffsetDateTime.parse("2026-08-10T03:00:00+09:00").toInstant(), KST));
+        stubOneCandidateUserWithCheckins();
+        when(weeklyReportRepository.findByUser_IdAndWeekStart(any(), any())).thenReturn(Optional.empty());
+        // Double.class queryForObject 는 스텁하지 않음 — 실제로도 AVG()가 대상 row 없으면 null 반환
+
+        job.run();
+
+        org.mockito.ArgumentCaptor<WeeklyReport> captor =
+                org.mockito.ArgumentCaptor.forClass(WeeklyReport.class);
+        verify(weeklyReportRepository).save(captor.capture());
+        assertThat(captor.getValue().getAvgEmotionScore()).isNull();
+    }
+
     @SuppressWarnings("unchecked")
     private void stubOneCandidateUser() {
         when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
@@ -110,6 +145,15 @@ class ReportAggregationJobTest {
         // 체크인 수는 임계값 미만이면 INSUFFICIENT_DATA 로 바로 저장되어 흐름이 단순해진다
         when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any(), any()))
                 .thenReturn(0);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void stubOneCandidateUserWithCheckins() {
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(Object[].class)))
+                .thenReturn(List.of(userId));
+        when(userRepository.findById(userId)).thenReturn(Optional.of(newUser()));
+        when(jdbcTemplate.queryForObject(anyString(), eq(Integer.class), any(), any(), any()))
+                .thenReturn(1);
     }
 
     private ReportAggregationJob jobAt(Clock clock) {
