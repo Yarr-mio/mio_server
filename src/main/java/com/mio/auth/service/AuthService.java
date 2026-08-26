@@ -21,9 +21,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -62,10 +65,19 @@ public class AuthService {
                     .ifPresent(u -> { throw new BusinessException(ErrorCode.PROVIDER_MISMATCH); });
         }
 
-        // 탈퇴 유저 재가입 차단 — social_id가 SHA-256으로 익명화되므로 해시 값으로 조회
-        userRepository.findBySocialProviderAndSocialId(socialUser.provider(), sha256(socialUser.socialId()))
-                .filter(u -> "DELETED".equals(u.getStatus()))
-                .ifPresent(u -> { throw new BusinessException(ErrorCode.USER_WITHDRAWN); });
+        // 탈퇴 유저 재로그인 감지 — social_id가 SHA-256으로 익명화되므로 해시 값으로 조회.
+        // 유예 기간(WITHDRAW_RETENTION_DAYS) 이내면 토큰 미발급, 복구 확인 응답만 반환한다.
+        // 지나면 하드 삭제(DataRetentionJob) 대상이라 기존과 동일하게 거절한다 (이슈 #538).
+        Optional<User> withdrawnUser = userRepository
+                .findBySocialProviderAndSocialId(socialUser.provider(), sha256(socialUser.socialId()))
+                .filter(u -> "DELETED".equals(u.getStatus()));
+        if (withdrawnUser.isPresent()) {
+            OffsetDateTime recoverableUntil = withdrawnUser.get().getDeletedAt().plusDays(WITHDRAW_RETENTION_DAYS);
+            if (OffsetDateTime.now(ZoneOffset.UTC).isBefore(recoverableUntil)) {
+                return LoginResponse.withdrawnRecoverable(withdrawnUser.get().getDeletedAt(), recoverableUntil);
+            }
+            throw new BusinessException(ErrorCode.USER_WITHDRAWN);
+        }
 
         // lambda 내에서 변경이 필요하므로 AtomicBoolean 사용 (effectively final 제약 우회)
         AtomicBoolean isNewUser = new AtomicBoolean(false);
@@ -85,23 +97,65 @@ public class AuthService {
         // 신규 유저이거나 가입 미완료 재진입이면 is_new_user = true
         boolean isNewUserResponse = isNewUser.get() || user.getSignupStep() != SignupStep.COMPLETED;
 
+        return issueLoginResponse(user, request.deviceId(), isNewUserResponse);
+    }
+
+    /**
+     * 탈퇴 30일 이내 계정 복구 (이슈 #538).
+     *
+     * <p>사용자가 {@link LoginResponse#withdrawnRecoverable} 응답을 보고 복구를 확정했을
+     * 때만 호출된다. 소셜 토큰을 다시 검증해야 하므로 {@code login()}과 동일한 요청 바디를
+     * 받는다 — provider 쪽 재검증 없이 그냥 복구시키면 남의 계정을 복구시킬 수 있다.
+     */
+    @Transactional
+    public LoginResponse restoreAndLogin(LoginRequest request) {
+        SocialAuthProvider provider = getProvider(request.provider());
+        String token = "apple".equals(request.provider()) ? request.idToken() : request.accessToken();
+        SocialUserInfo socialUser = provider.verify(token);
+
+        User user = userRepository
+                .findBySocialProviderAndSocialId(socialUser.provider(), sha256(socialUser.socialId()))
+                .filter(u -> "DELETED".equals(u.getStatus()))
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_WITHDRAWN));
+
+        // 응답 시점과 확정 호출 시점 사이에 유예 기간이 지났을 수 있어 다시 확인한다.
+        OffsetDateTime recoverableUntil = user.getDeletedAt().plusDays(WITHDRAW_RETENTION_DAYS);
+        if (!OffsetDateTime.now(ZoneOffset.UTC).isBefore(recoverableUntil)) {
+            throw new BusinessException(ErrorCode.USER_WITHDRAWN);
+        }
+
+        user.restore(socialUser.socialId(), socialUser.email());
+
+        auditLogService.record(user.getId(), "USER_RESTORE", "user", user.getId().toString(), Map.of(
+                "restored_at", OffsetDateTime.now(ZoneOffset.UTC).toString()
+        ));
+
+        // 예약된 하드 삭제는 별도 스케줄 엔티티가 아니라 DataRetentionJob이 매일
+        // status=DELETED AND deleted_at < cutoff 로 스캔하는 방식이라(main 기준), status를
+        // ACTIVE/PENDING으로 되돌리는 것만으로 다음 실행부터 자동으로 대상에서 빠진다 —
+        // 별도 취소 처리가 필요 없다.
+        return issueLoginResponse(user, request.deviceId(), false);
+    }
+
+    /** 기기 UPSERT + 토큰 발급 + 응답 조립 — 일반 로그인과 탈퇴 계정 복구가 공유한다 (이슈 #538). */
+    private LoginResponse issueLoginResponse(User user, String deviceId, boolean isNewUserResponse) {
         // DB 기반 영구 기기 추적 — Redis TTL 만료로 인한 오판정 방지
         var existingDevice = userDeviceRepository
-                .findByUser_IdAndDeviceId(user.getId(), request.deviceId());
+                .findByUser_IdAndDeviceId(user.getId(), deviceId);
 
         boolean isNewDevice = existingDevice.isEmpty();
         existingDevice.ifPresentOrElse(
                 UserDevice::updateLastActiveAt,
                 () -> userDeviceRepository.save(UserDevice.builder()
                         .user(user)
-                        .deviceId(request.deviceId())
+                        .deviceId(deviceId)
                         .build())
         );
 
         String accessToken = jwtTokenService.generateAccessToken(
-                user.getId().toString(), request.deviceId(), user.isMinor(), user.isAdmin());
+                user.getId().toString(), deviceId, user.isMinor(), user.isAdmin());
         String refreshToken = refreshTokenService.issue(
-                user.getId().toString(), request.deviceId(),
+                user.getId().toString(), deviceId,
                 user.getSocialProvider(), user.getSignupStep());
 
         LoginResponse.UserInfo userInfo = null;
@@ -120,7 +174,7 @@ public class AuthService {
                 accessToken, refreshToken, JWT_EXPIRY_SECONDS,
                 isNewUserResponse, isNewDevice,
                 user.getSignupStep(), user.getOnboardingStep(),
-                userInfo
+                userInfo, null, null, null
         );
     }
 

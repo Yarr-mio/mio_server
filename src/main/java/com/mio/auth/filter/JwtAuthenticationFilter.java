@@ -32,6 +32,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     // "METHOD URI" 형식으로 정확히 일치해야 함 — query string은 getRequestURI()에 포함되지 않아 안전
     private static final Set<String> WHITELIST = Set.of(
             "POST /v1/auth/login",
+            "POST /v1/auth/login/restore",
             "POST /v1/auth/refresh",
             "POST /v1/auth/dev/token",
             // actuator 는 관리 포트로 분리됐다. 8080 의 liveness 는 HealthController 가 담당한다.

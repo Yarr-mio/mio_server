@@ -158,10 +158,28 @@ public class User {
 
     public void softDelete(String anonymizedSocialId) {
         this.socialId = anonymizedSocialId;
-        this.nickname = "탈퇴한 사용자";
-        this.email = null;
         this.status = "DELETED";
         this.deletedAt = OffsetDateTime.now(ZoneOffset.UTC);
+    }
+
+    /**
+     * 탈퇴 후 유예 기간(30일) 내 재로그인 시 계정을 복구한다 (이슈 #538).
+     *
+     * <p>닉네임/이메일은 {@link #softDelete}가 더 이상 지우지 않으므로 여기서 복원할 것이
+     * 없다 — {@code email}만 재로그인 시점에 소셜 provider가 새로 준 값으로 갱신한다
+     * (Apple은 최초 로그인 이후 이메일을 다시 안 줄 수 있어 null이면 기존 값을 유지한다).
+     *
+     * <p>{@code status}는 {@code signupStep}이 이미 {@code COMPLETED}였는지로 정한다 — 가입을
+     * 끝내지 못한 채 탈퇴한 계정을 무조건 ACTIVE로 복구하면, ACTIVE는 곧 가입 완료라는
+     * {@link #finalizeSignup} 쪽의 불변식이 깨진다.
+     */
+    public void restore(String originalSocialId, String email) {
+        this.socialId = originalSocialId;
+        this.status = this.signupStep == SignupStep.COMPLETED ? "ACTIVE" : "PENDING";
+        this.deletedAt = null;
+        if (email != null) {
+            this.email = email;
+        }
     }
 
     @PrePersist

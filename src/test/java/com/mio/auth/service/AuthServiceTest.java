@@ -348,8 +348,22 @@ class AuthServiceTest {
         verify(userDeviceRepository).deleteAllByUser_Id(USER_ID);
         assertThat(user.getStatus()).isEqualTo("DELETED");
         assertThat(user.getSocialId()).isNotEqualTo("original-social-id"); // SHA-256 해시로 대체
-        assertThat(user.getNickname()).isEqualTo("탈퇴한 사용자");
-        assertThat(user.getEmail()).isNull();
+    }
+
+    @Test
+    @DisplayName("회원탈퇴 시 닉네임/이메일은 지우지 않는다 — 30일 이내 계정 복구를 지원하기 위해서다 (이슈 #538)")
+    void withdraw_doesNotEraseNicknameOrEmail() {
+        User user = User.builder()
+                .id(USER_ID).socialProvider("kakao").socialId("original-social-id")
+                .email("user@test.com").nickname("원래닉네임")
+                .privacyConsent(true).signupStep(SignupStep.COMPLETED).status("ACTIVE")
+                .build();
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        authService.withdraw(USER_ID);
+
+        assertThat(user.getNickname()).isEqualTo("원래닉네임");
+        assertThat(user.getEmail()).isEqualTo("user@test.com");
     }
 
     @Test
@@ -383,7 +397,99 @@ class AuthServiceTest {
         verify(deviceTokenRepository, never()).saveAll(any());
     }
 
+    // ──────────────── 탈퇴 계정 복구 (이슈 #538) ────────────────
+
+    @Test
+    @DisplayName("탈퇴 30일 이내 동일 소셜 계정으로 로그인하면 토큰 없이 WITHDRAWN_RECOVERABLE을 반환한다")
+    void login_withdrawnWithinWindow_returnsRecoverableWithoutTokens() {
+        SocialUserInfo socialUser = new SocialUserInfo("social-123", "user@test.com", "kakao");
+        User withdrawnUser = buildUser(USER_ID, "kakao", "hashed-social-id", SignupStep.COMPLETED, "DELETED");
+        withdrawnUser.softDelete("hashed-social-id");
+        // softDelete()가 deletedAt을 now()로 찍으므로 10일 전으로 되돌려 "30일 이내"를 만든다.
+        setDeletedAt(withdrawnUser, java.time.OffsetDateTime.now().minusDays(10));
+
+        when(kakaoProvider.verify(any())).thenReturn(socialUser);
+        when(userRepository.findByEmailAndSocialProviderNot(any(), any())).thenReturn(Optional.empty());
+        when(userRepository.findBySocialProviderAndSocialId(eq("kakao"), anyString()))
+                .thenReturn(Optional.of(withdrawnUser));
+
+        LoginResponse response = authService.login(new LoginRequest("kakao", null, "access-token", DEVICE_ID));
+
+        assertThat(response.status()).isEqualTo("WITHDRAWN_RECOVERABLE");
+        assertThat(response.accessToken()).isNull();
+        assertThat(response.refreshToken()).isNull();
+        assertThat(response.recoverableUntil()).isNotNull();
+        verify(jwtTokenService, never()).generateAccessToken(any(), any(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    @DisplayName("탈퇴 30일이 지난 계정으로 로그인하면 기존과 동일하게 USER_WITHDRAWN을 던진다")
+    void login_withdrawnPastWindow_throwsUserWithdrawn() {
+        SocialUserInfo socialUser = new SocialUserInfo("social-123", "user@test.com", "kakao");
+        User withdrawnUser = buildUser(USER_ID, "kakao", "hashed-social-id", SignupStep.COMPLETED, "DELETED");
+        withdrawnUser.softDelete("hashed-social-id");
+        setDeletedAt(withdrawnUser, java.time.OffsetDateTime.now().minusDays(31));
+
+        when(kakaoProvider.verify(any())).thenReturn(socialUser);
+        when(userRepository.findByEmailAndSocialProviderNot(any(), any())).thenReturn(Optional.empty());
+        when(userRepository.findBySocialProviderAndSocialId(eq("kakao"), anyString()))
+                .thenReturn(Optional.of(withdrawnUser));
+
+        assertThatThrownBy(() -> authService.login(new LoginRequest("kakao", null, "access-token", DEVICE_ID)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.USER_WITHDRAWN);
+    }
+
+    @Test
+    @DisplayName("복구를 확정하면 계정이 ACTIVE로 돌아오고 정상 로그인 응답을 받는다")
+    void restoreAndLogin_withinWindow_restoresAndLogsIn() {
+        SocialUserInfo socialUser = new SocialUserInfo("social-123", "new@test.com", "kakao");
+        User withdrawnUser = buildUser(USER_ID, "kakao", "hashed-social-id", SignupStep.COMPLETED, "DELETED");
+        withdrawnUser.softDelete("hashed-social-id");
+        setDeletedAt(withdrawnUser, java.time.OffsetDateTime.now().minusDays(10));
+
+        when(kakaoProvider.verify(any())).thenReturn(socialUser);
+        when(userRepository.findBySocialProviderAndSocialId(eq("kakao"), anyString()))
+                .thenReturn(Optional.of(withdrawnUser));
+        when(userDeviceRepository.findByUser_IdAndDeviceId(any(), any())).thenReturn(Optional.empty());
+        when(jwtTokenService.generateAccessToken(any(), any(), anyBoolean(), anyBoolean())).thenReturn("access-token");
+        when(refreshTokenService.issue(any(), any(), any(), any())).thenReturn("mio_refresh_xxx");
+
+        LoginResponse response = authService.restoreAndLogin(
+                new LoginRequest("kakao", null, "access-token", DEVICE_ID));
+
+        assertThat(withdrawnUser.getStatus()).isEqualTo("ACTIVE");
+        assertThat(withdrawnUser.getSocialId()).isEqualTo("social-123");
+        assertThat(withdrawnUser.getDeletedAt()).isNull();
+        assertThat(response.status()).isNull();
+        assertThat(response.accessToken()).isNotNull();
+        assertThat(response.isNewUser()).isFalse();
+    }
+
+    @Test
+    @DisplayName("복구 확정 시점에 30일이 이미 지났으면 USER_WITHDRAWN을 던진다")
+    void restoreAndLogin_pastWindow_throwsUserWithdrawn() {
+        SocialUserInfo socialUser = new SocialUserInfo("social-123", "user@test.com", "kakao");
+        User withdrawnUser = buildUser(USER_ID, "kakao", "hashed-social-id", SignupStep.COMPLETED, "DELETED");
+        withdrawnUser.softDelete("hashed-social-id");
+        setDeletedAt(withdrawnUser, java.time.OffsetDateTime.now().minusDays(31));
+
+        when(kakaoProvider.verify(any())).thenReturn(socialUser);
+        when(userRepository.findBySocialProviderAndSocialId(eq("kakao"), anyString()))
+                .thenReturn(Optional.of(withdrawnUser));
+
+        assertThatThrownBy(() -> authService.restoreAndLogin(
+                new LoginRequest("kakao", null, "access-token", DEVICE_ID)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.USER_WITHDRAWN);
+    }
+
     // ──────────────── helpers ────────────────
+
+    /** softDelete()가 찍는 now() 대신 테스트용 시각을 강제로 넣는다 — 도메인에 setter가 없다. */
+    private void setDeletedAt(User user, java.time.OffsetDateTime deletedAt) {
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "deletedAt", deletedAt);
+    }
 
     private DeviceToken buildDeviceToken(User user, String deviceId, String platform, String token) {
         return DeviceToken.builder()
