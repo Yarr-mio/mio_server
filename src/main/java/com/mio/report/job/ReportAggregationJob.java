@@ -117,12 +117,20 @@ public class ReportAggregationJob {
         return count != null ? count : 0;
     }
 
+    /**
+     * CBT 개입 후 사용자가 직접 입력한 감정 점수의 평균이다 (이슈 #540).
+     *
+     * <p>{@code sessions.avg_emotion_score}는 채워주는 코드가 없어 항상 null이었고, AI가
+     * 추정하는 {@code messages.emotion_score}/{@code sessions.emotion_score_ai}는 정책상
+     * Safety/Memory 내부 신호라 사용자에게 노출할 값이 아니다 — 리포트엔 사용자가 실제로
+     * 입력한 값만 집계한다. 그 기간에 CBT 개입이 한 번도 없었으면 null.
+     */
     private Double computeAvgEmotionScore(UUID userId, OffsetDateTime from, OffsetDateTime to) {
         try {
             return jdbcTemplate.queryForObject("""
-                    SELECT AVG(avg_emotion_score) FROM sessions
-                    WHERE user_id = ? AND started_at >= ? AND started_at < ?
-                      AND avg_emotion_score IS NOT NULL
+                    SELECT AVG(emotion_score_after) FROM cbt_reconstructions
+                    WHERE user_id = ? AND created_at >= ? AND created_at < ?
+                      AND emotion_score_after IS NOT NULL
                     """,
                     Double.class, userId, from, to);
         } catch (Exception e) {

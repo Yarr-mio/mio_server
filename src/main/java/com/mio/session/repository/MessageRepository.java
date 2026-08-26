@@ -15,11 +15,6 @@ import java.util.UUID;
 
 public interface MessageRepository extends JpaRepository<Message, UUID> {
 
-    @Query("SELECT AVG(m.emotionScore) FROM Message m WHERE m.user.id = :userId AND m.createdAt >= :start AND m.createdAt < :end AND m.emotionScore IS NOT NULL")
-    Double findAvgEmotionScore(@Param("userId") UUID userId,
-                               @Param("start") OffsetDateTime start,
-                               @Param("end") OffsetDateTime end);
-
     @Query("SELECT m FROM Message m WHERE m.session.id = :sessionId AND m.role = :role ORDER BY m.createdAt DESC")
     List<Message> findRecentBySessionAndRole(@Param("sessionId") UUID sessionId,
                                              @Param("role") MessageRole role,
