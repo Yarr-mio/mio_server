@@ -2,6 +2,8 @@ package com.mio.ai.memory.composer;
 
 import com.mio.ai.memory.retrieval.RetrievedItem;
 import com.mio.ai.memory.retrieval.RetrievalSource;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -18,8 +20,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ContextComposer {
 
+    /**
+     * 걸려서 버린 항목 수. {@link #ITEMS_RETAINED_METRIC} 과 <b>따로</b> 센다 —
+     * 하나로 세면 "탐지가 늘었다" 와 "개인화가 깎였다" 를 구분할 수 없다. 탐지 확대를
+     * 진행할 때 보존율을 대가로 지불하고 있는지 판정하려면 두 값이 분리돼 있어야 한다.
+     */
+    private static final String INJECTION_DROPPED_METRIC = "mio.rag.injection.dropped";
+
+    /** 살아남아 프롬프트에 주입된 항목 수. */
+    private static final String ITEMS_RETAINED_METRIC = "mio.rag.items.retained";
+
     private final ContextSanitizer sanitizer;
     private final InjectionScanner injectionScanner;
+    private final MeterRegistry meterRegistry;
 
     /**
      * @param items          FusionRanker 결과
@@ -41,9 +54,36 @@ public class ContextComposer {
                     .collect(Collectors.toList());
         }
 
+        // 인젝션 검사를 항목 단위로 한다 (이슈 #524). 조립된 문자열 전체를 검사하고 전체를
+        // 버리면 오탐 1건이 그 턴의 기억을 전량 폐기한다 — 실측 4/4. 항목 단위로 내리면
+        // 최악의 손실이 100% 에서 항목 1건으로 줄고, 그 다음에야 탐지를 늘려도 제품이 상하지
+        // 않는다 (RobustRAG isolate-then-aggregate).
+        //
+        // highRisk 필터 **뒤에** 둔다. 앞에 두면 위기 턴에 어차피 버려질 항목까지 탐지로
+        // 세어 계측이 부풀려진다.
+        List<RetrievedItem> retained = sanitized.stream()
+                .filter(i -> !injectionScanner.containsInjection(i.content()))
+                .collect(Collectors.toList());
+        int dropped = sanitized.size() - retained.size();
+        if (dropped > 0) {
+            Counter.builder(INJECTION_DROPPED_METRIC)
+                    .description("인젝션 패턴이 걸려 프롬프트에서 제외된 검색 항목 수")
+                    .register(meterRegistry)
+                    .increment(dropped);
+        }
+        if (!retained.isEmpty()) {
+            Counter.builder(ITEMS_RETAINED_METRIC)
+                    .description("검사를 통과해 프롬프트에 주입된 검색 항목 수")
+                    .register(meterRegistry)
+                    .increment(retained.size());
+        }
+        if (retained.isEmpty()) {
+            return "";
+        }
+
         StringBuilder sb = new StringBuilder();
 
-        Map<RetrievalSource, List<RetrievedItem>> grouped = sanitized.stream()
+        Map<RetrievalSource, List<RetrievedItem>> grouped = retained.stream()
                 .collect(Collectors.groupingBy(RetrievedItem::source));
 
         appendSection(sb, "Recent Emotion Pattern",
@@ -75,7 +115,9 @@ public class ContextComposer {
         String raw = sb.toString().trim();
         if (raw.isEmpty()) return "";
 
-        return injectionScanner.sanitize(raw);
+        // 걸린 항목은 이미 빠졌다. 남은 내용에는 격리 헤더만 씌운다 — 헤더는 살아남은 내용이
+        // 지시문으로 읽히지 않게 하는 장치이므로 항목을 버렸는지와 무관하게 계속 필요하다.
+        return injectionScanner.wrapWithIsolation(raw);
     }
 
     private void appendSection(StringBuilder sb, String title, List<RetrievedItem> items) {

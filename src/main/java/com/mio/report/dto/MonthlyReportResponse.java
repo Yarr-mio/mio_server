@@ -33,8 +33,8 @@ public record MonthlyReportResponse(
 ) {
     public static MonthlyReportResponse insufficientData(LocalDate monthStart, LocalDate monthEnd, int checkinCount) {
         return new MonthlyReportResponse(null, monthStart, monthEnd, "INSUFFICIENT_DATA",
-                null, checkinCount, 7, null, null,
+                null, checkinCount, 3, null, null,
                 NarrativeStatus.UNAVAILABLE, null, null, null, null, null,
-                "아직 기록이 부족해요. 체크인을 7회 이상 완료하면 월간 리포트를 볼 수 있어요.");
+                "아직 기록이 부족해요. 체크인을 3회 이상 완료하면 월간 리포트를 볼 수 있어요.");
     }
 }

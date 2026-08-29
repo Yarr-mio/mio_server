@@ -14,8 +14,17 @@ import java.util.regex.Pattern;
  * 대형 LLM Judge 없이 판정할 수 있고, 그래서 Judge 호출을 늘리지 않고도 자유도가 낮은
  * 응답을 빠르게 통과시킬 수 있다.
  *
- * <p>역할 이탈·의존 강화·명시적 위해 같은 <b>의미 판단</b>은 여기서 하지 않는다. 그쪽은
- * {@code OutputPreFilter} 가 이미 담당하며, 중복 구현하면 두 곳의 기준이 갈라진다.
+ * <p>역할 이탈·의존 강화·명시적 위해는 여기서 하지 않는다. 그쪽은 {@code OutputPreFilter} 가
+ * 이미 담당하며, 중복 구현하면 두 곳의 기준이 갈라진다.
+ *
+ * <p><b>다만 이 클래스가 형식만 보는 것은 아니다 (이슈 #526).</b> {@link #FORBIDDEN_PATTERNS}
+ * 의 {@code diagnosis}·{@code certainty_about_user}·{@code guaranteed_outcome} 은 임상 근거가
+ * 있는 <b>의미</b> 제약이고, {@code advice}·{@code cbt_intervention} 은 고위험 계획에서만
+ * 금지되는 개입 제약이다. {@code OutputPreFilter} 의 다섯 범주에는 대응하는 것이 없다 —
+ * {@code "당신은 정말 좋은 사람이에요. 꼭 좋아질 거예요."} 가 그쪽을 통과한다.
+ *
+ * <p>그래서 검사가 두 부류로 나뉘고, 호출자는 필요한 쪽만 쓸 수 있어야 한다.
+ * {@link #validate} 는 둘 다 보고, {@link #validateForbiddenElements} 는 의미 규칙만 본다.
  */
 @Component
 public class ResponseContractValidator {
@@ -52,6 +61,38 @@ public class ResponseContractValidator {
                     "근거를 (찾아|따져|살펴)|다르게 (생각|해석)해 ?보|재구성|다른 관점")
     );
 
+    /**
+     * 금지 요소만 검사한다 — 세는 규칙(질문 수·문장 수)은 보지 않는다 (이슈 #526).
+     *
+     * <p>판정자가 고쳐 쓴 본문을 재검증할 때 쓴다. 그 자리에서 세는 규칙까지 적용하면
+     * 질문 하나가 많은 본문이 서버 고정 문구로 대체되는데, 고정 문구가 계약을 만족하는
+     * 것도 아니어서 형식 위반을 다른 형식 위반으로 바꾸는 셈이 된다 — 안전을 얻지 못하고
+     * 코칭만 잃는다.
+     *
+     * <p>반면 금지 요소는 임상 제약이므로 고정 문구가 실제로 낫다. 정체성을 단정하거나
+     * 결과를 보장하는 말은 빗나갔을 때 사용자가 스스로를 더 부정하게 만든다.
+     */
+    public ResponseContractResult validateForbiddenElements(ResponsePlan plan, String response) {
+        if (plan == null || !plan.isContractEnforced() || response == null || response.isBlank()) {
+            return ResponseContractResult.notApplicable();
+        }
+        List<String> violations = forbiddenElementViolations(plan, response);
+        return violations.isEmpty()
+                ? ResponseContractResult.pass()
+                : ResponseContractResult.violated(violations);
+    }
+
+    private List<String> forbiddenElementViolations(ResponsePlan plan, String response) {
+        List<String> violations = new ArrayList<>();
+        for (String element : plan.forbiddenElements()) {
+            Pattern pattern = FORBIDDEN_PATTERNS.get(element);
+            if (pattern != null && pattern.matcher(response).find()) {
+                violations.add(element);
+            }
+        }
+        return violations;
+    }
+
     public ResponseContractResult validate(ResponsePlan plan, String response) {
         if (plan == null || !plan.isContractEnforced() || response == null || response.isBlank()) {
             return ResponseContractResult.notApplicable();
@@ -69,12 +110,7 @@ public class ResponseContractValidator {
             violations.add("max_sentences(%d>%d)".formatted(sentences, plan.maxSentences()));
         }
 
-        for (String element : plan.forbiddenElements()) {
-            Pattern pattern = FORBIDDEN_PATTERNS.get(element);
-            if (pattern != null && pattern.matcher(response).find()) {
-                violations.add(element);
-            }
-        }
+        violations.addAll(forbiddenElementViolations(plan, response));
 
         return violations.isEmpty()
                 ? ResponseContractResult.pass()

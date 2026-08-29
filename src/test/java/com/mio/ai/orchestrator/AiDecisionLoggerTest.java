@@ -9,6 +9,10 @@ import com.mio.ai.domain.AiPolicyDecision;
 import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.judge.RiskLevel;
+import com.mio.ai.judge.SecurityVerdict;
+import com.mio.ai.judge.RiskVerdict;
+import com.mio.ai.judge.InputJudgeResult;
+import com.mio.ai.judge.CrisisAttribution;
 import com.mio.ai.memory.retrieval.MemoryContextResult;
 import com.mio.ai.memory.retrieval.RetrievalSource;
 import com.mio.ai.moderation.ModerationResult;
@@ -72,8 +76,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -89,6 +92,330 @@ class AiDecisionLoggerTest {
         assertThat(captor.getValue().getTrace())
                 .as("위기가 아닌 턴에는 진입 경로가 없다")
                 .contains("\"crisis_trigger\":null");
+    }
+
+    /**
+     * 이슈 #505 — 보안 판정의 근거를 트레이스에 남긴다.
+     *
+     * <p>{@code securityAssessment} 는 이미 {@code log(...)} 인자로 들어오는데
+     * {@code buildTrace} 로 넘어가지 않아 그대로 버려졌다. 그래서 trace 39개 키 중
+     * 보안 상세가 0개였고, {@code security_level} 컬럼 하나만 남았다.
+     *
+     * <p>특히 <b>룰 판정과 실효 판정을 함께</b> 남겨야 한다. 둘이 다르면
+     * ({@code security_rule_level=SUSPICIOUS} + {@code security_level=CLEAN})
+     * 판정자가 룰의 의심을 걷어낸 것이고, 그 경로는 사용자 텍스트의 영향을 받는다.
+     * 두 값을 분리해 두지 않으면 사후에 구분할 수 없다.
+     */
+    @Test
+    @DisplayName("보안 판정 근거를 트레이스에 남긴다 — 룰 판정과 실효 판정을 분리한다")
+    void logPersistsSecurityEvidenceInTrace() {
+        PolicyDecision decision = new PolicyDecision(
+                "pd_sec",
+                DecisionAction.GENERATE,
+                GenerationMode.GUARDED,
+                DeliveryMode.CAUTIOUS_SPECULATIVE,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                true,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.LOW,
+                null,
+                JudgeStatus.SUCCEEDED
+        );
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.manipulation(List.of("규칙을 잊고")),
+                100,
+                10,
+                false,
+                true,
+                new OutputGuardOutcome(null, null, false),
+                "default",
+                false,
+                false,
+                false,
+                decision.crisisTrigger(),
+                null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+        String trace = captor.getValue().getTrace();
+
+        assertThat(trace)
+                .as("룰이 무엇으로 봤는지 남아야 판정자 강등을 사후에 구분할 수 있다")
+                .contains("\"security_rule_level\":\"ATTACK\"")
+                .contains("\"attack_kind\":\"MANIPULATION\"")
+                .contains("\"security_pattern_label_count\":1")
+                .contains("\"security_evidence_unverifiable_by_judge\"");
+        assertThat(captor.getValue().getSecurityLevel())
+                .as("실효 판정은 기존 컬럼에 그대로 남는다")
+                .isEqualTo("CLEAN");
+    }
+
+    /**
+     * 이슈 #505 — 위기 해제 스위치의 입력값을 트레이스에 남긴다.
+     *
+     * <p>{@code crisis_attribution} 은 전 코드베이스에서 어디에도 영속되지 않았다.
+     * 이 필드 하나로 강등된 위기 후보가 해제되는데, 프로덕션에서 그 경로가 발동했는지
+     * 사후에 확인할 방법이 없었다.
+     *
+     * <p>"해제됐는가" 자체는 별도 필드로 두지 않는다 —
+     * {@code l1_flags.crisis_unverified=true} 이고 {@code action != CRISIS_FLOW} 이면 해제된 것이라
+     * 이미 기록된 값들로 도출된다. 정책 판단을 로거에 복제하지 않는다.
+     */
+    @Test
+    @DisplayName("위기 귀속 판정을 트레이스에 남긴다")
+    void logPersistsCrisisAttributionInTrace() {
+        PolicyDecision decision = new PolicyDecision(
+                "pd_attr",
+                DecisionAction.GENERATE,
+                GenerationMode.SUPPORTIVE,
+                DeliveryMode.CAUTIOUS_SPECULATIVE,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                true,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.MEDIUM,
+                null,
+                JudgeStatus.SUCCEEDED
+        );
+        InputJudgeResult judgeResult = new InputJudgeResult(
+                SecurityVerdict.clean(),
+                new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.SUPPORTIVE,
+                        DeliveryMode.CAUTIOUS_SPECULATIVE, false, CrisisAttribution.THIRD_PARTY),
+                0.8);
+
+        logger.log(
+                UUID.randomUUID(),
+                UUID.randomUUID(),
+                decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                new SafetyL1Result(false, true, true, false, false, false, false,
+                        List.of("crisis_keyword:죽고싶다", "crisis_context_marker:third_person"), 0.6),
+                SecurityAssessment.clean(),
+                100,
+                10,
+                false,
+                true,
+                new OutputGuardOutcome(null, null, false),
+                "default",
+                false,
+                MemoryCacheOutcome.live(),
+                false,
+                decision.crisisTrigger(),
+                null,
+                ResponseContractResult.notApplicable(),
+                -1,
+                -1,
+                false,
+                0,
+                null,
+                judgeResult
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+        String trace = captor.getValue().getTrace();
+
+        assertThat(trace).contains("\"crisis_attribution\":\"THIRD_PARTY\"");
+        assertThat(trace)
+                .as("해제 여부는 이 두 값으로 도출된다 — 별도 필드를 만들지 않는다")
+                .contains("\"crisis_unverified\":true");
+    }
+
+    @Test
+    @DisplayName("판정을 받지 못한 턴은 귀속을 null로 남긴다 — 없음과 판정 부재를 섞지 않는다")
+    void logKeepsCrisisAttributionNullWhenJudgeAbsent() {
+        PolicyDecision decision = new PolicyDecision(
+                "pd_nojudge",
+                DecisionAction.GENERATE,
+                GenerationMode.NORMAL,
+                DeliveryMode.SPECULATIVE,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                false,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED
+        );
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(), SecurityAssessment.clean(),
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
+        verify(repository).save(captor.capture());
+
+        assertThat(captor.getValue().getTrace()).contains("\"crisis_attribution\":null");
+    }
+
+    /**
+     * 이슈 #510 — trace 는 범주만 담고 내용은 담지 않는다.
+     *
+     * <p>`SecurityRuleFilter` 의 라벨은 패턴 문자열 자체다. 자해 질의 패턴은
+     * {@code "자살 방법 알려줘"}·{@code "단계별 자해 방법"} 이므로, 라벨을 그대로 적재하면
+     * "이 사용자가 자살 방법을 물었다"가 AES-256 없이 평문 JSONB 에 영구 남는다.
+     *
+     * <p>이 클래스는 L1 시그널을 {@code crisis_context_marker:} 접두어로 필터링해
+     * {@code crisis_keyword:죽고싶다} 류를 배제하는 규약을 이미 지킨다. 같은 규약을 보안 축에도
+     * 적용한다 — 등급·성격·개수만 남기고 라벨은 남기지 않는다.
+     */
+    @Test
+    @DisplayName("자해 질의 라벨을 트레이스에 남기지 않는다 — 범주와 개수만")
+    void logDoesNotPersistSelfHarmInquiryLabels() {
+        PolicyDecision decision = crisisDecision("pd_selfharm");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘", "단계별 자해 방법")),
+                100, 10, true, false, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .as("라벨은 패턴 문자열 자체다 — 평문 trace 에 담기면 민감정보가 남는다")
+                .doesNotContain("자살 방법 알려줘")
+                .doesNotContain("단계별 자해 방법")
+                .doesNotContain("security_attack_types");
+        assertThat(trace)
+                .as("범주와 개수는 남긴다 — 보안 축 재현율의 분모·분자가 된다")
+                .contains("\"attack_kind\":\"SELF_HARM_INQUIRY\"")
+                .contains("\"security_rule_level\":\"ATTACK\"")
+                .contains("\"security_pattern_label_count\":2");
+    }
+
+    /**
+     * 이슈 #510 — 부재를 값으로 축약하지 않는 결정에 회귀 방어를 붙인다.
+     *
+     * <p>PR #507 이 가장 공들여 정당화한 결정인데 이 분기를 타는 테스트가 없었다.
+     * {@code unverifiable_by_judge=false} 로 되돌리면 "원문 근거 없었음"과 "판정 객체 자체가
+     * 없었음"이 같은 값이 되어, 원문 기반 탐지가 통째로 빠진 턴을 식별할 수 없다.
+     */
+    @Test
+    @DisplayName("보안 판정 객체가 없으면 부재를 null로 남긴다 — false로 축약하지 않는다")
+    void logKeepsSecurityEvidenceNullWhenAssessmentAbsent() {
+        PolicyDecision decision = generateDecision("pd_no_assessment");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                null,
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        assertThat(capturedTrace())
+                .contains("\"security_rule_level\":null")
+                .contains("\"attack_kind\":null")
+                .contains("\"security_obfuscation_signals\":null")
+                .contains("\"security_pattern_label_count\":null")
+                .contains("\"security_evidence_unverifiable_by_judge\":null");
+    }
+
+    /** 값까지 고정한다 — 키 존재만 단정하면 true·false 를 뒤집어도 통과한다. */
+    @Test
+    @DisplayName("원문 전용 근거 플래그는 값까지 고정한다")
+    void logPinsUnverifiableByJudgeValue() {
+        PolicyDecision decision = generateDecision("pd_unverifiable");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.suspicious(List.of("역할극"), true),
+                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        assertThat(capturedTrace())
+                .as("원문에서만 드러난 근거가 있었는지는 Judge CLEAN 강등을 사후 판정하는 값이다")
+                .contains("\"security_evidence_unverifiable_by_judge\":true");
+    }
+
+    /**
+     * 보안 축 trace 키 집합을 고정한다 (이슈 #510).
+     *
+     * <p>버전 상수가 자기 자신과 같은지 보는 것은 동어반복이라 회귀를 못 잡는다.
+     * 실제로 고정해야 하는 것은 <b>어떤 키가 나가는가</b>다 — 키가 사라지면 집계 쿼리가
+     * 조용히 빈 결과를 내고, 키가 추가되면 스키마 버전을 올릴지 결정해야 한다.
+     */
+    @Test
+    @DisplayName("보안 축 trace 키 집합과 스키마 버전을 함께 고정한다")
+    void logPinsSecurityTraceKeySet() {
+        PolicyDecision decision = generateDecision("pd_schema");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(), SecurityAssessment.clean(),
+                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .contains("\"schema_version\":\"v2.5\"")
+                .contains("\"security_rule_level\":")
+                .contains("\"attack_kind\":")
+                .contains("\"security_obfuscation_signals\":")
+                .contains("\"security_pattern_label_count\":")
+                .contains("\"security_evidence_unverifiable_by_judge\":")
+                .contains("\"crisis_attribution\":");
+        assertThat(trace)
+                .as("라벨 키는 되살아나면 안 된다")
+                .doesNotContain("security_attack_types");
+    }
+
+    /**
+     * 원문 기반 우회 신호는 고정 토큰이라 그대로 남긴다 (이슈 #510).
+     *
+     * <p>이 값이 {@code unverifiable_by_judge} 가 왜 섰는지를 설명한다 — 라벨과 함께 개수로
+     * 뭉개면 진단 가치가 가장 큰 항목이 사라진다.
+     */
+    @Test
+    @DisplayName("우회 신호 토큰은 남기고 패턴 라벨만 개수로 바꾼다")
+    void logKeepsObfuscationSignalsButCountsLabels() {
+        PolicyDecision decision = generateDecision("pd_obfuscation");
+
+        logger.log(
+                UUID.randomUUID(), UUID.randomUUID(), decision,
+                new ModerationResult(false, Map.of(), Map.of()),
+                SafetyL1Result.clear(),
+                SecurityAssessment.suspicious(
+                        List.of("역할극", "zero_width_char", "obfuscated_input"), true),
+                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
+                false, false, false, decision.crisisTrigger(), null
+        );
+
+        String trace = capturedTrace();
+        assertThat(trace)
+                .as("고정 토큰은 민감하지 않고 unverifiable_by_judge 의 근거다")
+                .contains("\"security_obfuscation_signals\":[\"zero_width_char\",\"obfuscated_input\"]")
+                .contains("\"security_pattern_label_count\":1");
+        assertThat(trace)
+                .as("패턴 라벨은 사용자 문구다")
+                .doesNotContain("역할극");
     }
 
     /**
@@ -128,8 +455,7 @@ class AiDecisionLoggerTest {
                 10,
                 true,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -186,8 +512,7 @@ class AiDecisionLoggerTest {
                 10,
                 true,
                 false,
-                OutputPreFilterResult.pass(),
-                null,
+                new OutputGuardOutcome(OutputPreFilterResult.pass(), null, false),
                 "default",
                 false,
                 false,
@@ -231,8 +556,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -266,8 +590,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -300,8 +623,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 true,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,
@@ -460,11 +782,10 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                OutputPreFilterResult.pass(),
-                judgeResult,
+                new OutputGuardOutcome(OutputPreFilterResult.pass(), judgeResult, false),
                 "default",
                 false,
-                false,
+                MemoryCacheOutcome.live(),
                 false,
                 null,
                 null,
@@ -473,7 +794,27 @@ class AiDecisionLoggerTest {
                 -1,
                 false,
                 0,
-                memoryResult
+                memoryResult,
+                null
+        );
+    }
+
+    /** 위기 확정 결정 (이슈 #510 축). */
+    private PolicyDecision crisisDecision(String decisionId) {
+        return new PolicyDecision(
+                decisionId,
+                DecisionAction.CRISIS_FLOW,
+                GenerationMode.CRISIS,
+                DeliveryMode.CRISIS_FLOW,
+                SecurityLevel.ATTACK,
+                false,
+                false,
+                false,
+                InterventionHints.empty(),
+                "test-policy",
+                RiskLevel.HARD_CRISIS,
+                CrisisTrigger.SELF_HARM_INQUIRY,
+                JudgeStatus.SKIPPED
         );
     }
 
@@ -495,8 +836,7 @@ class AiDecisionLoggerTest {
                 10,
                 false,
                 false,
-                null,
-                null,
+                new OutputGuardOutcome(null, null, false),
                 "default",
                 false,
                 false,

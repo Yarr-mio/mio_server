@@ -12,6 +12,7 @@ import com.mio.report.dto.WeeklyReportResponse;
 import com.mio.report.repository.WeeklyReportRepository;
 import com.mio.session.repository.MessageRepository;
 import com.mio.session.repository.SessionRepository;
+import com.mio.session.repository.SessionSummaryRepository;
 import com.mio.todo.repository.BehaviorTaskRepository;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -62,6 +63,7 @@ class ReportServiceWeeklyReadTest {
 
     @Mock private CheckinRepository checkinRepository;
     @Mock private MessageRepository messageRepository;
+    @Mock private SessionSummaryRepository sessionSummaryRepository;
     @Mock private SessionRepository sessionRepository;
     @Mock private BehaviorTaskRepository behaviorTaskRepository;
     @Mock private UserRepository userRepository;
@@ -79,8 +81,8 @@ class ReportServiceWeeklyReadTest {
         lastWeekStart = ReportWeek.lastWeekStartFrom(LocalDate.now(AppConstants.ZONE));
         lastMonthStart = LocalDate.now(AppConstants.ZONE).minusMonths(1).withDayOfMonth(1);
 
-        service = new ReportService(checkinRepository, messageRepository, sessionRepository,
-                behaviorTaskRepository, userRepository, weeklyReportRepository, txManager);
+        service = new ReportService(checkinRepository, messageRepository, sessionSummaryRepository,
+                sessionRepository, behaviorTaskRepository, userRepository, weeklyReportRepository, txManager);
 
         // @PostConstruct 가 만드는 readOnlyTx 를 콜백 실행만 하는 스텁으로 대체한다.
         TransactionTemplate tx = mock(TransactionTemplate.class);
@@ -286,6 +288,37 @@ class ReportServiceWeeklyReadTest {
             MonthlyReportResponse response = service.getMonthlyReport(userId, lastMonthStart.plusDays(15));
 
             assertThat(response.monthStart()).isEqualTo(lastMonthStart);
+        }
+    }
+
+    @Nested
+    @DisplayName("인지왜곡 집계 — session_summaries 기준 (#502)")
+    class DistortionSource {
+
+        @Test
+        void 세션요약에만_있고_메시지에는_없어도_리포트에_반영된다() {
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+            when(sessionSummaryRepository.findBiasTypeDistribution(eq(userId), any(), any()))
+                    .thenReturn(java.util.Collections.singletonList(new Object[]{"overgeneralization", 2L}));
+
+            WeeklyReportResponse response = service.getWeeklyReport(userId, lastWeekStart);
+
+            assertThat(response.distortionTop3()).hasSize(1);
+            assertThat(response.distortionTop3().get(0).type()).isEqualTo("overgeneralization");
+            assertThat(response.distortionTop3().get(0).label()).isEqualTo("과일반화");
+            assertThat(response.distortionTop3().get(0).count()).isEqualTo(2L);
+        }
+
+        @Test
+        void 세션요약_저장소를_유저와_기간으로_조회한다() {
+            when(weeklyReportRepository.findByUser_IdAndWeekStart(eq(userId), any()))
+                    .thenReturn(Optional.empty());
+
+            service.getWeeklyReport(userId, lastWeekStart);
+
+            org.mockito.Mockito.verify(sessionSummaryRepository)
+                    .findBiasTypeDistribution(eq(userId), any(), any());
         }
     }
 

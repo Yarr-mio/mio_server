@@ -53,6 +53,14 @@ public interface SessionRepository extends JpaRepository<Session, UUID> {
 
     boolean existsByUser_IdAndStatus(UUID userId, SessionStatus status);
 
+    /**
+     * 이 사용자에게 방금 만든 세션 외에 다른 세션이 있는지 (이슈 #530).
+     *
+     * <p>선제 인사가 자기소개("난 미오야")를 할지 닉네임을 부를지 가른다. 세션 저장 뒤에
+     * 판정하므로 현재 세션을 제외해야 한다 — 안 그러면 모든 사용자가 재방문으로 보인다.
+     */
+    boolean existsByUser_IdAndIdNot(UUID userId, UUID excludedSessionId);
+
     boolean existsByIdAndStatus(UUID id, SessionStatus status);
 
     @Modifying(clearAutomatically = true, flushAutomatically = true)

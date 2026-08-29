@@ -23,6 +23,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -36,8 +37,10 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -62,6 +65,10 @@ class ContextPreWarmerTest {
     private final OntologyRelationExpander ontologyRelationExpander = mock(OntologyRelationExpander.class);
     private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
+    @SuppressWarnings("unchecked")
+    private final org.springframework.data.redis.core.ValueOperations<String, String> valueOperations =
+            mock(org.springframework.data.redis.core.ValueOperations.class);
+
     private ContextPreWarmer preWarmer;
     private UUID sessionId;
     private UUID userId;
@@ -80,6 +87,125 @@ class ContextPreWarmerTest {
         combined = mock(CombinedSignal.class);
         profile = mock(SafetyProfile.class);
         when(jdbcTemplate.queryForObject(any(String.class), eq(Integer.class), eq(userId))).thenReturn(1);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    }
+
+    /** 사전 웜업이 조립까지 도달하도록 계획·랭킹을 채운다. 위험도별 변형 검증에만 쓴다. */
+    private void stubPlanAndRanking() {
+        RetrievedItem item = new RetrievedItem("e-1", RetrievalSource.LEXICAL_EPISODE,
+                "지난주 불안", "normal", 0.9, 1);
+        when(fusionRanker.rank(any(), any(), anyInt())).thenReturn(List.of(item));
+    }
+
+    /**
+     * 위기 턴의 캐시 폴백이 highRisk 필터를 거친 내용만 쓴다 (이슈 #522).
+     *
+     * <p>사전 웜업은 사용자의 다음 발화를 모르므로 위험도를 알 수 없다. 그래서 지금까지
+     * {@code highRisk=false} 하나로만 구웠고, 라이브 검색이 비어 폴백이 채택되면
+     * <b>에피소드·신념 기억이 필터를 거치지 않고</b> 위기 턴 프롬프트에 들어갔다.
+     *
+     * <p>모르는 값은 굽는 시점에 정할 수 없으니 <b>두 변형을 모두 굽는다.</b> 채택 시점에
+     * 실제 위험도로 고른다. 조립은 문자열 빌드뿐이라 비용이 사실상 없다.
+     */
+    @Test
+    @DisplayName("사전 웜업은 위험도별 두 변형을 모두 굽는다")
+    void preWarmBakesBothRiskVariants() {
+        stubPlanAndRanking();
+        when(contextComposer.compose(anyList(), any(), eq(false))).thenReturn("일반 문맥");
+        when(contextComposer.compose(anyList(), any(), eq(true))).thenReturn("위기 문맥");
+
+        preWarmer.preWarm(sessionId, userId);
+
+        verify(valueOperations).set(
+                eq("session:%s:context_cache".formatted(sessionId)), eq("일반 문맥"), any(Duration.class));
+        verify(valueOperations).set(
+                eq("session:%s:context_cache:high_risk".formatted(sessionId)), eq("위기 문맥"), any(Duration.class));
+    }
+
+    /**
+     * 채택 측이 위험도를 스스로 해석하지 않는다 (이슈 #522).
+     *
+     * <p>굽는 쪽과 채택하는 쪽이 각자 {@code highRisk} 를 계산하면 정의가 갈라질 수 있고,
+     * 갈라지는 순간 이 결함이 그대로 돌아온다. 판정을 {@link ContextPreWarmer} 하나가 갖고
+     * 호출자는 {@link CombinedSignal} 만 넘긴다.
+     */
+    @Test
+    @DisplayName("위기 신호면 highRisk 변형을 읽는다")
+    void cachedContextPicksTheVariantMatchingTheSignal() {
+        when(combined.hardCrisis()).thenReturn(true);
+        when(valueOperations.get("session:%s:context_cache:high_risk".formatted(sessionId)))
+                .thenReturn("위기 문맥");
+
+        assertThat(preWarmer.getCachedContext(sessionId, combined)).isEqualTo("위기 문맥");
+    }
+
+    @Test
+    @DisplayName("위험 후보도 highRisk 변형을 읽는다 — 굽는 쪽과 같은 판정을 쓴다")
+    void riskCandidateAlsoPicksHighRiskVariant() {
+        when(combined.hardCrisis()).thenReturn(false);
+        when(combined.riskCandidate()).thenReturn(true);
+        when(valueOperations.get("session:%s:context_cache:high_risk".formatted(sessionId)))
+                .thenReturn("위기 문맥");
+
+        assertThat(preWarmer.getCachedContext(sessionId, combined)).isEqualTo("위기 문맥");
+    }
+
+    @Test
+    @DisplayName("일반 턴은 일반 변형을 읽는다")
+    void normalTurnPicksNormalVariant() {
+        when(combined.hardCrisis()).thenReturn(false);
+        when(combined.riskCandidate()).thenReturn(false);
+        when(valueOperations.get("session:%s:context_cache".formatted(sessionId)))
+                .thenReturn("일반 문맥");
+
+        assertThat(preWarmer.getCachedContext(sessionId, combined)).isEqualTo("일반 문맥");
+    }
+
+    /**
+     * highRisk 변형이 없으면 일반 변형으로 내려가지 않는다 (이슈 #522).
+     *
+     * <p>TTL 이 지나거나 이 수정 배포 전에 구워진 캐시가 남아 있을 수 있다. 그때 일반 변형을
+     * 대신 쓰면 필터 미적용 내용이 위기 턴에 들어가는 원래 결함이 된다. 기억 없이 가는 편이
+     * 필터 안 된 기억보다 안전하다.
+     */
+    @Test
+    @DisplayName("highRisk 변형이 없으면 일반 변형으로 대체하지 않는다")
+    void missingHighRiskVariantDoesNotFallBackToTheNormalOne() {
+        when(combined.hardCrisis()).thenReturn(true);
+        when(valueOperations.get("session:%s:context_cache:high_risk".formatted(sessionId)))
+                .thenReturn(null);
+        when(valueOperations.get("session:%s:context_cache".formatted(sessionId)))
+                .thenReturn("필터 안 된 문맥");
+
+        assertThat(preWarmer.getCachedContext(sessionId, combined)).isNull();
+    }
+
+    /**
+     * 캐시 나이를 노출한다 (이슈 #522).
+     *
+     * <p>폴백이 얼마나 낡은 문맥을 주입했는지 알 수 없으면 이 경로의 품질을 사후에 판정할
+     * 수 없다. 남은 TTL 로 나이를 역산한다 — 값 형식을 바꾸지 않아도 된다.
+     */
+    @Test
+    @DisplayName("남은 TTL 로 캐시 나이를 역산한다")
+    void reportsCacheAgeFromRemainingTtl() {
+        when(combined.hardCrisis()).thenReturn(false);
+        when(combined.riskCandidate()).thenReturn(false);
+        when(redisTemplate.getExpire("session:%s:context_cache".formatted(sessionId), TimeUnit.MILLISECONDS))
+                .thenReturn(200_000L);
+
+        assertThat(preWarmer.getCachedContextAgeMs(sessionId, combined)).isEqualTo(100_000L);
+    }
+
+    @Test
+    @DisplayName("TTL 을 못 읽으면 나이는 null — 0 으로 보고하지 않는다")
+    void unknownTtlYieldsNullAgeRatherThanZero() {
+        when(combined.hardCrisis()).thenReturn(false);
+        when(combined.riskCandidate()).thenReturn(false);
+        when(redisTemplate.getExpire("session:%s:context_cache".formatted(sessionId), TimeUnit.MILLISECONDS))
+                .thenReturn(-2L);
+
+        assertThat(preWarmer.getCachedContextAgeMs(sessionId, combined)).isNull();
     }
 
     @Test

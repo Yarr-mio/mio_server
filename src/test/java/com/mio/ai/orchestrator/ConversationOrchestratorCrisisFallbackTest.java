@@ -33,6 +33,7 @@ import com.mio.ai.safety.SafetySignalCombiner;
 import com.mio.ai.safety.UserMessageSignal;
 import com.mio.ai.safety.UserMessageSignalAnalyzer;
 import com.mio.ai.security.SecurityRefusalTemplate;
+import com.mio.ai.support.RecordingSseEmitter;
 import com.mio.session.domain.MessageTurn;
 import com.mio.session.domain.Session;
 import com.mio.session.repository.SessionRepository;
@@ -69,6 +70,16 @@ import static org.mockito.Mockito.when;
 /**
  * 위기 맥락에서 실패한 턴의 폴백은 핫라인을 포함해야 한다 (PR #452 리뷰 HIGH).
  *
+ * <p><b>단정은 필드를 본다 (이슈 #499).</b> 이전에는 손으로 만든 emitter 가 SSE 프레임 전체를
+ * 한 문자열로 이어붙이고({@code event:}·{@code data:} 표지와 DTO 의 {@code toString()} 이 뒤섞인다)
+ * 테스트가 그 덩어리에 부분일치했다. 세 자리 전화번호 {@code 109} 는 페이로드의 다른 숫자와
+ * 겹쳐 양방향으로 깨졌다 — {@code doesNotContain} 은 CI 에서 무작위로 실패했고,
+ * {@code contains} 는 핫라인이 빠져도 통과할 수 있었다. 후자가 더 나쁘다: 안전 회귀를 통과시킨다.
+ *
+ * <p>그래서 {@link RecordingSseEmitter} 로 모은다 — 프레임을 파싱해 이벤트 이름과 JSON 페이로드로
+ * 나누므로, 단정이 {@code resources.hotlines[].number} 같은 <b>필드</b>를 향한다. 숫자열과의
+ * 우연한 겹침이 구조적으로 불가능해진다.
+ *
  * <p>이전에는 최상위 catch 가 항상 "지금 답변을 만들지 못했어요..." 만 보냈다. 활성 위기
  * triage 도중 어떤 예외가 나면, 방금 자·타해 의도를 확인하던 사용자에게 핫라인 없는
  * 재시도 문구가 나갔다 — 그 순간 가장 필요한 것이 상담 전화번호다.
@@ -76,6 +87,10 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
 class ConversationOrchestratorCrisisFallbackTest {
+
+    /** 하이픈이 없어 수치 id 와 구별되지 않던 번호. 이제 필드로 비교하므로 안전하다. */
+    private static final String SUICIDE_HOTLINE = "109";
+    private static final String MENTAL_HEALTH_HOTLINE = "1577-0199";
 
     @Mock private InputNormalizer inputNormalizer;
     @Mock private SecurityRuleFilter securityRuleFilter;
@@ -154,13 +169,12 @@ class ConversationOrchestratorCrisisFallbackTest {
                 .when(messagePersistenceService)
                 .completeTurn(any(), any(), anyString(), anyBoolean(), anyString(), any());
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload())
+        assertThat(emitter.crisisHotlineNumbers())
                 .as("위기 triage 중 실패한 턴의 폴백에는 핫라인이 있어야 한다")
-                .contains("109")
-                .contains("1577-0199");
+                .contains(SUICIDE_HOTLINE, MENTAL_HEALTH_HOTLINE);
     }
 
     @Test
@@ -169,10 +183,11 @@ class ConversationOrchestratorCrisisFallbackTest {
         doThrow(new IllegalStateException("metrics registry failure"))
                 .when(crisisFixedFlowCoordinator).route(sessionId, userId, "네");
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload()).contains("109").contains("1577-0199");
+        assertThat(emitter.crisisHotlineNumbers())
+                .contains(SUICIDE_HOTLINE, MENTAL_HEALTH_HOTLINE);
     }
 
     @Test
@@ -185,13 +200,12 @@ class ConversationOrchestratorCrisisFallbackTest {
         doThrow(new RuntimeException("db down before routing"))
                 .when(messagePersistenceService).openTurn(any(), any(), any(), any(), any());
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload())
+        assertThat(emitter.crisisHotlineNumbers())
                 .as("라우팅 전 실패라도 활성 triage 면 핫라인이 있어야 한다")
-                .contains("109")
-                .contains("1577-0199");
+                .contains(SUICIDE_HOTLINE, MENTAL_HEALTH_HOTLINE);
     }
 
     @Test
@@ -204,13 +218,12 @@ class ConversationOrchestratorCrisisFallbackTest {
         when(sessionRepository.findById(sessionId))
                 .thenThrow(new RuntimeException("db down before session load"));
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload())
+        assertThat(emitter.crisisHotlineNumbers())
                 .as("세션 조회 실패라도 활성 triage 면 핫라인이 있어야 한다")
-                .contains("109")
-                .contains("1577-0199");
+                .contains(SUICIDE_HOTLINE, MENTAL_HEALTH_HOTLINE);
     }
 
     @Test
@@ -222,10 +235,11 @@ class ConversationOrchestratorCrisisFallbackTest {
         doThrow(new RuntimeException("history load failed"))
                 .when(messagePersistenceService).loadRecentUserSafetyHistory(any(), anyInt());
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload()).contains("109").contains("1577-0199");
+        assertThat(emitter.crisisHotlineNumbers())
+                .contains(SUICIDE_HOTLINE, MENTAL_HEALTH_HOTLINE);
     }
 
     @Test
@@ -236,39 +250,16 @@ class ConversationOrchestratorCrisisFallbackTest {
         when(safetyProfileBuilder.getWithCacheHit(anyString(), anyString()))
                 .thenThrow(new RuntimeException("redis down"));
 
-        CapturingEmitter emitter = new CapturingEmitter();
+        RecordingSseEmitter emitter = new RecordingSseEmitter(new ObjectMapper());
         orchestrator.handle(userId, sessionId, "네", emitter, null);
 
-        assertThat(emitter.payload())
-                .contains("지금 답변을 만들지 못했어요")
-                .doesNotContain("109");
+        assertThat(emitter.messageBodyText())
+                .as("위기가 아닌 실패는 기존 재시도 문구를 그대로 쓴다")
+                .contains("지금 답변을 만들지 못했어요");
+        assertThat(emitter.eventNames())
+                .as("위기 이벤트 자체가 나가지 않아야 한다 — 문구만 보면 핫라인 블록의 유무를 놓친다")
+                .doesNotContain("crisis");
+        assertThat(emitter.crisisHotlineNumbers()).isEmpty();
     }
 
-    /** SSE 로 직렬화되어 나간 payload 를 문자열로 모은다. 완료·오류 콜백은 무시한다. */
-    private static final class CapturingEmitter extends SseEmitter {
-        private final StringBuilder sent = new StringBuilder();
-
-        private CapturingEmitter() {
-            super(30_000L);
-        }
-
-        @Override
-        public synchronized void send(SseEventBuilder builder) {
-            builder.build().forEach(data -> sent.append(data.getData()));
-        }
-
-        @Override
-        public synchronized void complete() {
-            // no-op: 테스트에서는 실제 비동기 응답이 없다.
-        }
-
-        @Override
-        public synchronized void completeWithError(Throwable ex) {
-            // no-op
-        }
-
-        private String payload() {
-            return sent.toString();
-        }
-    }
 }
