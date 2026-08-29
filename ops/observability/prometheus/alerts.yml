@@ -90,6 +90,19 @@ groups:
           summary: "임베딩 대기 상한 초과율이 20% 초과 — 벡터 검색이 버려지고 있다"
           description: "턴 크리티컬 패스의 임베딩 대기 상한을 넘겨 벡터 검색 없이 응답하고 있습니다. 회상 품질이 조용히 떨어지는 경로입니다. 상한을 얼마로 올려야 하는지는 실제 왕복 분포로 판단하십시오 — histogram_quantile(0.95, sum(rate(mio_retrieval_embedding_wait_seconds_bucket{outcome='success'}[30m])) by (le))."
 
+      # 죽은 토큰 하나가 5분마다 영구히 재시도되던 것을 상한으로 끊었다 (이슈 #497).
+      # 개별 토큰이 상한에 닿는 것은 정상이지만, 짧은 시간에 여러 건이 동시에 닿으면
+      # 개별 토큰 문제가 아니라 apns-topic·인증서 설정 오류 신호다 — 그때는 전 유저 푸시가
+      # 조용히 멎는다.
+      - alert: MioPushTokenSuppressionBurst
+        expr: sum(increase(mio_push_token_suppressed_total[30m])) >= 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "연속 실패 상한으로 제외된 푸시 토큰이 30분간 10건 이상"
+          description: "여러 토큰이 동시에 발송 상한에 도달했습니다. 개별 기기 문제가 아니라 APNS_BUNDLE_ID·인증서 설정 오류일 가능성이 높습니다. device_tokens 의 last_failure_reason 분포를 확인하십시오 — 사유가 한 종류로 몰려 있으면 서버 설정 문제입니다. 토큰은 무효화되지 않으므로 원인을 고치면 24시간 쿨다운 뒤 자동으로 복구됩니다."
+
       - alert: MioContractViolationRatioHigh
         expr: sum(increase(mio_ai_contract_results_total{result="violated"}[15m])) / clamp_min(sum(increase(mio_ai_contract_results_total[15m])), 1) > 0.20 and sum(increase(mio_ai_contract_results_total[15m])) >= 20
         for: 10m

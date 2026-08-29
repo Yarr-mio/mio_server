@@ -32,6 +32,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import io.micrometer.core.instrument.MeterRegistry;
+
 import java.time.Clock;
 import java.time.DateTimeException;
 import java.time.Duration;
@@ -76,6 +78,15 @@ public class NotificationService {
             "anxious", "sad", "angry", "ashamed", "numb", "tired", "confused"
     );
 
+    /**
+     * 연속 실패 상한으로 발송에서 제외된 토큰 수 (이슈 #497).
+     *
+     * <p>이 값이 특정 유저에 국한되지 않고 전반적으로 오르면 개별 토큰 문제가 아니라
+     * {@code apns-topic}·인증서 설정 오류 신호다.
+     */
+    private static final String PUSH_SUPPRESSED_METRIC = "mio.push.token.suppressed";
+
+    private final MeterRegistry meterRegistry;
     private final Clock clock;
     private final UserRepository userRepository;
     private final DeviceTokenRepository deviceTokenRepository;
@@ -93,7 +104,7 @@ public class NotificationService {
         userRepository.findById(userId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(userId);
+        List<DeviceToken> tokens = sendableTokens(userId);
         if (tokens.isEmpty()) {
             log.warn("No valid device tokens for user={}", userId);
             return;
@@ -107,6 +118,31 @@ public class NotificationService {
                 deviceTokenRepository.save(token);
             }
         }
+    }
+
+    /**
+     * 지금 실제로 발송할 수 있는 토큰만 고른다 (이슈 #497).
+     *
+     * <p>연속 실패 상한에 도달한 토큰을 여기서 뺀다. 무효화({@code is_valid = false})가 아니라
+     * <b>쿨다운</b>이라 리포지터리 조건이 아니라 도메인 판정으로 거른다 — 유효한 토큰이라는
+     * 사실 자체는 그대로여야 {@code apns-topic} 설정 오류가 고쳐졌을 때 스스로 회복된다.
+     *
+     * <p>사용자당 토큰 수가 한 자릿수라 메모리 필터로 충분하다. 리포지터리 조건으로 옮기면
+     * {@code AuthService} 등 발송이 아닌 호출부까지 이 규칙에 묶인다.
+     */
+    private List<DeviceToken> sendableTokens(UUID userId) {
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        List<DeviceToken> valid = deviceTokenRepository.findByUser_IdAndIsValidTrue(userId);
+        List<DeviceToken> sendable = valid.stream()
+                .filter(token -> !token.isSendSuppressed(now))
+                .toList();
+        int suppressed = valid.size() - sendable.size();
+        if (suppressed > 0) {
+            // 전 유저에서 동시에 발생한다면 개별 토큰 문제가 아니라 토픽·인증서 설정 오류다.
+            log.warn("Suppressing {} device token(s) at failure cap for user={}", suppressed, userId);
+            meterRegistry.counter(PUSH_SUPPRESSED_METRIC).increment(suppressed);
+        }
+        return sendable;
     }
 
     /**
@@ -194,7 +230,7 @@ public class NotificationService {
      * 생기므로, 애초에 그런 조합을 만들 수 없게 막았다 (이슈 #409).
      */
     public void sendNotificationToUser(User user, String triggerCode, boolean countTowardDailyLimit) {
-        List<DeviceToken> tokens = deviceTokenRepository.findByUser_IdAndIsValidTrue(user.getId());
+        List<DeviceToken> tokens = sendableTokens(user.getId());
         if (tokens.isEmpty()) {
             // 보낸 것이 없으므로 SENT 로 기록하지 않는다 (미발송이 지표에 그대로 드러나야 한다).
             log.warn("No valid device tokens for user={} trigger={}", user.getId(), triggerCode);
@@ -218,18 +254,26 @@ public class NotificationService {
         boolean anyAmbiguous = false;
         List<UUID> tokensToInvalidate = new java.util.ArrayList<>();
         List<String> failureReasons = new java.util.ArrayList<>();
+        List<TokenSendOutcome> outcomes = new java.util.ArrayList<>();
         for (DeviceToken token : tokens) {
             PushSendResult result = pushSender.send(token.getToken(), token.getPlatform(), title, body, pushData);
             if (result.isSent()) {
                 anySucceeded = true;
+                outcomes.add(TokenSendOutcome.sent(token.getId()));
             } else {
                 anyAmbiguous |= result.isAmbiguous();
                 failureReasons.add(result.failureReason());
+                if (result.countsTowardFailureCap()) {
+                    outcomes.add(TokenSendOutcome.failed(token.getId(), result.failureReason()));
+                }
             }
             if (result.invalidatesToken()) {
                 tokensToInvalidate.add(token.getId());
             }
         }
+
+        // 연속 실패 상한 갱신 (이슈 #497). 무효화 대상은 이미 발송 풀에서 빠지므로 제외돼 있다.
+        notificationPersistenceService.recordTokenSendOutcomes(outcomes);
 
         notificationPersistenceService.persistNotificationResult(
                 user.getId(),

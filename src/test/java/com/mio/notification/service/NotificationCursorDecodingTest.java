@@ -96,6 +96,7 @@ class NotificationCursorDecodingTest {
     void setUp() {
         fixedClock = Clock.fixed(Instant.parse("2026-05-26T00:00:00Z"), ZoneOffset.of("+09:00"));
         notificationService = new NotificationService(
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry(),
                 fixedClock,
                 userRepository,
                 deviceTokenRepository,

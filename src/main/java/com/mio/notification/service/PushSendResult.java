@@ -35,4 +35,21 @@ public record PushSendResult(PushSendStatus status, String failureReason) {
     public boolean invalidatesToken() {
         return status == PushSendStatus.TOKEN_EXPIRED || status == PushSendStatus.INVALID_TOKEN;
     }
+
+    /**
+     * 연속 실패 상한(이슈 #497)에 반영할 결과인지.
+     *
+     * <p>{@link PushSendStatus#FAILED} 만 센다. 나머지는 세면 안 되는 이유가 각각 다르다.
+     * <ul>
+     *   <li>{@code AMBIGUOUS} — 발송됐을 수도 있다. 실패로 세면 <b>정상 동작하는 토큰이</b>
+     *       네트워크 문제만으로 발송 대상에서 빠진다</li>
+     *   <li>{@code SKIPPED} — APNs·FCM 설정이 꺼져 있는 것이라 토큰 문제가 아니다.
+     *       설정이 빠진 환경에서 전 토큰이 상한에 도달해 버린다</li>
+     *   <li>{@code TOKEN_EXPIRED}·{@code INVALID_TOKEN} — 이미 무효화되어 발송 대상에서
+     *       빠지므로 카운터를 올릴 이유가 없다</li>
+     * </ul>
+     */
+    public boolean countsTowardFailureCap() {
+        return status == PushSendStatus.FAILED;
+    }
 }
