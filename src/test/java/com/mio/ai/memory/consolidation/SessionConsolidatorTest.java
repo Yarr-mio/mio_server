@@ -394,6 +394,41 @@ class SessionConsolidatorTest {
     }
 
     @Test
+    @DisplayName("선제 인사만 있고 사용자 발화가 0건이면 요약·추출·Todo 를 만들지 않는다")
+    void consolidate_openingOnlySession_skipsWithoutLlmCall() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        // 선제 인사(assistant) 한 건만 있는 세션 — 사용자 발화는 없다 (이슈 #530).
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(sessionId))).thenReturn(false);
+
+        SessionConsolidator.EnrichmentInput result = consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        // 검수된 인사 한 문장으로 요약·감정·왜곡·Todo 를 만들면 사용자가 하지 않은 말에서
+        // CBT 패턴을 뽑는 셈이고, LLM 비용도 같이 나간다.
+        assertThat(result).isNull();
+        verifyNoInteractions(llmClient, extractorLlmClient, todoRecommendationService);
+        verify(sessionSummaryRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("사용자 발화 존재 확인이 실패하면 요약하지 않는다 — 근거 없이 진행하지 않는다")
+    void consolidate_userMessageCheckFails_skips() {
+        SessionConsolidator consolidator = newConsolidator();
+        UUID userId = UUID.randomUUID();
+        UUID sessionId = UUID.randomUUID();
+        stubCoreInputs(userId, sessionId);
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(sessionId)))
+                .thenThrow(new org.springframework.dao.QueryTimeoutException("statement timeout"));
+
+        SessionConsolidator.EnrichmentInput result = consolidator.consolidate(sessionId, userId, "mio", 0);
+
+        assertThat(result).isNull();
+        verifyNoInteractions(llmClient, extractorLlmClient, todoRecommendationService);
+    }
+
+    @Test
     @DisplayName("핵심 요약 상태 저장이 실패하면 준비 완료 지연으로 집계하지 않는다")
     void onSessionEnded_whenCoreStatusWriteFails_recordsFailedReadiness() {
         SessionConsolidator consolidator = newConsolidator();
@@ -645,6 +680,9 @@ class SessionConsolidatorTest {
         when(sessionRepository.findById(sessionId)).thenReturn(Optional.of(session));
         when(userRepository.findById(userId)).thenReturn(Optional.of(user));
         when(checkpointRepository.findBySession_IdOrderByCheckpointSeqAsc(sessionId)).thenReturn(List.of());
+        // 사용자 발화 존재 게이트 (이슈 #530). 스텁이 없으면 null → false 로 읽혀 컨솔리데이션이
+        // 시작 전에 종료되고, 이 픽스처를 쓰는 모든 시나리오가 "요약할 대화 없음" 이 된다.
+        when(jdbcTemplate.queryForObject(anyString(), eq(Boolean.class), eq(sessionId))).thenReturn(true);
         when(jdbcTemplate.queryForList(anyString(), eq(sessionId))).thenReturn(List.of(Map.of(
                 "role", "user",
                 "content_ciphertext", new byte[]{1}

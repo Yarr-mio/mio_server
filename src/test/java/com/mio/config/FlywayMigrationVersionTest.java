@@ -18,7 +18,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Flyway가 기동 전에 거부할 마이그레이션 버전 중복을 빠른 단위 테스트로 고정한다. */
 class FlywayMigrationVersionTest {
 
-    private static final Pattern VERSION = Pattern.compile("^V([^_]+)__.*\\.sql$");
+    /**
+     * 버전부는 숫자와 구분자 {@code _}(= 점)로 이뤄지고, 설명과의 경계는 {@code __} 두 개다.
+     *
+     * <p>이전 패턴 {@code ^V([^_]+)__} 은 {@code V58_1__...} 같은 점 버전(58.1)을 아예 매칭하지
+     * 못해 중복 검사에서 조용히 빠졌다. 검사에서 빠진 파일은 중복이 생겨도 이 테스트가 잡지
+     * 못하고 기동 시점에 터진다 (이슈 #530).
+     */
+    private static final Pattern VERSION = Pattern.compile("^V(\\d+(?:_\\d+)*)__.*\\.sql$");
 
     @Test
     @DisplayName("모든 versioned migration은 서로 다른 버전을 가진다")

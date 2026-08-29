@@ -14,6 +14,7 @@ import com.mio.session.dto.ActiveSessionResponse;
 import com.mio.session.dto.CreateSessionRequest;
 import com.mio.session.dto.EmotionScoreRequest;
 import com.mio.session.dto.EmotionScoreResponse;
+import com.mio.session.dto.InitialAssistantMessageResponse;
 import com.mio.session.dto.SendMessageRequest;
 import com.mio.session.dto.SessionResponse;
 import com.mio.session.repository.SessionRepository;
@@ -66,10 +67,16 @@ class SessionServiceTest {
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private SessionMessageLock sessionMessageLock;
     @Mock private ValueOperations<String, String> valueOps;
+    @Mock private SessionOpeningService sessionOpeningService;
 
     private SessionService sessionService;
     private UUID userId;
     private User mockUser;
+
+    private final InitialAssistantMessageResponse openingResponse = new InitialAssistantMessageResponse(
+            UUID.randomUUID(), "assistant", "session_opening",
+            "안녕! 난 미오야 🐧 오늘 어떤 하루를 보냈어?",
+            OffsetDateTime.now(ZoneOffset.UTC));
 
     @BeforeEach
     void setUp() {
@@ -77,8 +84,13 @@ class SessionServiceTest {
         sessionService = new SessionService(
                 sessionRepository, sessionSummaryRepository, behaviorTaskRepository, userRepository,
                 sessionMessagePersistenceService, conversationOrchestrator, sessionMessageLock,
-                workingMemory, eventPublisher, contextPreWarmer, redisTemplate
+                workingMemory, eventPublisher, contextPreWarmer, redisTemplate, sessionOpeningService
         );
+        // 선제 인사는 세션 생성 경로의 일부다 (이슈 #530). 스텁이 없으면 null 이 흘러
+        // 오프닝 적재에서 NPE 가 나므로, 실제 계약대로 응답 객체를 돌려준다.
+        lenient().when(sessionOpeningService.createOpening(any(), any())).thenReturn(openingResponse);
+        lenient().when(sessionOpeningService.findOpening(any())).thenReturn(Optional.empty());
+
         userId = UUID.randomUUID();
         mockUser = User.builder()
                 .socialProvider("kakao")
@@ -98,7 +110,7 @@ class SessionServiceTest {
                 .user(mockUser)
                 .characterId("mio")
                 .build();
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest("mio"));
 
@@ -115,7 +127,7 @@ class SessionServiceTest {
                 .user(mockUser)
                 .characterId("mio")
                 .build();
-        when(sessionRepository.save(any())).thenReturn(session);
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
 
         SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest(null));
 
@@ -155,7 +167,7 @@ class SessionServiceTest {
     void createSession_uniqueViolation_throwsBusinessException() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
-        when(sessionRepository.save(any()))
+        when(sessionRepository.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("uq_sessions_one_active_per_user")));
 
         assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
@@ -169,7 +181,7 @@ class SessionServiceTest {
     void createSession_otherIntegrityViolation_propagates() {
         when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
         when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
-        when(sessionRepository.save(any()))
+        when(sessionRepository.saveAndFlush(any()))
                 .thenThrow(new DataIntegrityViolationException("save failed", new RuntimeException("other_constraint")));
 
         assertThatThrownBy(() -> sessionService.createSession(userId, new CreateSessionRequest("mio")))
@@ -204,6 +216,83 @@ class SessionServiceTest {
 
         assertThat(response.characterId()).isEqualTo("mio");
         assertThat(response.status()).isEqualTo("active");
+    }
+
+    @Test
+    @DisplayName("세션 생성 응답에 선제 인사가 포함된다")
+    void createSession_includesInitialMessage() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
+
+        SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest("mio"));
+
+        assertThat(response.initialMessage()).isEqualTo(openingResponse);
+        verify(sessionOpeningService).createOpening(session, mockUser);
+    }
+
+    @Test
+    @DisplayName("선제 인사는 커밋 후 WorkingMemory에 적재된다 — 첫 턴 history 앞에 놓기 위해")
+    void createSession_appendsOpeningToWorkingMemory() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
+
+        sessionService.createSession(userId, new CreateSessionRequest("mio"));
+
+        verify(workingMemory).appendMessage(session.getId(), "assistant", openingResponse.content());
+    }
+
+    @Test
+    @DisplayName("WorkingMemory 적재가 실패해도 세션 생성은 성공한다")
+    void createSession_workingMemoryFails_stillReturnsSession() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        when(sessionRepository.existsByUser_IdAndStatus(userId, SessionStatus.ACTIVE)).thenReturn(false);
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+        when(sessionRepository.saveAndFlush(any())).thenReturn(session);
+        doThrow(new IllegalStateException("redis down"))
+                .when(workingMemory).appendMessage(any(), anyString(), anyString());
+
+        SessionResponse response = sessionService.createSession(userId, new CreateSessionRequest("mio"));
+
+        assertThat(response.initialMessage()).isEqualTo(openingResponse);
+    }
+
+    @Test
+    @DisplayName("활성 세션 재진입은 저장된 인사를 그대로 반환한다 — 새로 만들지 않는다")
+    void getActiveSession_returnsStoredOpening() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+        when(sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE))
+                .thenReturn(Optional.of(session));
+        when(sessionOpeningService.findOpening(session.getId())).thenReturn(Optional.of(openingResponse));
+
+        ActiveSessionResponse response = sessionService.getActiveSession(userId);
+
+        assertThat(response.initialMessage()).isEqualTo(openingResponse);
+        verify(sessionOpeningService, never()).createOpening(any(), any());
+    }
+
+    @Test
+    @DisplayName("배포 이전에 열린 세션은 initial_message가 null이다 — 소급 생성하지 않는다")
+    void getActiveSession_legacySession_returnsNullInitialMessage() {
+        when(userRepository.findById(userId)).thenReturn(Optional.of(mockUser));
+        Session session = Session.builder().user(mockUser).characterId("mio").build();
+        ReflectionTestUtils.setField(session, "id", UUID.randomUUID());
+        when(sessionRepository.findByUser_IdAndStatus(userId, SessionStatus.ACTIVE))
+                .thenReturn(Optional.of(session));
+        when(sessionOpeningService.findOpening(session.getId())).thenReturn(Optional.empty());
+
+        ActiveSessionResponse response = sessionService.getActiveSession(userId);
+
+        assertThat(response.sessionId()).isEqualTo(session.getId());
+        assertThat(response.initialMessage()).isNull();
+        verify(sessionOpeningService, never()).createOpening(any(), any());
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.mio.common.error.GlobalExceptionHandler;
 import com.mio.session.dto.*;
 import com.mio.auth.filter.JwtAuthenticationFilter;
 import com.mio.config.SecurityConfig;
+import com.mio.session.service.SessionMessageHistoryService;
 import com.mio.session.service.SessionService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +32,7 @@ import static org.mockito.Mockito.inOrder;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -49,9 +51,67 @@ class SessionControllerTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private ObjectMapper objectMapper;
     @MockBean private SessionService sessionService;
+    @MockBean private SessionMessageHistoryService sessionMessageHistoryService;
 
     private static final UUID TEST_USER_ID = UUID.randomUUID();
     private static final UUID TEST_SESSION_ID = UUID.randomUUID();
+
+    /** 선제 인사 응답 픽스처 (이슈 #530). */
+    private static final InitialAssistantMessageResponse OPENING = new InitialAssistantMessageResponse(
+            UUID.randomUUID(), "assistant", "session_opening",
+            "안녕! 난 미오야 🐧 오늘 어떤 하루를 보냈어?",
+            OffsetDateTime.now());
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/messages - 대화 이력을 오래된 순으로 반환")
+    void getSessionMessages_returnsHistory() throws Exception {
+        var opening = new SessionMessagesResponse.SessionMessageItem(
+                UUID.randomUUID(), "assistant", "session_opening",
+                "안녕! 난 미오야 🐧 오늘 어떤 하루를 보냈어?", OffsetDateTime.now());
+        var userTurn = new SessionMessagesResponse.SessionMessageItem(
+                UUID.randomUUID(), "user", "conversation", "오늘 발표가 있었어", OffsetDateTime.now());
+        when(sessionMessageHistoryService.getHistory(eq(TEST_USER_ID), eq(TEST_SESSION_ID), any(), any()))
+                .thenReturn(new SessionMessagesResponse(
+                        TEST_SESSION_ID, List.of(opening, userTurn), "next-cursor", true));
+
+        mockMvc.perform(get("/v1/sessions/{sessionId}/messages", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
+                .andExpect(jsonPath("$.data.messages.length()").value(2))
+                .andExpect(jsonPath("$.data.messages[0].kind").value("session_opening"))
+                .andExpect(jsonPath("$.data.messages[1].role").value("user"))
+                .andExpect(jsonPath("$.data.next_cursor").value("next-cursor"))
+                .andExpect(jsonPath("$.data.has_next").value(true));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/messages - cursor·limit 쿼리 파라미터를 서비스로 전달")
+    void getSessionMessages_passesQueryParams() throws Exception {
+        when(sessionMessageHistoryService.getHistory(any(), any(), any(), any()))
+                .thenReturn(new SessionMessagesResponse(TEST_SESSION_ID, List.of(), null, false));
+
+        mockMvc.perform(get("/v1/sessions/{sessionId}/messages", TEST_SESSION_ID)
+                        .param("cursor", "abc123")
+                        .param("limit", "20")
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.messages").isArray())
+                .andExpect(jsonPath("$.data.next_cursor").doesNotExist());
+
+        verify(sessionMessageHistoryService).getHistory(TEST_USER_ID, TEST_SESSION_ID, "abc123", 20);
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/{id}/messages - 남의 세션이면 403")
+    void getSessionMessages_forbidden() throws Exception {
+        when(sessionMessageHistoryService.getHistory(any(), any(), any(), any()))
+                .thenThrow(new BusinessException(ErrorCode.FORBIDDEN));
+
+        mockMvc.perform(get("/v1/sessions/{sessionId}/messages", TEST_SESSION_ID)
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isForbidden());
+    }
 
     @Test
     @DisplayName("GET /v1/sessions/active - 활성 세션 없고 이전 종료 세션도 없으면 session_id: null 반환")
@@ -70,7 +130,8 @@ class SessionControllerTest {
     @DisplayName("GET /v1/sessions/active - 활성 세션 있으면 세션 정보 반환")
     void getActiveSession_hasSession_returnsSession() throws Exception {
         ActiveSessionResponse response = new ActiveSessionResponse(
-                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 0, null, null
+                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 1, null, null,
+                OPENING
         );
         when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
 
@@ -79,14 +140,32 @@ class SessionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
                 .andExpect(jsonPath("$.data.character_id").value("mio"))
-                .andExpect(jsonPath("$.data.status").value("active"));
+                .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.initial_message.message_id").value(OPENING.messageId().toString()))
+                .andExpect(jsonPath("$.data.initial_message.kind").value("session_opening"))
+                .andExpect(jsonPath("$.data.initial_message.content").value(OPENING.content()));
+    }
+
+    @Test
+    @DisplayName("GET /v1/sessions/active - 인사 없는 기존 세션은 initial_message 를 내려보내지 않는다")
+    void getActiveSession_legacySession_omitsInitialMessage() throws Exception {
+        ActiveSessionResponse response = new ActiveSessionResponse(
+                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), null, 4, null, null, null
+        );
+        when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
+
+        mockMvc.perform(get("/v1/sessions/active")
+                        .principal(() -> TEST_USER_ID.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
+                .andExpect(jsonPath("$.data.initial_message").doesNotExist());
     }
 
     @Test
     @DisplayName("GET /v1/sessions/active - 활성 세션 없고 마지막 종료 세션 요약이 done 이면 last_summary_status 반환")
     void getActiveSession_noActiveSession_returnsLastSummaryStatus() throws Exception {
         ActiveSessionResponse response = new ActiveSessionResponse(
-                null, null, null, null, null, null, "done", TEST_SESSION_ID
+                null, null, null, null, null, null, "done", TEST_SESSION_ID, null
         );
         when(sessionService.getActiveSession(TEST_USER_ID)).thenReturn(response);
 
@@ -101,7 +180,8 @@ class SessionControllerTest {
     @Test
     @DisplayName("POST /v1/sessions - 세션 생성 성공 시 201 반환")
     void createSession_success_returns201() throws Exception {
-        SessionResponse response = new SessionResponse(TEST_SESSION_ID, "mio", "active", OffsetDateTime.now());
+        SessionResponse response = new SessionResponse(
+                TEST_SESSION_ID, "mio", "active", OffsetDateTime.now(), OPENING);
         when(sessionService.createSession(eq(TEST_USER_ID), any())).thenReturn(response);
 
         mockMvc.perform(post("/v1/sessions")
@@ -110,7 +190,13 @@ class SessionControllerTest {
                         .content("{\"character_id\":\"mio\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.session_id").value(TEST_SESSION_ID.toString()))
-                .andExpect(jsonPath("$.data.status").value("active"));
+                .andExpect(jsonPath("$.data.status").value("active"))
+                .andExpect(jsonPath("$.data.initial_message.role").value("assistant"))
+                .andExpect(jsonPath("$.data.initial_message.kind").value("session_opening"))
+                .andExpect(jsonPath("$.data.initial_message.content").value(OPENING.content()))
+                // opening_variant 는 내부 관측 값이라 응답에 담지 않는다 (이슈 #530)
+                .andExpect(jsonPath("$.data.initial_message.opening_variant").doesNotExist())
+                .andExpect(jsonPath("$.data.initial_message.variant").doesNotExist());
     }
 
     @Test
