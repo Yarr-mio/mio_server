@@ -2,21 +2,17 @@ package com.mio.ai.orchestrator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mio.ai.crisis.CrisisTrigger;
 import com.mio.ai.domain.AiPolicyDecision;
 import com.mio.ai.judge.InputJudgeResult;
 import com.mio.ai.judge.OutputJudgeResult;
 import com.mio.ai.judge.OutputPreFilterResult;
 import com.mio.ai.llm.LlmCostCalculator;
 import com.mio.ai.llm.LlmUsage;
-import com.mio.ai.memory.retrieval.MemoryContextResult;
-import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.plan.ResponseContractResult;
 import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.policy.JudgeStatus;
 import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.repository.AiPolicyDecisionRepository;
-import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.SecurityAssessment;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -55,42 +51,19 @@ public class AiDecisionLogger {
     private final ObjectMapper objectMapper;
     private final LlmCostCalculator costCalculator;
 
+    /**
+     * 이 턴의 정책 결정과 관측값을 {@code ai_policy_decisions} 에 적재한다.
+     *
+     * <p>관측값은 {@link TurnObservation} 하나로 받는다. 이전에는 위치 인자 24개였고,
+     * {@code boolean}·{@code long} 이 연속으로 붙는 구간에서 순서를 바꿔도 컴파일이 통과했다.
+     *
+     * <p>적재 실패는 삼킨다 — 트레이스가 없다고 사용자 응답을 막을 이유가 없다.
+     * 다만 무엇이 실패했는지는 로그로 남긴다.
+     */
     @Async("aiDecisionLoggerExecutor")
-    public void log(
-            UUID userId,
-            UUID sessionId,
-            PolicyDecision decision,
-            ModerationResult moderation,
-            SafetyL1Result l1Result,
-            SecurityAssessment securityAssessment,
-            long totalPipelineMs,
-            long llmTtftMs,
-            boolean crisisFlowTriggered,
-            boolean inputJudgeCalled,
-            OutputGuardOutcome outputGuard,
-            String l1ThresholdSource,
-            boolean safetyProfileCacheHit,
-            MemoryCacheOutcome memoryCache,
-            boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage,
-            ResponseContractResult contractResult,
-            long firstSubstantiveTokenMs,
-            long firstRenderedTokenMs,
-            boolean safePrefixApplied,
-            int heldBackChars,
-            MemoryContextResult memoryContextResult,
-            InputJudgeResult inputJudgeResult) {
-
+    public void log(UUID userId, UUID sessionId, PolicyDecision decision, TurnObservation observation) {
         try {
-            Map<String, Object> trace = buildTrace(
-                    moderation, l1Result, securityAssessment, llmTtftMs, totalPipelineMs,
-                    crisisFlowTriggered, decision,
-                    inputJudgeCalled, outputGuard,
-                    l1ThresholdSource, safetyProfileCacheHit, memoryCache,
-                    safetyProfileDegraded, appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs, firstRenderedTokenMs, safePrefixApplied,
-                    heldBackChars, memoryContextResult, inputJudgeResult);
+            Map<String, Object> trace = buildTrace(decision, observation);
 
             AiPolicyDecision record = AiPolicyDecision.builder()
                     .userId(userId)
@@ -118,123 +91,54 @@ public class AiDecisionLogger {
         }
     }
 
-    /** 응답 계약 도입 이전 시그니처 — 기존 호출부 호환용 (이슈 #303). */
-    public void log(
-            UUID userId,
-            UUID sessionId,
-            PolicyDecision decision,
-            ModerationResult moderation,
-            SafetyL1Result l1Result,
-            SecurityAssessment securityAssessment,
-            long totalPipelineMs,
-            long llmTtftMs,
-            boolean crisisFlowTriggered,
-            boolean inputJudgeCalled,
-            OutputGuardOutcome outputGuard,
-            String l1ThresholdSource,
-            boolean safetyProfileCacheHit,
-            boolean memoryCacheHit,
-            boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage) {
-        // 편의 오버로드는 staleness 를 받지 않는다 — 폴백 경로를 지나지 않는 호출용이다.
-        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
-                totalPipelineMs, llmTtftMs, crisisFlowTriggered, inputJudgeCalled,
-                outputGuard, l1ThresholdSource, safetyProfileCacheHit,
-                memoryCacheHit ? MemoryCacheOutcome.fallback(null) : MemoryCacheOutcome.live(),
-                safetyProfileDegraded, appliedCrisisTrigger, llmUsage,
-                ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
-    }
-
-    /** Phase 1 호환 오버로드 */
-    @Async("aiDecisionLoggerExecutor")
-    public void log(
-            UUID userId,
-            UUID sessionId,
-            PolicyDecision decision,
-            ModerationResult moderation,
-            SafetyL1Result l1Result,
-            SecurityAssessment securityAssessment,
-            long totalPipelineMs,
-            long llmTtftMs,
-            boolean crisisFlowTriggered) {
-        log(userId, sessionId, decision, moderation, l1Result, securityAssessment,
-                totalPipelineMs, llmTtftMs, crisisFlowTriggered,
-                false, OutputGuardOutcome.preFilterOnly(OutputPreFilterResult.pass()),
-                "default", false, MemoryCacheOutcome.live(), false, decision.crisisTrigger(), null,
-                ResponseContractResult.notApplicable(), -1, -1, false, 0, null, null);
-    }
-
-    private Map<String, Object> buildTrace(
-            ModerationResult moderation,
-            SafetyL1Result l1Result,
-            SecurityAssessment securityAssessment,
-            long ttftMs,
-            long totalMs,
-            boolean crisisFlowTriggered,
-            PolicyDecision decision,
-            boolean inputJudgeCalled,
-            OutputGuardOutcome outputGuard,
-            String l1ThresholdSource,
-            boolean safetyProfileCacheHit,
-            MemoryCacheOutcome memoryCache,
-            boolean safetyProfileDegraded,
-            CrisisTrigger appliedCrisisTrigger,
-            LlmUsage llmUsage,
-            ResponseContractResult contractResult,
-            long firstSubstantiveTokenMs,
-            long firstRenderedTokenMs,
-            boolean safePrefixApplied,
-            int heldBackChars,
-            MemoryContextResult memoryContextResult,
-            InputJudgeResult inputJudgeResult) {
+    private Map<String, Object> buildTrace(PolicyDecision decision, TurnObservation obs) {
 
         Map<String, Object> l1Flags = new LinkedHashMap<>();
-        l1Flags.put("crisis_keyword", l1Result.hardCrisis());
-        l1Flags.put("crisis_unverified", l1Result.hardCrisisUnverified());
+        l1Flags.put("crisis_keyword", obs.l1Result().hardCrisis());
+        l1Flags.put("crisis_unverified", obs.l1Result().hardCrisisUnverified());
         // 어떤 맥락 마커가 강등을 유발했는지 남긴다. 마커 종류만 기록하므로 발화 원문은 포함되지 않는다.
         // 이게 없으면 어느 마커가 오탐·미탐을 만드는지 사후 분석하려면 재현밖에 방법이 없다.
-        l1Result.signals().stream()
+        obs.l1Result().signals().stream()
                 .filter(signal -> signal.startsWith(CRISIS_MARKER_PREFIX))
                 .map(signal -> signal.substring(CRISIS_MARKER_PREFIX.length()))
                 .findFirst()
                 .ifPresent(marker -> l1Flags.put("crisis_context_marker", marker));
-        l1Flags.put("risk_candidate", l1Result.riskCandidate());
-        l1Flags.put("emotion_spike", l1Result.emotionSpike());
-        l1Flags.put("repetitive_negative", l1Result.repetitiveNegative());
-        l1Flags.put("dependency_phrase", l1Result.dependencyHint());
-        l1Flags.put("moderation_flagged", l1Result.moderationFlagged());
+        l1Flags.put("risk_candidate", obs.l1Result().riskCandidate());
+        l1Flags.put("emotion_spike", obs.l1Result().emotionSpike());
+        l1Flags.put("repetitive_negative", obs.l1Result().repetitiveNegative());
+        l1Flags.put("dependency_phrase", obs.l1Result().dependencyHint());
+        l1Flags.put("moderation_flagged", obs.l1Result().moderationFlagged());
 
         Map<String, Object> trace = new LinkedHashMap<>();
         trace.put("schema_version", SCHEMA_VERSION);
-        trace.put("l0_flagged", moderation.flagged());
+        trace.put("l0_flagged", obs.moderation().flagged());
         // l0_flagged=false 가 "안전 판정"인지 "판정을 못 받아온 것"인지 구분한다.
         // 이게 없으면 안전 계층 하나가 통째로 빠진 채 처리된 턴을 사후에 식별할 수 없다 (이슈 #263).
-        trace.put("l0_resolved", moderation.resolved());
+        trace.put("l0_resolved", obs.moderation().resolved());
         // 정책 결정이 실제로 읽은 L0 상태. 위 raw 값과 달리 이 값은 전달 방식의 하한을 만든다 (이슈 #294).
         trace.put("l0_status", decision.moderationStatus().name());
-        trace.put("l0_category_scores", moderation.categoryScores());
-        putSecurityEvidence(trace, securityAssessment);
+        trace.put("l0_category_scores", obs.moderation().categoryScores());
+        putSecurityEvidence(trace, obs.securityAssessment());
         // 강등된 위기 후보의 해제 스위치 입력값 (이슈 #505). 이 값이 없으면 그 경로가
         // 프로덕션에서 발동했는지 사후에 확인할 수 없다. 해제 여부 자체는
         // l1_flags.crisis_unverified 와 action 으로 도출되므로 별도 필드를 만들지 않는다 —
         // 정책 판단을 로거에 복제하지 않는다.
-        trace.put("crisis_attribution", crisisAttribution(inputJudgeResult));
+        trace.put("crisis_attribution", crisisAttribution(obs.inputJudgeResult()));
         trace.put("l1_flags", l1Flags);
-        trace.put("l1_combined_confidence", l1Result.combinedConfidence());
-        trace.put("l1_threshold_source", l1ThresholdSource != null ? l1ThresholdSource : "default");
-        trace.put("input_judge_called", inputJudgeCalled);
+        trace.put("l1_combined_confidence", obs.l1Result().combinedConfidence());
+        trace.put("l1_threshold_source", obs.l1ThresholdSource() != null ? obs.l1ThresholdSource() : "default");
+        trace.put("input_judge_called", obs.inputJudgeCalled());
         trace.put("input_judge_status", decision.judgeStatus().name());
         trace.put("risk_level", decision.riskLevel() != null ? decision.riskLevel().name() : null);
-        trace.put("safety_profile_cache_hit", safetyProfileCacheHit);
+        trace.put("safety_profile_cache_hit", obs.safetyProfileCacheHit());
         // 근거 조회에 실패해 보수적 기본값으로 채운 프로파일인지 (이슈 #261).
         // 위기 이력을 확인하지 못한 턴은 임계값·force_judge 가 실제 이력과 무관하게 결정된다.
-        trace.put("safety_profile_degraded", safetyProfileDegraded);
-        trace.put("memory_cache_hit", memoryCache.fallbackUsed());
+        trace.put("safety_profile_degraded", obs.safetyProfileDegraded());
+        trace.put("memory_cache_hit", obs.memoryCache().fallbackUsed());
         // 폴백이 주입한 문맥의 나이 (이슈 #522). 폴백을 쓰지 않은 턴과 나이를 읽지 못한 턴이
         // 둘 다 null 로 나오는데, 그 구별은 memory_cache_hit 이 한다 — 그래서 두 값을 한
         // 객체로 묶었다. 0 으로 적지 않는다: "방금 구운 문맥" 과 뭉개져 관측을 낙관하게 만든다.
-        trace.put("context_staleness_ms", memoryCache.stalenessMs());
+        trace.put("context_staleness_ms", obs.memoryCache().stalenessMs());
         // 검색이 실패한 턴과 "관련 기억이 없는" 턴을 구분한다 (이슈 #364, §10.1).
         //   retrieval_status == null      → 이 턴은 검색을 돌리지 않았다 (호환 오버로드 경로)
         //   OK                            → 계획한 소스가 전부 응답했다. 결과가 비어도 정상이다
@@ -242,21 +146,21 @@ public class AiDecisionLogger {
         //   FAILED                        → 컨텍스트 조립 자체가 실패했다
         // 이 값이 없으면 DB 장애로 기억 없이 생성된 턴이 신규 사용자와 완전히 동일하게 보인다.
         trace.put("retrieval_status",
-                memoryContextResult != null ? memoryContextResult.status().name() : null);
+                obs.memoryContext() != null ? obs.memoryContext().status().name() : null);
         trace.put("retrieval_failed_sources",
-                memoryContextResult != null ? memoryContextResult.failedSourcesLabel() : null);
+                obs.memoryContext() != null ? obs.memoryContext().failedSourcesLabel() : null);
         // 소스가 아니라 계획이 어긋난 경우. 이력 조회에 실패해 검색 계획을 추측으로 세웠다는 뜻이라,
         // 실패한 소스가 하나도 없는데 PARTIAL 인 이유가 여기 남는다.
         trace.put("retrieval_plan_degraded",
-                memoryContextResult != null ? memoryContextResult.planDegraded() : null);
+                obs.memoryContext() != null ? obs.memoryContext().planDegraded() : null);
         // LLM 관련 필드는 전부 null 이 될 수 있고, null 은 각각 다른 뜻이다.
-        //   llmUsage == null              → 이 턴은 LLM 을 호출하지 않았다 (보안 거절·위기·폴백)
-        //   llmUsage.resolved() == false  → 호출했지만 사용량을 받지 못했다
+        //   obs.llmUsage() == null              → 이 턴은 LLM 을 호출하지 않았다 (보안 거절·위기·폴백)
+        //   obs.llmUsage().resolved() == false  → 호출했지만 사용량을 받지 못했다
         //   cost == null                  → 사용량을 모르거나 단가 미등록 모델이다
         // 이전에는 세 경우 모두 model="gpt-4o", cost=0.0 으로 하드코딩돼 있어서
         // "비용이 0" 과 "비용을 모른다" 가 구분되지 않았고, LLM 을 부르지도 않은 턴까지
         // gpt-4o 를 쓴 것처럼 기록됐다.
-        trace.put("llm_model", llmUsage != null ? llmUsage.model() : null);
+        trace.put("llm_model", obs.llmUsage() != null ? obs.llmUsage().model() : null);
         // 지연은 세 지점을 따로 잰다 (이슈 #306, 14번 검증 리뷰 지적 E). 하나로 재면 서버가
         // 먼저 보내는 문구만으로도 수치가 좋아져 "지연 개선"과 "지연 은폐"를 구분할 수 없다.
         //   llm_ttft_ms                — 첫 생성 토큰
@@ -264,30 +168,30 @@ public class AiDecisionLogger {
         //   first_rendered_token_ms    — 사용자가 무언가를 보기까지
         // 검토된 safe prefix 가 나간 턴에서만 뒤의 두 값이 갈라진다 (P0-4). prefix 가 없는
         // 턴에서 값이 갈라지면 배선이 틀렸다는 뜻이다 — 사용자가 먼저 볼 것이 없기 때문이다.
-        trace.put("llm_ttft_ms", ttftMs >= 0 ? ttftMs : null);
+        trace.put("llm_ttft_ms", obs.llmTtftMs() >= 0 ? obs.llmTtftMs() : null);
         trace.put("first_substantive_token_ms",
-                firstSubstantiveTokenMs >= 0 ? firstSubstantiveTokenMs : null);
+                obs.firstSubstantiveTokenMs() >= 0 ? obs.firstSubstantiveTokenMs() : null);
         trace.put("first_rendered_token_ms",
-                firstRenderedTokenMs >= 0 ? firstRenderedTokenMs : null);
+                obs.firstRenderedTokenMs() >= 0 ? obs.firstRenderedTokenMs() : null);
         // 이 턴에 서버가 검토된 첫 문장을 먼저 보냈는지. 두 지연 값의 차이를 해석하려면
         // 차이의 원인이 함께 있어야 한다.
-        trace.put("safe_prefix_applied", safePrefixApplied);
+        trace.put("safe_prefix_applied", obs.safePrefixApplied());
         // 생성됐지만 위반으로 전달되지 않은 문자 수. 전달 정책의 비용과 효과를 함께 보여준다.
-        trace.put("delivery_held_back_chars", heldBackChars);
-        trace.put("llm_usage_resolved", llmUsage != null ? llmUsage.resolved() : null);
-        trace.put("llm_prompt_tokens", resolvedTokens(llmUsage, LlmUsage::promptTokens));
-        trace.put("llm_completion_tokens", resolvedTokens(llmUsage, LlmUsage::completionTokens));
-        trace.put("llm_cost_usd", costUsd(llmUsage));
+        trace.put("delivery_held_back_chars", obs.heldBackChars());
+        trace.put("llm_usage_resolved", obs.llmUsage() != null ? obs.llmUsage().resolved() : null);
+        trace.put("llm_prompt_tokens", resolvedTokens(obs.llmUsage(), LlmUsage::promptTokens));
+        trace.put("llm_completion_tokens", resolvedTokens(obs.llmUsage(), LlmUsage::completionTokens));
+        trace.put("llm_cost_usd", costUsd(obs.llmUsage()));
         trace.put("delivery_mode", decision.deliveryMode().name().toLowerCase());
         // 응답 계약 (이슈 #303). 계약 위반과 의미 판단 실패를 나눠 기록해야 둘의 비율을 볼 수 있다.
         ResponsePlan plan = decision.responsePlan();
         trace.put("response_act", plan.responseAct().name());
         trace.put("generation_freedom", plan.generationFreedom().name());
-        trace.put("contract_result", contractResult != null
-                ? contractResult.logValue() : ResponseContractResult.notApplicable().logValue());
-        trace.put("contract_violations", contractResult != null ? contractResult.violations() : List.of());
-        OutputPreFilterResult preFilterResult = outputGuard.preFilter();
-        OutputJudgeResult outputJudgeResult = outputGuard.judge();
+        trace.put("contract_result", obs.contractResult() != null
+                ? obs.contractResult().logValue() : ResponseContractResult.notApplicable().logValue());
+        trace.put("contract_violations", obs.contractResult() != null ? obs.contractResult().violations() : List.of());
+        OutputPreFilterResult preFilterResult = obs.outputGuard().preFilter();
+        OutputJudgeResult outputJudgeResult = obs.outputGuard().judge();
         trace.put("output_pre_filter_result", preFilterResult != null
                 ? (preFilterResult.passed() ? "PASS" : "FAIL") : null);
         trace.put("output_pre_filter_fail_reasons", preFilterResult != null
@@ -297,14 +201,14 @@ public class AiDecisionLogger {
         // 판정자가 고쳐 쓴 본문이 다시 위반이어서 거부됐는가 (이슈 #526). 이 값이 없으면
         // "판정이 고쳐 썼다" 와 "고쳐 쓴 것이 다시 위반이었다" 를 구분할 수 없고, 그러면
         // 재검증이 실제로 발동하는지 알 수 없다.
-        trace.put("rewrite_rejected", outputGuard.rewriteRejected());
+        trace.put("rewrite_rejected", obs.outputGuard().rewriteRejected());
         // action 만으로는 "위험하다고 판정해서 REPLACE" 와 "판정을 못 받아서 REPLACE" 가
         // 구별되지 않는다 (이슈 #364). Input Judge 의 judge_status 와 같은 계약이다.
         //   SKIPPED   → Judge 를 부르지 않았다 (pre-filter 통과)
         //   SUCCEEDED → 판정을 받았다
         //   FAILED    → 예외·타임아웃·파싱 실패. 동작은 REPLACE 지만 판정은 없다
         trace.put("output_judge_status", outputJudgeStatus(outputJudgeResult));
-        trace.put("crisis_flow_triggered", crisisFlowTriggered);
+        trace.put("crisis_flow_triggered", obs.crisisFlowTriggered());
         // 위기 진입 경로. 이게 없으면 "왜 위기로 갔는지"를 사후에 알 수 없고, 특히 자해 질의가
         // 거절이 아니라 위기로 라우팅됐는지 확인할 방법이 없다. 조작 시도 쪽은 action 이
         // SECURITY_REFUSAL 로 남으므로 별도 필드가 필요 없다 (이슈 #260).
@@ -312,9 +216,9 @@ public class AiDecisionLogger {
         // PolicyDecision 이 아니라 실제로 적용된 경로를 기록한다. 출력 가드가 승격시킨 위기는
         // decision.action() 이 GENERATE 라 결정에 경로가 없고, decision 만 보면 위기로 갔는데도
         // crisis_trigger 가 null 로 남는다.
-        trace.put("crisis_trigger", appliedCrisisTrigger != null
-                ? appliedCrisisTrigger.name() : null);
-        trace.put("total_pipeline_ms", totalMs);
+        trace.put("crisis_trigger", obs.appliedCrisisTrigger() != null
+                ? obs.appliedCrisisTrigger().name() : null);
+        trace.put("total_pipeline_ms", obs.totalPipelineMs());
 
         return trace;
     }

@@ -128,40 +128,26 @@ class AiDecisionTraceSnapshotTest {
                 JudgeStatus.SUCCEEDED
         );
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                new ModerationResult(true, Map.of("self_harm", true), Map.of("self_harm", 0.91)),
-                new SafetyL1Result(false, true, true, true, false, false, true,
-                        List.of("crisis_context_marker:third_person"), 0.72),
-                SecurityAssessment.suspicious(List.of("zero_width_char"), true),
-                1830,
-                320,
-                true,
-                true,
-                new OutputGuardOutcome(
-                        OutputPreFilterResult.fail(List.of("banned_phrase")),
-                        OutputJudgeResult.rewrite("고쳐 쓴 본문"),
-                        true),
-                "profile",
-                true,
-                MemoryCacheOutcome.fallback(4200L),
-                true,
-                CrisisTrigger.L1_KEYWORD,
-                LlmUsage.of("gpt-5", 1200, 150),
-                ResponseContractResult.violated(List.of("too_long")),
-                410,
-                180,
-                true,
-                37,
-                MemoryContextResult.partial("기억", Set.of(RetrievalSource.VECTOR_EPISODE), true),
-                new InputJudgeResult(
-                        SecurityVerdict.clean(),
-                        new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.SUPPORTIVE,
-                                DeliveryMode.CAUTIOUS_SPECULATIVE, false, CrisisAttribution.THIRD_PARTY),
-                        0.8)
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(true, Map.of("self_harm", true), Map.of("self_harm", 0.91)), new SafetyL1Result(false, true, true, true, false, false, true, List.of("crisis_context_marker:third_person"), 0.72), SecurityAssessment.suspicious(List.of("zero_width_char"), true), 1830)
+                        .llmTtftMs(320)
+                        .crisisFlowTriggered(true)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome( OutputPreFilterResult.fail(List.of("banned_phrase")), OutputJudgeResult.rewrite("고쳐 쓴 본문"), true))
+                        .l1ThresholdSource("profile")
+                        .safetyProfileCacheHit(true)
+                        .memoryCache(MemoryCacheOutcome.fallback(4200L))
+                        .safetyProfileDegraded(true)
+                        .appliedCrisisTrigger(CrisisTrigger.L1_KEYWORD)
+                        .llmUsage(LlmUsage.of("gpt-5", 1200, 150))
+                        .contractResult(ResponseContractResult.violated(List.of("too_long")))
+                        .firstSubstantiveTokenMs(410)
+                        .firstRenderedTokenMs(180)
+                        .safePrefixApplied(true)
+                        .heldBackChars(37)
+                        .memoryContext(MemoryContextResult.partial("기억", Set.of(RetrievalSource.VECTOR_EPISODE), true))
+                        .inputJudgeResult(new InputJudgeResult( SecurityVerdict.clean(), new RiskVerdict(RiskLevel.MEDIUM, List.of(), GenerationMode.SUPPORTIVE, DeliveryMode.CAUTIOUS_SPECULATIVE, false, CrisisAttribution.THIRD_PARTY), 0.8))
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
