@@ -13,13 +13,12 @@ import com.mio.memorycontrol.dto.MemoryItemResponse;
 import com.mio.memorycontrol.dto.MemoryListResponse;
 import com.mio.memorycontrol.dto.MemoryUpdateRequest;
 import com.mio.memorycontrol.dto.MemoryUpdateResponse;
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -37,8 +36,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * 않아야 하고(회수율 0), 동의 철회 후 기존 기억이 전부 비활성화돼야 한다. 검색기가 하나라도
  * 필터를 빼먹으면 사용자가 지운 기억이 다음 턴 프롬프트에 되살아난다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class MemoryControlIntegrationTest {
 
     private static final String SUMMARY_TEXT = "프로젝트 발표를 망쳤다고 걱정함. 파국화 패턴이 관찰됨.";

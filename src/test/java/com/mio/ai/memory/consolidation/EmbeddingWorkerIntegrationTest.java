@@ -1,16 +1,15 @@
 package com.mio.ai.memory.consolidation;
 
 import com.mio.ai.llm.OpenAiLlmClient;
+import com.mio.support.MioIntegrationTest;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,8 +33,7 @@ import static org.mockito.Mockito.when;
  * claim 단계의 UPDATE ... SET embedding_status = 'processing' 자체가
  * DataIntegrityViolationException으로 실패한다 → 이 테스트가 RED가 된다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class EmbeddingWorkerIntegrationTest {
 
     private static final int EMBEDDING_DIM = 1536;

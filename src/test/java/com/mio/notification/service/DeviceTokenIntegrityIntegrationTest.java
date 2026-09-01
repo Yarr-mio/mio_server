@@ -4,6 +4,7 @@ import com.mio.common.error.BusinessException;
 import com.mio.common.error.ErrorCode;
 import com.mio.notification.dto.DeviceTokenRegisterRequest;
 import com.mio.notification.dto.StaleDeviceTokenUserResponse;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -11,11 +12,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.util.StreamUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -49,8 +48,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li>유효 토큰 0개 유저 집계는 JPQL {@code having} 절이라 문법이 어긋나도 컴파일은 통과한다.</li>
  * </ul>
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class DeviceTokenIntegrityIntegrationTest {
 
     private static final String MIGRATION_PATH = "db/migration/V54__dedupe_device_tokens.sql";

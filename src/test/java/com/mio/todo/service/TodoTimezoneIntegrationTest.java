@@ -1,6 +1,7 @@
 package com.mio.todo.service;
 
 import com.mio.common.AppConstants;
+import com.mio.support.MioIntegrationTest;
 import com.mio.todo.domain.BehaviorTask;
 import com.mio.todo.dto.TodoResponse;
 import com.mio.todo.repository.BehaviorTaskRepository;
@@ -12,9 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -33,8 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Mockito 기반 {@link TodoServiceTest}는 createdAt을 리플렉션으로 직접 주입해 DB
  * 왕복 자체가 없으므로 이 문제를 못 잡는다 — 실제 Postgres에 저장 후 재조회해야 재현된다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class TodoTimezoneIntegrationTest {
 
     @Autowired private TodoService todoService;

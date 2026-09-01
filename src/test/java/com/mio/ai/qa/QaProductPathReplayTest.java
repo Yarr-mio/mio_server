@@ -10,18 +10,17 @@ import com.mio.ai.moderation.ModerationResult;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.orchestrator.ConversationOrchestrator;
 import com.mio.ai.support.RecordingSseEmitter;
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -61,8 +60,7 @@ import static org.mockito.Mockito.when;
  * <p>fixture 형식과 추가 절차는 {@code src/test/resources/qa/fixtures/README.md},
  * {@code docs/qa/04_제품경로_회귀게이트.md} 참조.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 @DisplayName("[QA] 제품 경로 회귀 게이트 — fixture 재생")
 class QaProductPathReplayTest {
 

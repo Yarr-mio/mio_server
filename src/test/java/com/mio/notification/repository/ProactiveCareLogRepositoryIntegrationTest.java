@@ -1,6 +1,7 @@
 package com.mio.notification.repository;
 
 import com.mio.notification.domain.ProactiveCareLog;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -8,9 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -34,8 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   <li>{@code NO_DEVICE}·{@code UNCONFIRMED} 가 {@code notification_status} CHECK 제약을 통과한다 (V55)</li>
  * </ul>
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class ProactiveCareLogRepositoryIntegrationTest {
 
     private static final String TRIGGER_CODE = "checkin_reminder_morning";

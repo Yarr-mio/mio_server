@@ -3,6 +3,7 @@ package com.mio.session.repository;
 import com.mio.session.domain.Session;
 import com.mio.session.domain.SummaryStatus;
 import com.mio.session.job.StaleSummarySweepJob;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -10,9 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -34,8 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *       Job 을 호출하고, 테스트에 트랜잭션을 걸지 않는다.</li>
  * </ul>
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class StaleSummarySweepIntegrationTest {
 
     @Autowired private StaleSummarySweepJob staleSummarySweepJob;

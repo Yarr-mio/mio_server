@@ -1,13 +1,12 @@
 package com.mio.admin.service;
 
 import com.mio.admin.dto.ReactionRetentionResponse;
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -21,8 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * <p>LATERAL 조인 같은 DB 함수 의존 로직은 mock으로는 검증이 안 돼 실제 Postgres에 대해 돌린다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class AdminReactionRetentionServiceIntegrationTest {
 
     @Autowired

@@ -10,14 +10,13 @@ import com.mio.ai.memory.consolidation.SessionEndedEvent;
 import com.mio.common.crypto.MessageEncryptor;
 import com.mio.memorycontrol.service.MemoryControlService;
 import com.mio.report.domain.ReportWeek;
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -40,8 +39,7 @@ import static org.mockito.Mockito.when;
  * 않아야 하고, LLM 호출 자체가 일어나지 않아야 한다. LLM 을 부른 뒤에 버리는 것은 게이트가
  * 아니다 — 사용자의 대화 원문이 이미 외부로 나간 뒤다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class MemoryConsentGateIntegrationTest {
 
     private static final long WAIT_TIMEOUT_MS = 15_000;

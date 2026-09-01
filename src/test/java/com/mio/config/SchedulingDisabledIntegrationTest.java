@@ -1,16 +1,15 @@
 package com.mio.config;
 
 import com.mio.session.job.StaleSummarySweepJob;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.job.DataRetentionJob;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.ScheduledAnnotationBeanPostProcessor;
 import org.springframework.scheduling.config.ScheduledTaskHolder;
-import org.springframework.test.context.ActiveProfiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -22,8 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 동시에 잡 빈은 그대로 주입되어야 한다 — {@code StaleSummarySweepIntegrationTest} 처럼
  * {@code run()} 을 직접 부르는 테스트 방식이 계속 동작해야 하기 때문이다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class SchedulingDisabledIntegrationTest {
 
     @Autowired private ApplicationContext applicationContext;
