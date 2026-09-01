@@ -1,19 +1,18 @@
 package com.mio.notification.repository;
 
 import com.mio.notification.domain.NotificationSetting;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.Sort;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,8 +27,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 컬럼 매핑이 어긋나도 서비스 단위 테스트는 그대로 통과한다. 탈퇴자에게 푸시가 나가는 것은
  * 개인정보 처리 정지 위반이므로 쿼리 자체를 실행해서 확인한다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class NotificationSettingRepositoryIntegrationTest {
 
     @Autowired private NotificationSettingRepository notificationSettingRepository;

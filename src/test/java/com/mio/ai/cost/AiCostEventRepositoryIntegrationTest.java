@@ -1,11 +1,10 @@
 package com.mio.ai.cost;
 
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -19,8 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * SUM(cost_usd)가 단가 미등록(cost_usd=null) 이벤트를 조용히 건너뛰어 부분 합계를
  * 완전한 합계처럼 보이게 하는 문제를 막는지 실제 DB에 대해 검증한다 (이슈 #431 리뷰).
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class AiCostEventRepositoryIntegrationTest {
 
     @Autowired

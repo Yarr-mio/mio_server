@@ -28,7 +28,7 @@ public class FusionRanker {
             for (int i = 0; i < list.size(); i++) {
                 RetrievedItem item = list.get(i);
                 // 민감도 cap: restricted 이상은 제외
-                if (!isWithinCap(item.sensitivity(), sensitivityCap)) continue;
+                if (!SensitivityCap.allows(sensitivityCap, item.sensitivity())) continue;
 
                 double rrfScore = 1.0 / (RRF_K + i + 1);
                 rrfScores.merge(item.id(), rrfScore, Double::sum);
@@ -49,16 +49,5 @@ public class FusionRanker {
                 });
 
         return ranked;
-    }
-
-    private boolean isWithinCap(String sensitivity, String cap) {
-        if (cap == null) return false;
-        // null sensitivity → "normal" 처리 (ContextSanitizer와 동일 정책)
-        String s = sensitivity != null ? sensitivity : "normal";
-        return switch (cap) {
-            case "restricted" -> true;
-            case "sensitive"  -> !"restricted".equals(s);
-            default           -> "normal".equals(s);
-        };
     }
 }

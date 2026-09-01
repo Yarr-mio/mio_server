@@ -1,12 +1,11 @@
 package com.mio.ai.memory.consolidation;
 
+import com.mio.support.MioIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -24,8 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code processUser} 의 동의 게이트는 <b>전체 철회</b>만 막으므로 개별 기억 단위 통제는
  * 이 쿼리의 필터가 유일한 방어선이다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class WeeklyReflectionMemoryStatusIntegrationTest {
 
     private static final String ACTIVE_TRIGGER = "work_stress";

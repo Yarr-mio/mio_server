@@ -696,15 +696,28 @@ public class ConversationOrchestrator {
                     firstRenderedMs,
                     heldBackChars,
                     resolveFinishedReason(finishedReasonRef));
-            decisionLogger.log(userId, sessionId, decision, moderation, l1Result,
-                    securityAssessment, totalMs, llmTtftMs, crisisFlowTriggered,
-                    inputJudgeCalled,
-                    new OutputGuardOutcome(preFilterResult, judgeActionResult, rewriteRejected.get()),
-                    profile.source(), safetyProfileCacheHit, memoryCache,
-                    profile.degraded(), appliedCrisisTrigger, llmUsage, contractResult,
-                    firstSubstantiveTokenMs.get(), firstRenderedMs,
-                    firstRenderedTokenMs.get() >= 0, heldBackChars, liveMemoryResult,
-                    judgeResult);  // InputJudge 판정 — trace 의 crisis_attribution 근거
+            decisionLogger.log(userId, sessionId, decision,
+                    TurnObservation.builder(moderation, l1Result, securityAssessment, totalMs)
+                            .l1ThresholdSource(profile.source())
+                            .inputJudgeCalled(inputJudgeCalled)
+                            // InputJudge 판정 — trace 의 crisis_attribution 근거
+                            .inputJudgeResult(judgeResult)
+                            .safetyProfileCacheHit(safetyProfileCacheHit)
+                            .safetyProfileDegraded(profile.degraded())
+                            .memoryCache(memoryCache)
+                            .memoryContext(liveMemoryResult)
+                            .llmTtftMs(llmTtftMs)
+                            .firstSubstantiveTokenMs(firstSubstantiveTokenMs.get())
+                            .firstRenderedTokenMs(firstRenderedMs)
+                            .safePrefixApplied(firstRenderedTokenMs.get() >= 0)
+                            .outputGuard(new OutputGuardOutcome(
+                                    preFilterResult, judgeActionResult, rewriteRejected.get()))
+                            .contractResult(contractResult)
+                            .heldBackChars(heldBackChars)
+                            .llmUsage(llmUsage)
+                            .crisisFlowTriggered(crisisFlowTriggered)
+                            .appliedCrisisTrigger(appliedCrisisTrigger)
+                            .build());
 
             emitter.complete();
 

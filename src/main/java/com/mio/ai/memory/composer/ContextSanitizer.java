@@ -1,6 +1,7 @@
 package com.mio.ai.memory.composer;
 
 import com.mio.ai.memory.retrieval.RetrievedItem;
+import com.mio.ai.memory.retrieval.SensitivityCap;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -18,11 +19,13 @@ public class ContextSanitizer {
      * 민감도 cap을 초과하는 항목 제거 후 토큰 budget 내로 자름.
      */
     public List<RetrievedItem> sanitize(List<RetrievedItem> items, String sensitivityCap) {
-        String effectiveCap = sensitivityCap != null ? sensitivityCap : "normal";
+        // cap 이 없으면 가장 좁은 등급으로 본다. SensitivityCap 은 null 을 fail-closed
+        // 로 처리하지만, 여기서는 "지정 안 함 = 기본 공개 범위"가 기존 동작이라 유지한다.
+        String effectiveCap = sensitivityCap != null ? sensitivityCap : SensitivityCap.NORMAL;
 
         List<RetrievedItem> filtered = items.stream()
                 .filter(item -> item.content() != null && !item.content().isBlank())
-                .filter(item -> isWithinCap(item.sensitivity(), effectiveCap))
+                .filter(item -> SensitivityCap.allows(effectiveCap, item.sensitivity()))
                 .collect(Collectors.toList());
 
         // 토큰 budget 초과 시 상위 항목 우선 유지
@@ -36,14 +39,4 @@ public class ContextSanitizer {
         return result;
     }
 
-    private boolean isWithinCap(String sensitivity, String cap) {
-        if (cap == null) return false;
-        // null sensitivity → "normal" 처리 (FusionRanker와 동일 정책)
-        String s = sensitivity != null ? sensitivity : "normal";
-        return switch (cap) {
-            case "restricted" -> true;
-            case "sensitive"  -> !"restricted".equals(s);
-            default           -> "normal".equals(s);
-        };
-    }
 }

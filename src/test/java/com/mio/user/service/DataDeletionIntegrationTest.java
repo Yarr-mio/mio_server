@@ -1,5 +1,6 @@
 package com.mio.user.service;
 
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.DataDeletionRequest;
 import com.mio.user.domain.DeletionStatus;
 import com.mio.user.job.DataRetentionJob;
@@ -9,10 +10,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -30,8 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>{@code @Transactional} 을 쓰지 않는다. 앰비언트 트랜잭션 안에서 확인하면 커밋되지
  * 않은 상태를 보게 되고, Redis 는 애초에 트랜잭션 밖이라 시점이 어긋난다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class DataDeletionIntegrationTest {
 
     @Autowired

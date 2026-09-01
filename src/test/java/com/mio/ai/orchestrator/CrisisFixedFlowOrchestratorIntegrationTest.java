@@ -8,16 +8,15 @@ import com.mio.ai.llm.OpenAiLlmClient;
 import com.mio.ai.moderation.OpenAiModerationClient;
 import com.mio.ai.moderation.ModerationResult;
 import com.mio.common.crypto.MessageEncryptor;
+import com.mio.support.MioIntegrationTest;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.UUID;
@@ -32,8 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class CrisisFixedFlowOrchestratorIntegrationTest {
 
     @Autowired

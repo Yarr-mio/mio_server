@@ -4,6 +4,7 @@ import com.mio.notification.domain.ProactiveCareLog;
 import com.mio.notification.dto.NotificationHistoryItemResponse;
 import com.mio.notification.dto.NotificationHistoryResponse;
 import com.mio.notification.repository.ProactiveCareLogRepository;
+import com.mio.support.MioIntegrationTest;
 import com.mio.user.domain.User;
 import com.mio.user.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
@@ -11,9 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -39,8 +38,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>가장 중요한 회귀 가드는 <b>{@code FAILED} 가 남아 있는 것</b>이다. 명세가 이력 화면의
  * {@code FAILED} 표시를 규정하고 있으므로 과필터링은 그 자체가 계약 위반이다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class NotificationHistoryIntegrationTest {
 
     private static final String TRIGGER_CODE = "checkin_reminder_morning";

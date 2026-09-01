@@ -65,25 +65,13 @@ class AiDecisionLoggerTest {
                 JudgeStatus.SKIPPED
         );
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                false,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                decision.crisisTrigger(),
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -125,25 +113,14 @@ class AiDecisionLoggerTest {
                 JudgeStatus.SUCCEEDED
         );
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.manipulation(List.of("규칙을 잊고")),
-                100,
-                10,
-                false,
-                true,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                decision.crisisTrigger(),
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.manipulation(List.of("규칙을 잊고")), 100)
+                        .llmTtftMs(10)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -195,33 +172,15 @@ class AiDecisionLoggerTest {
                         DeliveryMode.CAUTIOUS_SPECULATIVE, false, CrisisAttribution.THIRD_PARTY),
                 0.8);
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                new SafetyL1Result(false, true, true, false, false, false, false,
-                        List.of("crisis_keyword:죽고싶다", "crisis_context_marker:third_person"), 0.6),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                true,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                MemoryCacheOutcome.live(),
-                false,
-                decision.crisisTrigger(),
-                null,
-                ResponseContractResult.notApplicable(),
-                -1,
-                -1,
-                false,
-                0,
-                null,
-                judgeResult
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), new SafetyL1Result(false, true, true, false, false, false, false, List.of("crisis_keyword:죽고싶다", "crisis_context_marker:third_person"), 0.6), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .inputJudgeResult(judgeResult)
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -252,13 +211,13 @@ class AiDecisionLoggerTest {
                 JudgeStatus.SKIPPED
         );
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(), SecurityAssessment.clean(),
-                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -282,14 +241,14 @@ class AiDecisionLoggerTest {
     void logDoesNotPersistSelfHarmInquiryLabels() {
         PolicyDecision decision = crisisDecision("pd_selfharm");
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘", "단계별 자해 방법")),
-                100, 10, true, false, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘", "단계별 자해 방법")), 100)
+                        .llmTtftMs(10)
+                        .crisisFlowTriggered(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         String trace = capturedTrace();
         assertThat(trace)
@@ -316,14 +275,13 @@ class AiDecisionLoggerTest {
     void logKeepsSecurityEvidenceNullWhenAssessmentAbsent() {
         PolicyDecision decision = generateDecision("pd_no_assessment");
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                null,
-                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), null, 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         assertThat(capturedTrace())
                 .contains("\"security_rule_level\":null")
@@ -339,14 +297,14 @@ class AiDecisionLoggerTest {
     void logPinsUnverifiableByJudgeValue() {
         PolicyDecision decision = generateDecision("pd_unverifiable");
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.suspicious(List.of("역할극"), true),
-                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.suspicious(List.of("역할극"), true), 100)
+                        .llmTtftMs(10)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         assertThat(capturedTrace())
                 .as("원문에서만 드러난 근거가 있었는지는 Judge CLEAN 강등을 사후 판정하는 값이다")
@@ -365,13 +323,13 @@ class AiDecisionLoggerTest {
     void logPinsSecurityTraceKeySet() {
         PolicyDecision decision = generateDecision("pd_schema");
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(), SecurityAssessment.clean(),
-                100, 10, false, false, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         String trace = capturedTrace();
         assertThat(trace)
@@ -398,15 +356,14 @@ class AiDecisionLoggerTest {
     void logKeepsObfuscationSignalsButCountsLabels() {
         PolicyDecision decision = generateDecision("pd_obfuscation");
 
-        logger.log(
-                UUID.randomUUID(), UUID.randomUUID(), decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.suspicious(
-                        List.of("역할극", "zero_width_char", "obfuscated_input"), true),
-                100, 10, false, true, new OutputGuardOutcome(null, null, false), "default",
-                false, false, false, decision.crisisTrigger(), null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.suspicious( List.of("역할극", "zero_width_char", "obfuscated_input"), true), 100)
+                        .llmTtftMs(10)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         String trace = capturedTrace();
         assertThat(trace)
@@ -444,25 +401,14 @@ class AiDecisionLoggerTest {
                 JudgeStatus.SKIPPED
         );
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘")),
-                100,
-                10,
-                true,
-                false,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                decision.crisisTrigger(),
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.selfHarmInquiry(List.of("자살 방법 알려줘")), 100)
+                        .llmTtftMs(10)
+                        .crisisFlowTriggered(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(decision.crisisTrigger())
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -501,25 +447,14 @@ class AiDecisionLoggerTest {
         );
         assertThat(generateDecision.crisisTrigger()).isNull();
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                generateDecision,
-                new ModerationResult(false, Map.of(), Map.of()),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                true,
-                false,
-                new OutputGuardOutcome(OutputPreFilterResult.pass(), null, false),
-                "default",
-                false,
-                false,
-                false,
-                CrisisTrigger.OUTPUT_GUARD,
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), generateDecision,
+                TurnObservation.builder(new ModerationResult(false, Map.of(), Map.of()), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .crisisFlowTriggered(true)
+                        .outputGuard(new OutputGuardOutcome(OutputPreFilterResult.pass(), null, false))
+                        .l1ThresholdSource("default")
+                        .appliedCrisisTrigger(CrisisTrigger.OUTPUT_GUARD)
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -545,25 +480,13 @@ class AiDecisionLoggerTest {
     void logPersistsUnresolvedSafetySignals() {
         PolicyDecision decision = generateDecision("pd_degraded");
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                ModerationResult.failOpen(),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                false,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                true,
-                null,
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(ModerationResult.failOpen(), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .safetyProfileDegraded(true)
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -579,25 +502,12 @@ class AiDecisionLoggerTest {
     void logMarksResolvedModeration() {
         PolicyDecision decision = generateDecision("pd_ok");
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                ModerationResult.clear(),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                false,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                null,
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(ModerationResult.clear(), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -612,25 +522,13 @@ class AiDecisionLoggerTest {
     void logPersistsFailedInputJudgeStatus() {
         PolicyDecision decision = failedJudgeDecision("pd_judge_failed");
 
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                decision,
-                ModerationResult.clear(),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                true,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                null,
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), decision,
+                TurnObservation.builder(ModerationResult.clear(), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .inputJudgeCalled(true)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .build());
 
         ArgumentCaptor<AiPolicyDecision> captor = ArgumentCaptor.forClass(AiPolicyDecision.class);
         verify(repository).save(captor.capture());
@@ -771,32 +669,13 @@ class AiDecisionLoggerTest {
     }
 
     private void logWithFailureState(OutputJudgeResult judgeResult, MemoryContextResult memoryResult) {
-        logger.log(
-                UUID.randomUUID(),
-                UUID.randomUUID(),
-                generateDecision("pd_failure_state"),
-                ModerationResult.clear(),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                false,
-                new OutputGuardOutcome(OutputPreFilterResult.pass(), judgeResult, false),
-                "default",
-                false,
-                MemoryCacheOutcome.live(),
-                false,
-                null,
-                null,
-                ResponseContractResult.notApplicable(),
-                -1,
-                -1,
-                false,
-                0,
-                memoryResult,
-                null
-        );
+        logger.log(UUID.randomUUID(), UUID.randomUUID(), generateDecision("pd_failure_state"),
+                TurnObservation.builder(ModerationResult.clear(), SafetyL1Result.clear(), SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(OutputPreFilterResult.pass(), judgeResult, false))
+                        .l1ThresholdSource("default")
+                        .memoryContext(memoryResult)
+                        .build());
     }
 
     /** 위기 확정 결정 (이슈 #510 축). */
@@ -829,21 +708,13 @@ class AiDecisionLoggerTest {
                 UUID.randomUUID(),
                 UUID.randomUUID(),
                 generateDecision("pd_llm"),
-                ModerationResult.clear(),
-                SafetyL1Result.clear(),
-                SecurityAssessment.clean(),
-                100,
-                10,
-                false,
-                false,
-                new OutputGuardOutcome(null, null, false),
-                "default",
-                false,
-                false,
-                false,
-                null,
-                usage
-        );
+                TurnObservation.builder(ModerationResult.clear(), SafetyL1Result.clear(),
+                                SecurityAssessment.clean(), 100)
+                        .llmTtftMs(10)
+                        .outputGuard(new OutputGuardOutcome(null, null, false))
+                        .l1ThresholdSource("default")
+                        .llmUsage(usage)
+                        .build());
     }
 
     private LlmPricingProperties pricedProperties() {

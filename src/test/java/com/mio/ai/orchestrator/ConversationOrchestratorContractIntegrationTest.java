@@ -16,6 +16,7 @@ import com.mio.ai.plan.ResponseAct;
 import com.mio.session.domain.MessageTurn;
 import com.mio.session.service.SessionMessagePersistenceService;
 import com.mio.ai.support.RecordingSseEmitter;
+import com.mio.support.MioIntegrationTest;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
@@ -24,10 +25,8 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -50,8 +49,7 @@ import static org.mockito.Mockito.when;
  * 있는지</b>는 검증된 적이 없다. trace 필드는 이슈 {@code #305}(계약 준수율 실측)의
  * 입력이므로, 여기가 틀리면 그쪽 결과 전체가 무의미해진다.
  */
-@SpringBootTest(properties = "APP_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-@ActiveProfiles("integration-test")
+@MioIntegrationTest
 class ConversationOrchestratorContractIntegrationTest {
 
     @Autowired
