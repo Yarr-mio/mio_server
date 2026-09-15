@@ -792,16 +792,20 @@ public class ConversationOrchestrator {
      * 생성하므로, 이 작업의 목적 자체가 무너진다. 예외는 상위 catch 로 올라가 failTurn 과
      * 폴백 전송으로 이어진다.
      */
-    /** @return 이 호출이 턴을 실제로 완결시켰는지(true) — 이미 완결된 턴이면 false. */
+    /**
+     * @return 이 호출이 턴을 실제로 완결시켰는지(true). 로컬 {@code turnPersisted} CAS 는 이
+     *         프로세스 호출 안에서의 재진입만 막을 뿐, 리스가 이미 다른 시도(재시도로 턴을
+     *         이어받은 별도 {@code handle()} 호출)로 넘어간 경우까지는 못 잡는다 — 그 판정은
+     *         {@code completeTurn} 의 리스 확인 결과를 그대로 물려받아야 한다.
+     */
     private boolean persistTurnOutcome(MessageTurn turn, AtomicBoolean turnPersisted,
                                     String assistantContent, boolean crisisFlowTriggered,
                                     String finishedReason, Integer crisisSeverity) {
         if (turn == null || !turnPersisted.compareAndSet(false, true)) {
             return false;
         }
-        messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
+        return messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
-        return true;
     }
 
     /** 실제 SSE 전송이 성공한 첫 비어 있지 않은 콘텐츠만 사용자 체감 지연으로 기록한다. */
@@ -1168,12 +1172,15 @@ public class ConversationOrchestrator {
         }
 
         if (classifyCbt) {
+            // updateCbtInterventionState 는 상태를 그대로 덮어쓰는 멱등 연산이라 재시도돼도
+            // 안전하다 — isFirstCompletion 가드가 필요한 건 매번 값이 누적되는 카운터뿐이다.
             workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
-            if (metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
+            // isFirstCompletion: 리스가 이미 다른 시도로 넘어가 completeTurn 이 실제로는
+            // 아무것도 쓰지 못한 호출에서까지 세션 카운터가 올라가면, 그 별도 시도가 다시
+            // 카운트할 때 이중으로 누적된다(이슈 #545).
+            if (isFirstCompletion && metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
                 workingMemory.incrementSocraticQuestionCount(sessionId);
             }
-            // 이슈 #545: 왜곡 유형별 세션 누적 배선. isAllowedBiasType 으로 분류기가 스키마
-            // 밖 값을 반환해도 걸러내고, isFirstCompletion 으로 재시도 시 중복 누적을 막는다.
             if (isFirstCompletion && CbtMetadataResult.isAllowedBiasType(metadata.biasType())) {
                 workingMemory.incrementDistortionCount(sessionId, metadata.biasType());
             }

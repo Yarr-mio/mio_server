@@ -121,9 +121,13 @@ public class SessionMessagePersistenceService {
      * @param leaseToken     {@code openTurn} 이 발급한 소유권 토큰. 다른 시도가 턴을 이어받았으면
      *                       아무것도 하지 않고 물러난다 — 응답 메시지도 저장하지 않는다.
      * @param crisisSeverity 위기 플로우로 끝난 턴이면 그 severity — 재생 시 핫라인 복원에 쓴다.
+     * @return 이 호출이 턴을 실제로 완결시켰는지(true) — 리스를 잃어 아무것도 안 쓴 경우 false.
+     *         호출부(예: 이슈 #545 세션 카운터 배선)가 "실제로 처음 완결됐는가"를 판단할 때
+     *         반드시 이 값을 써야 한다 — 리스가 이미 재시도로 넘어간 호출은 로컬 상태와 무관하게
+     *         DB 에 아무것도 반영하지 못했으므로 false 다.
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public void completeTurn(
+    public boolean completeTurn(
             UUID turnId,
             UUID leaseToken,
             String assistantContent,
@@ -137,7 +141,7 @@ public class SessionMessagePersistenceService {
         // 값싼 조기 확인. 최종 판정은 아래 조건부 UPDATE 가 한다.
         if (!turn.isHeldBy(leaseToken)) {
             log.warn("Turn lease lost, abandoning completion: turnId={} status={}", turnId, turn.getStatus());
-            return;
+            return false;
         }
 
         UUID assistantMessageId = null;
@@ -160,7 +164,9 @@ public class SessionMessagePersistenceService {
             // 없앤다 — 어떤 턴도 참조하지 않는 고아 메시지를 남기지 않기 위해서다.
             log.warn("Turn lease lost during completion, rolling back: turnId={}", turnId);
             TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
+            return false;
         }
+        return true;
     }
 
     /**
