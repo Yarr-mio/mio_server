@@ -131,6 +131,53 @@ class WorkingMemoryTest {
     }
 
     @Test
+    @DisplayName("getDistortionCount는 Redis hash에서 왜곡 코드별 값을 읽는다")
+    void getDistortionCount_reads_from_hash() {
+        UUID sessionId = UUID.randomUUID();
+        given(hashOps.get(anyString(), eq("distortion:catastrophizing"))).willReturn("2");
+
+        int count = workingMemory.getDistortionCount(sessionId, "catastrophizing");
+
+        assertThat(count).isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("getDistortionCount는 null 값이면 0을 반환한다")
+    void getDistortionCount_null_returns_zero() {
+        UUID sessionId = UUID.randomUUID();
+        given(hashOps.get(anyString(), anyString())).willReturn(null);
+
+        int count = workingMemory.getDistortionCount(sessionId, "catastrophizing");
+
+        assertThat(count).isZero();
+    }
+
+    @Test
+    @DisplayName("incrementDistortionCount는 왜곡 코드별로 HINCRBY와 expire를 실행한다")
+    void incrementDistortionCount_increments_and_sets_ttl() {
+        UUID sessionId = UUID.randomUUID();
+        given(hashOps.increment(anyString(), anyString(), anyLong())).willReturn(1L);
+
+        workingMemory.incrementDistortionCount(sessionId, "catastrophizing");
+
+        verify(hashOps).increment(contains(sessionId.toString()), eq("distortion:catastrophizing"), eq(1L));
+        verify(redisTemplate).expire(contains(sessionId.toString()), eq(Duration.ofMinutes(90)));
+    }
+
+    @Test
+    @DisplayName("incrementDistortionCount는 서로 다른 왜곡 코드를 독립적으로 누적한다")
+    void incrementDistortionCount_tracks_distinct_codes_independently() {
+        UUID sessionId = UUID.randomUUID();
+        given(hashOps.increment(anyString(), anyString(), anyLong())).willReturn(1L);
+
+        workingMemory.incrementDistortionCount(sessionId, "catastrophizing");
+        workingMemory.incrementDistortionCount(sessionId, "all_or_nothing");
+
+        verify(hashOps).increment(contains(sessionId.toString()), eq("distortion:catastrophizing"), eq(1L));
+        verify(hashOps).increment(contains(sessionId.toString()), eq("distortion:all_or_nothing"), eq(1L));
+    }
+
+    @Test
     @DisplayName("updateCbtInterventionState는 상태를 hash에 저장하고 TTL을 설정한다")
     void updateCbtInterventionState_writes_state_and_sets_ttl() {
         UUID sessionId = UUID.randomUUID();
