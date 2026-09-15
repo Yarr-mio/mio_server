@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -106,7 +107,7 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.BUFFER,
                     effectiveSecurity, true, true, true,
-                    generateHints(profile, judgedRisk), RiskLevel.HIGH, judgeStatus, moderationStatus);
+                    generateHints(profile, judgedRisk, sessionDelta), RiskLevel.HIGH, judgeStatus, moderationStatus);
         }
 
         // 6. Security SUSPICIOUS → GUARDED + OutputGuard 활성
@@ -136,7 +137,7 @@ public class PolicyEngine {
                 // MIO-CBT-011: 소크라테스 2회 제한 도달 시 CBT 개입 힌트 제거
                 InterventionHints hints = (sessionDelta != null && sessionDelta.socraticLimitReached())
                         ? InterventionHints.empty()
-                        : generateHints(profile, riskLevel);
+                        : generateHints(profile, riskLevel, sessionDelta);
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
                         effectiveSecurity, true, true, true,
@@ -149,7 +150,7 @@ public class PolicyEngine {
                 return build(decisionId, DecisionAction.GENERATE,
                         generationModeFor(combined), deliveryFor(guard),
                         effectiveSecurity, true, true, guard,
-                        generateHints(profile, riskLevel), RiskLevel.LOW, judgeStatus, moderationStatus);
+                        generateHints(profile, riskLevel, sessionDelta), RiskLevel.LOW, judgeStatus, moderationStatus);
             }
         }
 
@@ -159,7 +160,7 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.SUPPORTIVE, deliveryFor(guard),
                     effectiveSecurity, true, true, guard,
-                    generateHints(profile, RiskLevel.LOW), RiskLevel.LOW, judgeStatus, moderationStatus);
+                    generateHints(profile, RiskLevel.LOW, sessionDelta), RiskLevel.LOW, judgeStatus, moderationStatus);
         }
 
         // 11. CLEAR_LOW (기본)
@@ -309,8 +310,18 @@ public class PolicyEngine {
         return GenerationMode.SUPPORTIVE;
     }
 
-    private InterventionHints generateHints(SafetyProfile profile, RiskLevel risk) {
+    /**
+     * MIO-CBT-010: 같은 왜곡 유형이 세션 내 2회 이상 감지되기 전에는 개입 힌트를 만들지 않는다
+     * (설계 §8.3 — 왜곡 감지 1회는 공감 응답만, 왜곡 미감지는 개입 없음). 배선 복구 전에는
+     * {@code distortionCount} 가 항상 0이라 이 게이트가 원천적으로 작동 불가능했다(이슈 #545).
+     */
+    private InterventionHints generateHints(SafetyProfile profile, RiskLevel risk, SessionDelta sessionDelta) {
         if (profile == null) return InterventionHints.empty();
+
+        String qualifyingDistortion = qualifyingDistortionCode(sessionDelta);
+        if (qualifyingDistortion == null) {
+            return InterventionHints.empty();
+        }
 
         List<String> suggested;
         if (risk == RiskLevel.MEDIUM || risk == RiskLevel.HIGH) {
@@ -322,8 +333,20 @@ public class PolicyEngine {
         return new InterventionHints(
                 suggested,
                 profile.ineffectiveInterventions(),
-                null
+                qualifyingDistortion
         );
+    }
+
+    /** 세션 내 누적 횟수가 2회 이상인 왜곡 코드 하나. 없으면 null. */
+    private String qualifyingDistortionCode(SessionDelta sessionDelta) {
+        if (sessionDelta == null || sessionDelta.distortionCounts() == null) {
+            return null;
+        }
+        return sessionDelta.distortionCounts().entrySet().stream()
+                .filter(entry -> entry.getValue() != null && entry.getValue() >= 2)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
     }
 
     private PolicyDecision build(

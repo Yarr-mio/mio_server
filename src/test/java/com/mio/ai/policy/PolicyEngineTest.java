@@ -7,6 +7,7 @@ import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.moderation.ModerationStatus;
+import com.mio.ai.profile.SafetyProfile;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.SecurityLevel;
@@ -264,6 +265,58 @@ class PolicyEngineTest {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
         var decision = policyEngine.decide(combined, judgeResult(RiskLevel.MEDIUM), null, limitReached);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+    }
+
+    // ── 이슈 #545 STEP 2 — MIO-CBT-010: 왜곡 2회 이상 게이트 ──────────────
+
+    private SafetyProfile profileWithInterventions() {
+        return new SafetyProfile(
+                "user-1", SafetyProfile.SOURCE_DEFAULT,
+                java.util.Map.of(),
+                List.of("cbt_socratic_question", "breathing_exercise"),
+                List.of(),
+                List.of(),
+                0.0, 0,
+                List.of("catastrophizing"));
+    }
+
+    private SessionDelta withDistortionCount(String code, int count) {
+        return new SessionDelta(0, "none", java.util.Map.of(code, count), 0,
+                new java.util.HashSet<>(), new java.util.HashSet<>());
+    }
+
+    @Test
+    @DisplayName("왜곡 미감지 상태에서는 개입 힌트를 만들지 않는다")
+    void noDistortionDetected_producesNoInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(), SessionDelta.empty());
+
+        assertThat(decision.interventionHints().suggestedCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 왜곡이 1회만 감지되면 아직 개입 힌트를 만들지 않는다")
+    void distortionSeenOnce_stillProducesNoInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(),
+                withDistortionCount("catastrophizing", 1));
+
+        assertThat(decision.interventionHints().suggestedCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 왜곡이 2회 이상 감지되면 개입 힌트를 만든다 (MIO-CBT-010)")
+    void distortionSeenTwice_producesInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(),
+                withDistortionCount("catastrophizing", 2));
+
+        assertThat(decision.interventionHints().suggestedCodes())
+                .containsExactly("cbt_socratic_question", "breathing_exercise");
+        assertThat(decision.interventionHints().targetDistortionCode()).isEqualTo("catastrophizing");
     }
 
     // ── 이슈 #262: Judge 보안 판정이 실제로 결정에 반영되는지 ──────────────

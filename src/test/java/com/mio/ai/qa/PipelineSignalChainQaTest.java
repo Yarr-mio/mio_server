@@ -375,8 +375,11 @@ class PipelineSignalChainQaTest {
                 "test_user", "default", Map.of(), List.of("reframing", "grounding"), List.of(),
                 List.of(), 0.0, 0, List.of()
         );
-        // socraticQuestionsUsed=1 → socraticLimitReached()=false
-        var sessionDelta = new SessionDelta(1, "socratic_asked", new HashMap<>(), 0, new HashSet<>(), new HashSet<>());
+        // socraticQuestionsUsed=1 → socraticLimitReached()=false.
+        // distortionCounts에 2회 이상 쌓인 코드가 있어야 MIO-CBT-010 게이트(이슈 #545)도 통과한다 —
+        // 왜곡이 감지되지 않았다면 소크라테스 한도와 무관하게 힌트는 비어 있어야 정상이다.
+        var sessionDelta = new SessionDelta(1, "socratic_asked",
+                Map.of("catastrophizing", 2), 0, new HashSet<>(), new HashSet<>());
         var decision = policyEngine.decide(combined, judgeResult, profileWithInterventions, sessionDelta);
 
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
