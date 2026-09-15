@@ -319,6 +319,30 @@ class PolicyEngineTest {
         assertThat(decision.interventionHints().targetDistortionCode()).isEqualTo("catastrophizing");
     }
 
+    // ── 이슈 #545 STEP 3 — MIO-CBT-011: 소크라테스 상한은 코드별로 걸러야 한다 ──
+
+    /**
+     * PolicyEngine 은 더 이상 소크라테스 상한 도달을 이유로 힌트 전체를 비우지 않는다.
+     * 코드별 상한(session_limit)은 {@code OntologyInterventionFilter}가 걸러낸다 —
+     * {@code intervention_def.socratic_questioning} 에만 걸려 있고 breathing_exercise 같은
+     * 비질문 개입에는 없다. 여기서 통째로 비우면 그 구분이 무의미해진다.
+     */
+    @Test
+    @DisplayName("소크라테스 상한 도달만으로는 개입 힌트 전체를 비우지 않는다 (코드별 필터링은 OntologyInterventionFilter 책임)")
+    void socraticLimitReached_doesNotEmptyAllHints_whenDistortionGatePassed() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        SessionDelta limitReachedWithDistortion = new SessionDelta(
+                2, "none", java.util.Map.of("catastrophizing", 2), 0,
+                new java.util.HashSet<>(), new java.util.HashSet<>());
+
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(), limitReachedWithDistortion);
+
+        assertThat(decision.interventionHints().suggestedCodes())
+                .as("소크라테스 상한 도달은 PolicyEngine 단계가 아니라 코드별 필터에서 걸러야 한다")
+                .containsExactly("cbt_socratic_question", "breathing_exercise");
+    }
+
     // ── 이슈 #262: Judge 보안 판정이 실제로 결정에 반영되는지 ──────────────
 
     @Test

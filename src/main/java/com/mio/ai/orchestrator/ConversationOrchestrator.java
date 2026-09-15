@@ -1176,10 +1176,15 @@ public class ConversationOrchestrator {
             }
         }
 
+        // metadata.state()==SOCRATIC_ASKED 만으로는 followup_needed/completed 상태에서 실제로
+        // 질문이 동반된 턴을 놓친다 — 상태는 흐름 단계일 뿐, 이번 턴에 질문이 있었는지는
+        // 분류기가 별도로 반환하는 socratic 플래그가 기준이다(이슈 #545 STEP 3, MIO-CBT-011).
+        boolean isSocratic = metadata.socratic() || metadata.state() == CbtInterventionState.SOCRATIC_ASKED;
+
         if (classifyCbt && isFirstCompletion) {
             try {
                 workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
-                if (metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
+                if (isSocratic) {
                     workingMemory.incrementSocraticQuestionCount(sessionId);
                 }
                 if (CbtMetadataResult.isAllowedBiasType(metadata.biasType())) {
@@ -1189,8 +1194,6 @@ public class ConversationOrchestrator {
                 log.warn("Failed to update CBT session counters for sessionId={} — continuing", sessionId, e);
             }
         }
-
-        boolean isSocratic = metadata.socratic() || metadata.state() == CbtInterventionState.SOCRATIC_ASKED;
 
         sendEvent(emitter, new SseEventDto.DoneEvent(
                 outboundMsgId,

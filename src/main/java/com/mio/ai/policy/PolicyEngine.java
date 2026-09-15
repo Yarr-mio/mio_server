@@ -134,10 +134,12 @@ public class PolicyEngine {
             // 8. MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE
             if (riskLevel == RiskLevel.MEDIUM) {
                 GenerationMode genMode = resolveSupportiveMode();
-                // MIO-CBT-011: 소크라테스 2회 제한 도달 시 CBT 개입 힌트 제거
-                InterventionHints hints = (sessionDelta != null && sessionDelta.socraticLimitReached())
-                        ? InterventionHints.empty()
-                        : generateHints(profile, riskLevel, sessionDelta);
+                // MIO-CBT-011 상한은 여기서 전부 비우지 않는다 — OntologyInterventionFilter가
+                // intervention_def.contraindicated_when.session_limit으로 socratic_questioning
+                // 코드만 걸러내고 breathing_exercise 등 비질문 개입은 통과시킨다(전 분기 적용,
+                // ConversationOrchestrator 참고). 여기서 통째로 비우면 이 분기만 소크라테스
+                // 상한 도달 시 지원 개입까지 막혀 다른 위험도 분기와 어긋난다(이슈 #545 STEP 3).
+                InterventionHints hints = generateHints(profile, riskLevel, sessionDelta);
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
                         effectiveSecurity, true, true, true,
