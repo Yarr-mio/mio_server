@@ -440,7 +440,15 @@ public class ConversationOrchestrator {
                     OutputPreFilterResult bufferedGuardInput =
                             mergeContractViolations(preFilterResult, contractResult);
                     if (!bufferedGuardInput.passed()) {
-                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
+                        // 이슈 #545 STEP 4: 순수 질문 개수 위반(안전 문제 없음)은 OutputJudge가
+                        // 안전 판정 프롬프트만 갖고 있어 실제로 고쳐쓰지 않는다(실측 0% 교정율) —
+                        // LLM 판정 없이 결정론적으로 초과 질문을 제거한다. 진단·단정·조언 등
+                        // 임상적으로 의미 있는 위반이 섞여 있으면 그대로 판정을 거친다.
+                        judgeActionResult = preFilterResult.passed()
+                                && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())
+                                ? OutputJudgeResult.rewrite(responseContractValidator.stripExcessQuestions(
+                                        assistantContent, responsePlan.maxQuestions()))
+                                : outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
@@ -549,10 +557,20 @@ public class ConversationOrchestrator {
                         if (!streamedGuardInput.passed()) {
                             log.warn("OutputGuard post-stream: session={} reasons={}",
                                     sessionId, streamedGuardInput.failReasons());
-                            final String fullContent = assistantContent;
-                            final OutputPreFilterResult fullFilter = streamedGuardInput;
-                            judgeFuture = CompletableFuture.supplyAsync(
-                                    () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
+                            // 이슈 #545 STEP 4: 순수 질문 개수 위반(안전 문제 없음)은 OutputJudge가
+                            // 안전 판정 프롬프트만 갖고 있어 실제로 고쳐쓰지 않는다(실측 0% 교정율)
+                            // — LLM 판정 없이 결정론적으로 초과 질문을 제거한다.
+                            if (preFilterResult.passed()
+                                    && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())) {
+                                judgeFuture = CompletableFuture.completedFuture(OutputJudgeResult.rewrite(
+                                        responseContractValidator.stripExcessQuestions(
+                                                assistantContent, responsePlan.maxQuestions())));
+                            } else {
+                                final String fullContent = assistantContent;
+                                final OutputPreFilterResult fullFilter = streamedGuardInput;
+                                judgeFuture = CompletableFuture.supplyAsync(
+                                        () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
+                            }
                         }
                     }
 
