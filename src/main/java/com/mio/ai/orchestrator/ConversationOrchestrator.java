@@ -1131,7 +1131,10 @@ public class ConversationOrchestrator {
         boolean isFirstCompletion = persistTurnOutcome(turn, turnPersisted, assistantContent, isCrisisFlagged,
                 finishedReason, crisisSeverityRef.get());
 
-        CbtMetadataResult metadata = classifyCbt
+        // isFirstCompletion=false 면 이 호출의 응답은 DB에 반영되지 않았다 — 그 결과는 아래
+        // 모든 분기에서 버려지므로, 분류기 LLM 호출 자체를 생략해 리스를 잃은 재시도마다 비용과
+        // 지연을 낭비하지 않는다(이슈 #545 리뷰 반영).
+        CbtMetadataResult metadata = classifyCbt && isFirstCompletion
                 ? cbtMetadataClassifier.classify(
                         sessionDelta.cbtInterventionState(),
                         recentWorkingMessages,
