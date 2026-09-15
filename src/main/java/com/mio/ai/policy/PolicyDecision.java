@@ -119,4 +119,17 @@ public record PolicyDecision(
         );
     }
 
+    /**
+     * 전달 방식을 바꾼 사본 (이슈 #545 STEP 4). 계획이 확정된 뒤 계약이 걸렸는데 전달 방식이
+     * 검사 시점 자체가 없는 {@code SPECULATIVE}면 승격시켜야 한다 — 이 값이 갱신돼야
+     * {@code aiTurnMetrics}·{@code AiDecisionLogger}·safe prefix 선택이 실제로 탄 경로를 본다.
+     */
+    public PolicyDecision withDeliveryMode(DeliveryMode deliveryMode) {
+        return new PolicyDecision(
+                decisionId, action, generationMode, deliveryMode, securityLevel,
+                allowGeneration, allowStreaming, requireOutputGuard, interventionHints,
+                policyVersion, riskLevel, crisisTrigger, judgeStatus, moderationStatus, responsePlan
+        );
+    }
+
 }

@@ -301,7 +301,17 @@ public class ConversationOrchestrator {
 
             // 6b. 응답 계약 확정 (이슈 #303). 결정론적이며 LLM 을 호출하지 않는다.
             // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
-            decision = decision.withResponsePlan(responsePlanner.plan(decision));
+            decision = decision.withResponsePlan(responsePlanner.plan(decision, sessionDelta));
+
+            // 이슈 #545 STEP 4: ResponsePlanner가 "일반 대화"를 계약으로 승격시킨 턴은(예: CBT
+            // 질문 0개 계약) SPECULATIVE로 그대로 흘려보내면 계약을 검사할 시점 자체가 없다 —
+            // 문장 단위로 승인 후 전달하는 경로로 올린다. decision 자체를 갱신해야 아래 safe
+            // prefix 선택·지연 지표·트레이스가 실제로 탄 경로를 본다(리뷰 반영 — 로컬 변수만
+            // 바꾸면 관측치가 어긋난다).
+            if (decision.deliveryMode() == DeliveryMode.SPECULATIVE
+                    && decision.responsePlan().isContractEnforced()) {
+                decision = decision.withDeliveryMode(DeliveryMode.CAUTIOUS_SPECULATIVE);
+            }
 
             // 사용자가 무언가를 보기까지 (P0-4). 아래 첫 승인 콘텐츠 지연과는 safe prefix 가
             // 나간 턴에서만 갈라진다 — prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠다.
@@ -411,6 +421,7 @@ public class ConversationOrchestrator {
                 shadowGenerationRunner.maybeShadow(llmRequest);
                 StringBuilder contentBuilder = new StringBuilder();
 
+                // 승격 여부는 위(6b 직후)에서 이미 decision 에 반영했다 — 여기서는 그 결과만 읽는다.
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
                 boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();

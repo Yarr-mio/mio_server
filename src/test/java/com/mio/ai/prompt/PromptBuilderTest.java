@@ -56,6 +56,25 @@ class PromptBuilderTest {
         assertThat(prompt).doesNotContain("개입 힌트");
     }
 
+    /**
+     * 이슈 #545 STEP 4 — 힌트가 비어 있을 때(왜곡 2회 미만·세션 상한 도달) 침묵하지 않고
+     * 명시적으로 금지한다. 이전엔 힌트가 없으면 이 지시 자체가 아예 안 나갔다.
+     */
+    @Test
+    @DisplayName("빈 hints는 소크라테스식 질문을 명시적으로 금지하는 지시를 포함한다")
+    void empty_hints_explicitly_forbids_socratic_question() {
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, InterventionHints.empty());
+        assertThat(prompt).contains("소크라테스식 질문을 하지 마세요");
+    }
+
+    @Test
+    @DisplayName("hints가 있으면 소크라테스식 질문 금지 지시는 나가지 않는다")
+    void nonEmptyHints_doesNotForbidSocraticQuestion() {
+        var hints = new InterventionHints(List.of("socratic_questioning"), List.of(), "catastrophizing");
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, hints);
+        assertThat(prompt).doesNotContain("소크라테스식 질문을 하지 마세요");
+    }
+
     // ── 응답 계약의 프롬프트 주입 (이슈 #303 / #369, 로드맵 §5.7) ──────────────
     //
     // 계약을 검사만 하고 지시하지 않으면 위반이 정상 경로가 된다 — 모델은 제약을 모른 채

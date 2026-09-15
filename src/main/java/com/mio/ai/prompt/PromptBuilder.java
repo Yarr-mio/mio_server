@@ -61,9 +61,7 @@ public class PromptBuilder {
                                     ResponsePlan plan, boolean safePrefixDelivered) {
         String base = resolveBasePrompt(characterId) + buildModeInstruction(mode)
                 + buildPlanInstruction(plan) + buildSafePrefixInstruction(plan, safePrefixDelivered);
-        if (hints != null && !hints.suggestedCodes().isEmpty()) {
-            base += buildHintsInstruction(hints);
-        }
+        base += buildHintsInstruction(hints);
         if (checkpointSummary != null && !checkpointSummary.isBlank()) {
             base += "\n\n## 이전 대화 요약\n" + checkpointSummary;
         }
@@ -117,11 +115,18 @@ public class PromptBuilder {
                 + "인사나 감정 인정을 다시 쓰지 말고, 곧바로 이번 턴의 응답 행위부터 시작하세요.";
     }
 
+    /**
+     * 이슈 #545 STEP 4 — 힌트가 비어 있을 때(왜곡 2회 미만이거나 세션 상한 도달) 침묵하지
+     * 않고 명시적으로 금지한다. 이전에는 힌트가 없으면 아무 지시도 안 나가서, 모델이 스스로
+     * 소크라테스식 질문을 꺼내도 막을 방법이 없었다 — "4마디 4질문" 재현의 핵심 경로였다.
+     */
     private String buildHintsInstruction(InterventionHints hints) {
-        StringBuilder sb = new StringBuilder("\n\n[개입 힌트]");
-        if (!hints.suggestedCodes().isEmpty()) {
-            sb.append(" 권장 접근: ").append(String.join(", ", hints.suggestedCodes())).append(".");
+        if (hints == null || hints.suggestedCodes().isEmpty()) {
+            return "\n\n[CBT 질문 지시] 지금은 소크라테스식 질문을 하지 마세요. "
+                    + "공감하고 경청하는 응답만 하세요.";
         }
+        StringBuilder sb = new StringBuilder("\n\n[개입 힌트]");
+        sb.append(" 권장 접근: ").append(String.join(", ", hints.suggestedCodes())).append(".");
         if (!hints.avoidCodes().isEmpty()) {
             sb.append(" 피할 접근: ").append(String.join(", ", hints.avoidCodes())).append(".");
         }
