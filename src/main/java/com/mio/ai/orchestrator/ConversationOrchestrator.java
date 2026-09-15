@@ -1144,7 +1144,12 @@ public class ConversationOrchestrator {
                         sessionId)
                 : CbtMetadataResult.none();
 
-        if (metadata.completionReason() != null) {
+        // isFirstCompletion 이 false 인 호출은 리스를 잃어 completeTurn 이 실제로는 아무것도
+        // 쓰지 못했다 — 그 분류는 DB에 반영되지 않은(버려진) 응답 기준이므로, 세션 상태·카운터·
+        // 파생 레코드 어디에도 반영하면 안 된다. 안 그러면 나중에 끝난 시도가 승자의 상태를
+        // 덮어쓰거나(state), 레코드를 중복 생성하거나(emotion-score target), 카운터를 이중
+        // 누적할 수 있다(이슈 #545).
+        if (isFirstCompletion && metadata.completionReason() != null) {
             try {
                 // 운영자 반응신호 조회(이슈 #475)에서 쓰기 위해 세션에 남긴다 — 지금까지는
                 // DoneEvent SSE로만 나가고 DB에는 없어서 세션 종료 후에는 조회할 방법이 없었다.
@@ -1155,7 +1160,7 @@ public class ConversationOrchestrator {
         }
 
         UUID emotionScoreTargetId = null;
-        if (metadata.shouldCreateEmotionScoreTarget()) {
+        if (isFirstCompletion && metadata.shouldCreateEmotionScoreTarget()) {
             try {
                 emotionScoreTargetId = cbtReconstructionService.createEmotionScoreTarget(
                         userId,
@@ -1171,18 +1176,17 @@ public class ConversationOrchestrator {
             }
         }
 
-        if (classifyCbt) {
-            // updateCbtInterventionState 는 상태를 그대로 덮어쓰는 멱등 연산이라 재시도돼도
-            // 안전하다 — isFirstCompletion 가드가 필요한 건 매번 값이 누적되는 카운터뿐이다.
-            workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
-            // isFirstCompletion: 리스가 이미 다른 시도로 넘어가 completeTurn 이 실제로는
-            // 아무것도 쓰지 못한 호출에서까지 세션 카운터가 올라가면, 그 별도 시도가 다시
-            // 카운트할 때 이중으로 누적된다(이슈 #545).
-            if (isFirstCompletion && metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
-                workingMemory.incrementSocraticQuestionCount(sessionId);
-            }
-            if (isFirstCompletion && CbtMetadataResult.isAllowedBiasType(metadata.biasType())) {
-                workingMemory.incrementDistortionCount(sessionId, metadata.biasType());
+        if (classifyCbt && isFirstCompletion) {
+            try {
+                workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
+                if (metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
+                    workingMemory.incrementSocraticQuestionCount(sessionId);
+                }
+                if (CbtMetadataResult.isAllowedBiasType(metadata.biasType())) {
+                    workingMemory.incrementDistortionCount(sessionId, metadata.biasType());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to update CBT session counters for sessionId={} — continuing", sessionId, e);
             }
         }
 
