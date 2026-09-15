@@ -5,6 +5,7 @@ import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.policy.DecisionAction;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.PolicyDecision;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -25,6 +26,14 @@ public class ResponsePlanner {
     /** 위험 신호가 있는 턴의 문장 상한 — 길수록 단정·조언이 섞일 여지가 커진다. */
     private static final int GUARDED_MAX_SENTENCES = 3;
     private static final int SUPPORTIVE_MAX_SENTENCES = 4;
+
+    /**
+     * 이슈 #545 CBT 질문 게이트 전체 스위치 (기본 OFF). {@link com.mio.ai.policy.PolicyEngine}
+     * 의 동명 플래그와 함께 켜야 의미가 있다 — 꺼져 있으면 게이트 도입 전과 같이 이 계약을
+     * 만들지 않는다(배포 ≠ 릴리즈).
+     */
+    @Value("${cbt.question-gate.enabled:false}")
+    private boolean cbtQuestionGateEnabled;
 
     public ResponsePlan plan(PolicyDecision decision) {
         return plan(decision, null);
@@ -95,7 +104,7 @@ public class ResponsePlanner {
     private static final String SOCRATIC_QUESTION_CODE = "socratic_questioning";
 
     private boolean isCbtRelevantButGateClosed(PolicyDecision decision, SessionDelta sessionDelta) {
-        if (sessionDelta == null) {
+        if (!cbtQuestionGateEnabled || sessionDelta == null) {
             return false;
         }
         boolean cbtRelevant = !sessionDelta.distortionCounts().isEmpty()

@@ -5,12 +5,19 @@ import com.mio.ai.plan.ResponsePlan;
 import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
 import com.mio.character.domain.CharacterPersona;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 
 @Component
 public class PromptBuilder {
 
+    /**
+     * 이슈 #545 CBT 질문 게이트 전체 스위치 (기본 OFF, {@link com.mio.ai.policy.PolicyEngine}
+     * 의 동명 플래그와 함께 켠다). 꺼져 있으면 힌트가 비어 있어도 게이트 도입 전처럼 침묵한다.
+     */
+    @Value("${cbt.question-gate.enabled:false}")
+    private boolean cbtQuestionGateEnabled;
 
     private static final String SUPPORTIVE_INSTRUCTION =
             "\n\n[현재 세션 지시] 감정을 먼저 충분히 인정하고 공감하세요. " +
@@ -119,9 +126,15 @@ public class PromptBuilder {
      * 이슈 #545 STEP 4 — 힌트가 비어 있을 때(왜곡 2회 미만이거나 세션 상한 도달) 침묵하지
      * 않고 명시적으로 금지한다. 이전에는 힌트가 없으면 아무 지시도 안 나가서, 모델이 스스로
      * 소크라테스식 질문을 꺼내도 막을 방법이 없었다 — "4마디 4질문" 재현의 핵심 경로였다.
+     *
+     * <p>{@code cbtQuestionGateEnabled} 가 꺼져 있으면 이 명시적 금지 지시를 내지 않는다 —
+     * 게이트 도입 전처럼 힌트가 없을 땐 침묵한다(배포 ≠ 릴리즈).
      */
     private String buildHintsInstruction(InterventionHints hints) {
         if (hints == null || hints.suggestedCodes().isEmpty()) {
+            if (!cbtQuestionGateEnabled) {
+                return "";
+            }
             return "\n\n[CBT 질문 지시] 지금은 소크라테스식 질문을 하지 마세요. "
                     + "공감하고 경청하는 응답만 하세요.";
         }

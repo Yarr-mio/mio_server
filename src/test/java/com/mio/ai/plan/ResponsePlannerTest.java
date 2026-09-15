@@ -11,6 +11,7 @@ import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.HashSet;
 import java.util.Map;
@@ -21,6 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ResponsePlannerTest {
 
     private final ResponsePlanner planner = new ResponsePlanner();
+
+    {
+        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 테스트는 게이트가 켜진 동작을 검증한다.
+        ReflectionTestUtils.setField(planner, "cbtQuestionGateEnabled", true);
+    }
 
     private PolicyDecision decision(DecisionAction action, GenerationMode mode, RiskLevel risk) {
         return decision(action, mode, risk, InterventionHints.empty());

@@ -4,6 +4,12 @@
 scheduling:
   enabled: false
 
+# 이슈 #545 — CBT 질문 게이트는 운영 기본 OFF(배포 ≠ 릴리즈)지만, 통합 테스트는 게이트가
+# 켜진 상태의 실제 동작을 검증해야 하므로 이 프로파일에서만 켠다.
+cbt:
+  question-gate:
+    enabled: true
+
 spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/mio

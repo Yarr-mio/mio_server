@@ -11,6 +11,7 @@ import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.security.SecurityLevel;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -28,6 +29,13 @@ public class PolicyEngine {
     private static final String POLICY_VERSION = "v2.0-phase2";
 
     private final EffectiveSecurityResolver effectiveSecurityResolver;
+
+    /**
+     * 이슈 #545 CBT 질문 게이트(같은 왜곡 2회 미만이면 힌트 미생성) 전체 스위치.
+     * 배포 ≠ 릴리즈 — 기본 OFF, 켜기 전까지는 게이트 도입 전 동작(무조건 힌트 생성)을 유지한다.
+     */
+    @Value("${cbt.question-gate.enabled:false}")
+    private boolean cbtQuestionGateEnabled;
 
     public PolicyDecision decide(
             CombinedSignal combined,
@@ -316,13 +324,19 @@ public class PolicyEngine {
      * MIO-CBT-010: 같은 왜곡 유형이 세션 내 2회 이상 감지되기 전에는 개입 힌트를 만들지 않는다
      * (설계 §8.3 — 왜곡 감지 1회는 공감 응답만, 왜곡 미감지는 개입 없음). 배선 복구 전에는
      * {@code distortionCount} 가 항상 0이라 이 게이트가 원천적으로 작동 불가능했다(이슈 #545).
+     *
+     * <p>{@code cbtQuestionGateEnabled} 가 꺼져 있으면 이 게이트 자체를 건너뛴다 — 게이트
+     * 도입 전과 동일하게 무조건 힌트를 생성한다(배포 ≠ 릴리즈).
      */
     private InterventionHints generateHints(SafetyProfile profile, RiskLevel risk, SessionDelta sessionDelta) {
         if (profile == null) return InterventionHints.empty();
 
-        String qualifyingDistortion = qualifyingDistortionCode(sessionDelta);
-        if (qualifyingDistortion == null) {
-            return InterventionHints.empty();
+        String qualifyingDistortion = null;
+        if (cbtQuestionGateEnabled) {
+            qualifyingDistortion = qualifyingDistortionCode(sessionDelta);
+            if (qualifyingDistortion == null) {
+                return InterventionHints.empty();
+            }
         }
 
         List<String> suggested;
