@@ -2,6 +2,7 @@ package com.mio.ai.delivery;
 
 import com.mio.ai.judge.OutputPreFilter;
 import com.mio.ai.judge.RiskLevel;
+import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.moderation.ModerationStatus;
 import com.mio.ai.plan.GenerationFreedom;
 import com.mio.ai.plan.ResponseAct;
@@ -17,8 +18,11 @@ import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -34,6 +38,14 @@ class SafePrefixCatalogTest {
     private final ResponsePlanner planner = new ResponsePlanner();
     private final OutputPreFilter outputPreFilter = new OutputPreFilter();
     private final ResponseContractValidator contractValidator = new ResponseContractValidator();
+
+    {
+        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 클래스의 게이트 관련 테스트는
+        // 게이트가 켜진 동작을 검증한다. sessionDelta 를 안 넘기는 기존 테스트들은 게이트
+        // 자체가 애초에 안 걸리므로(플래너의 isCbtRelevantButGateClosed 는 sessionDelta 가
+        // null 이면 항상 false) 영향받지 않는다.
+        ReflectionTestUtils.setField(planner, "cbtQuestionGateEnabled", true);
+    }
 
     private PolicyDecision decision(DecisionAction action, GenerationMode mode,
                                     DeliveryMode delivery, RiskLevel risk,
@@ -97,6 +109,28 @@ class SafePrefixCatalogTest {
 
         assertThat(high.responsePlan().responseAct()).isEqualTo(ResponseAct.EMPATHIC_REFLECTION);
         assertThat(catalog.select(high)).isEmpty();
+    }
+
+    /**
+     * 코드 리뷰 반영 — 이슈 #545 STEP 4가 CBT 게이트가 닫힌 턴(왜곡 1회 감지, 소크라테스
+     * 질문 미허용)을 EMPATHIC_REFLECTION·CAUTIOUS_SPECULATIVE로 승격시키는데, 이 responseAct
+     * 가 PREFIXES 에 없어서 그 턴들만 holdback 지연을 그대로 겪고 있었다.
+     */
+    @Test
+    @DisplayName("CBT 게이트가 닫힌 EMPATHIC_REFLECTION 턴도 검토된 첫 문장을 받는다")
+    void cbtGateClosedEmpathicReflectionTurnGetsAPrefix() {
+        SessionDelta gateClosedDelta = new SessionDelta(
+                0, "socratic_asked", Map.of("catastrophizing", 1), 0, Set.of(), Set.of());
+        PolicyDecision base = new PolicyDecision(
+                "pd_prefix_test", DecisionAction.GENERATE, GenerationMode.NORMAL,
+                DeliveryMode.CAUTIOUS_SPECULATIVE, SecurityLevel.CLEAN, true, true, true,
+                InterventionHints.empty(), "test", RiskLevel.CLEAR_LOW, null,
+                JudgeStatus.SKIPPED, ModerationStatus.RESOLVED, ResponsePlan.unplanned());
+        PolicyDecision turn = base.withResponsePlan(planner.plan(base, gateClosedDelta));
+
+        assertThat(turn.responsePlan().responseAct()).isEqualTo(ResponseAct.EMPATHIC_REFLECTION);
+        assertThat(turn.responsePlan().maxQuestions()).isZero();
+        assertThat(catalog.select(turn)).contains("그런 마음이 드셨군요.");
     }
 
     @Test

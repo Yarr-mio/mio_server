@@ -56,7 +56,12 @@ public class SafePrefixCatalog {
             // 시드의 "그 마음이 많이 무거우시겠어요" 를 추정 어미로 낮춘 것.
             ResponseAct.EMOTION_CHECK, "지금 마음이 많이 무거우실 것 같아요.",
             // 맥락 확인 턴은 감정을 지목할 근거가 더 약하다. 말해준 사실만 인정한다.
-            ResponseAct.CLARIFY_CONTEXT, "그 이야기를 꺼내주셔서 고마워요."
+            ResponseAct.CLARIFY_CONTEXT, "그 이야기를 꺼내주셔서 고마워요.",
+            // 코드 리뷰 반영 — 이슈 #545 STEP 4가 CBT 게이트 닫힌 턴(CLEAR_LOW/LOW/MEDIUM,
+            // 왜곡 1회 감지)을 EMPATHIC_REFLECTION·CAUTIOUS_SPECULATIVE로 승격시키면서, 이
+            // 항목이 없어 그 턴들만 holdback 지연을 그대로 겪고 있었다(HIGH 전용 사용처는
+            // ALLOWED_RISK에서 이미 제외돼 영향 없음). 특정 감정을 지목하지 않는 인정 문구.
+            ResponseAct.EMPATHIC_REFLECTION, "그런 마음이 드셨군요."
     );
 
     /**
