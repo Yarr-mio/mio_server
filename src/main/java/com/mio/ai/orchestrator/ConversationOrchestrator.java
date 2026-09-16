@@ -160,6 +160,11 @@ public class ConversationOrchestrator {
         MessageTurn turn = null;
         // 결말이 이미 저장됐는지. done 을 보내기 전에 저장하는 것이 이 작업의 핵심 순서다.
         AtomicBoolean turnPersisted = new AtomicBoolean(false);
+        // 이번 handle() 호출 중 실제로 턴을 완결시킨 시도가 있었는지 (이슈 #546). turnPersisted
+        // 는 로컬 CAS 게이트일 뿐이라 "이미 다른 지점에서 선점됨(정상)"과 "리스를 잃어 진짜
+        // 실패함"을 구분 못한다 — persistTurnOutcome()이 실제로 completeTurn()을 호출한 결과만
+        // 여기 기록해, 안전망에서 대화 버퍼(WorkingMemory) 오염을 막는 데 쓴다.
+        AtomicBoolean turnActuallyPersisted = new AtomicBoolean(false);
         String outboundMsgId = "msg_out_" + shortId();
 
         // CloudWatch 등 원시 로그를 session_id 로 교차 검색하기 위한 상관관계 키 (Sprint01, 이슈 #277).
@@ -225,7 +230,7 @@ public class ConversationOrchestrator {
                 int severity = fixedRoute.severity();
                 finishedReasonRef.set("crisis_flow");
                 crisisSeverityRef.set(severity);
-                persistTurnOutcome(turn, turnPersisted, fixedResponse, true,
+                persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, fixedResponse, true,
                         "crisis_flow", severity);
                 boolean delivered = crisisFlowService.deliverFixedResponse(
                         fixedResponse, severity, emitter, outboundMsgId,
@@ -372,7 +377,7 @@ public class ConversationOrchestrator {
                 assistantContent = securityRefusalTemplate.get();
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
-                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "security_refusal", false);
 
@@ -388,7 +393,7 @@ public class ConversationOrchestrator {
                 assistantContent = preview.fixedResponse();
                 finishedReasonRef.set("crisis_flow");
                 crisisSeverityRef.set(preview.severity());
-                persistTurnOutcome(turn, turnPersisted, assistantContent, true,
+                persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, assistantContent, true,
                         "crisis_flow", preview.severity());
 
                 CrisisFlowService.CrisisHandleResult crisisResult =
@@ -453,7 +458,7 @@ public class ConversationOrchestrator {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
                                     outboundMsgId, userSignal.emotionScore(),
-                                    finishedReasonRef, crisisSeverityRef, turn, turnPersisted,
+                                    finishedReasonRef, crisisSeverityRef, turn, turnPersisted, turnActuallyPersisted,
                                     firstSubstantiveTokenMs, startMs, deliveredPrefix, rewriteGuard);
                             if (judgeActionResult.action() == OutputJudgeAction.CRISIS_FLOW) {
                                 crisisFlowTriggered = true;
@@ -465,7 +470,7 @@ public class ConversationOrchestrator {
                     if (judgeActionResult == null || judgeActionResult.action() != OutputJudgeAction.CRISIS_FLOW) {
                         sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
                         markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
-                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
@@ -603,7 +608,7 @@ public class ConversationOrchestrator {
                             assistantContent = preview.fixedResponse();
                             finishedReasonRef.set("crisis_flow");
                             crisisSeverityRef.set(preview.severity());
-                            persistTurnOutcome(turn, turnPersisted, assistantContent, true,
+                            persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, assistantContent, true,
                                     "crisis_flow", preview.severity());
 
                             // 이미 렌더된 서버 문구를 지우고 위기 안내를 보낸다. 이 분기는 조기
@@ -635,7 +640,7 @@ public class ConversationOrchestrator {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
-                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "replaced_by_guard", false);
                             } else if (stopSendingDeltas.get()) {
@@ -652,12 +657,12 @@ public class ConversationOrchestrator {
                                 assistantContent = reviewedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(reviewedContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, reviewedContent);
-                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, reviewedContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             } else {
                                 assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
-                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                         "stop", true);
                             }
@@ -666,7 +671,7 @@ public class ConversationOrchestrator {
                         // 서버가 먼저 보낸 문장도 이 턴의 응답이다. 저장하지 않으면 재생·요약·
                         // 워킹 메모리가 사용자가 실제로 읽은 것과 달라진다.
                         assistantContent = safePrefixDelivery.withPrefix(deliveredPrefix, assistantContent);
-                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                        sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                 userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                                 "stop", true);
                     }
@@ -685,7 +690,7 @@ public class ConversationOrchestrator {
                     llmTtftMs = streamResult.ttftMs();
                     llmUsage = streamResult.usage();
                     assistantContent = contentBuilder.toString();
-                    sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                    sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                             userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                             "stop", true);
                 }
@@ -695,22 +700,27 @@ public class ConversationOrchestrator {
                 assistantContent = "지금 연결에 문제가 생겼어요. 잠시 후 다시 시도해주세요.";
                 sendEvent(emitter, new SseEventDto.DeltaEvent(assistantContent, outboundMsgId));
                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
-                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
+                sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, turnActuallyPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
                         "error", false);
             }
 
             // 8. 안전망. 정상 경로는 done 을 보내기 전에 이미 저장했다(persistTurnOutcome).
             //    어떤 분기가 done 을 보내지 않고 여기까지 왔다면 그때 저장한다.
-            persistTurnOutcome(turn, turnPersisted, assistantContent, crisisFlowTriggered,
+            persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, assistantContent, crisisFlowTriggered,
                     resolveFinishedReason(finishedReasonRef), crisisSeverityRef.get());
 
             // 8b. 20개 메시지마다 비동기 체크포인트 생성 (non-blocking)
             checkpointService.maybeCheckpoint(sessionId, userId);
 
-            // 9. Working Memory — 메시지 버퍼에 이번 턴 기록
-            workingMemory.appendMessage(sessionId, "user", userMessage);
-            workingMemory.appendMessage(sessionId, "assistant", assistantContent);
+            // 9. Working Memory — 메시지 버퍼에 이번 턴 기록. 이 handle() 호출 중 어떤 시도도
+            // 턴을 실제로 완결시키지 못했다면(리스를 잃은 재시도) 기록하지 않는다 — 그러지
+            // 않으면 DB 에는 없는(다른 시도가 이미 저장했거나 저장할) 내용이 대화 버퍼에
+            // 끼어들어 이후 턴의 프롬프트·CBT 분류를 오염시킨다 (이슈 #546).
+            if (turnActuallyPersisted.get()) {
+                workingMemory.appendMessage(sessionId, "user", userMessage);
+                workingMemory.appendMessage(sessionId, "assistant", assistantContent);
+            }
 
             // 10. Log decision
             long totalMs = System.currentTimeMillis() - startMs;
@@ -826,15 +836,24 @@ public class ConversationOrchestrator {
      *         프로세스 호출 안에서의 재진입만 막을 뿐, 리스가 이미 다른 시도(재시도로 턴을
      *         이어받은 별도 {@code handle()} 호출)로 넘어간 경우까지는 못 잡는다 — 그 판정은
      *         {@code completeTurn} 의 리스 확인 결과를 그대로 물려받아야 한다.
+     *
+     * <p>{@code turnActuallyPersisted} 는 이 호출이 로컬 CAS 를 실제로 선점했을 때만 채운다
+     * (이슈 #546). CAS 선점에 실패해 조기 반환하는 경우 건드리지 않는 이유는, 그 경우 이미
+     * 앞서 선점한 호출이 진짜 결과를 채워뒀기 때문이다 — 여기서 다시 덮어쓰면 그 값을 잃는다.
+     * {@code handle()} 끝단의 안전망은 이 값을 읽어, 아무 호출도 실제로 완결시키지 못한
+     * (리스를 잃은) 시도에서 대화 버퍼(WorkingMemory)에 응답을 기록하지 않도록 막는다.
      */
     private boolean persistTurnOutcome(MessageTurn turn, AtomicBoolean turnPersisted,
+                                    AtomicBoolean turnActuallyPersisted,
                                     String assistantContent, boolean crisisFlowTriggered,
                                     String finishedReason, Integer crisisSeverity) {
         if (turn == null || !turnPersisted.compareAndSet(false, true)) {
             return false;
         }
-        return messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
+        boolean persisted = messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
+        turnActuallyPersisted.set(persisted);
+        return persisted;
     }
 
     /** 실제 SSE 전송이 성공한 첫 비어 있지 않은 콘텐츠만 사용자 체감 지연으로 기록한다. */
@@ -1089,6 +1108,7 @@ public class ConversationOrchestrator {
             AtomicReference<Integer> crisisSeverityRef,
             MessageTurn turn,
             AtomicBoolean turnPersisted,
+            AtomicBoolean turnActuallyPersisted,
             AtomicLong firstSubstantiveTokenMs,
             long pipelineStartedAtMs,
             String deliveredPrefix,
@@ -1103,7 +1123,7 @@ public class ConversationOrchestrator {
                 CrisisFlowService.CrisisPreview preview = beginCrisisFlow(
                         l1Result, CrisisTrigger.OUTPUT_GUARD, originalUserMessage,
                         session.getId(), user.getId());
-                persistTurnOutcome(turn, turnPersisted, preview.fixedResponse(), true,
+                persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, preview.fixedResponse(), true,
                         "crisis_flow", preview.severity());
 
                 // 이 경로의 전달 방식(BUFFER)은 현재 prefix 대상이 아니지만, 위기 안내 앞을
@@ -1135,6 +1155,7 @@ public class ConversationOrchestrator {
             MessageTurn turn,
             AtomicReference<Integer> crisisSeverityRef,
             AtomicBoolean turnPersisted,
+            AtomicBoolean turnActuallyPersisted,
             UUID userId,
             UUID sessionId,
             String outboundMsgId,
@@ -1157,8 +1178,8 @@ public class ConversationOrchestrator {
         // isFirstCompletion 은 turnPersisted 의 CAS 결과를 그대로 물려받는다 — 같은 턴이 두 번
         // 완결되는 경로(재시도 등)에서 세션 카운터(왜곡·소크라테스)가 두 번 올라가지 않도록,
         // 카운터 증가도 "이 턴을 실제로 처음 완결시킨 호출"에만 실행한다.
-        boolean isFirstCompletion = persistTurnOutcome(turn, turnPersisted, assistantContent, isCrisisFlagged,
-                finishedReason, crisisSeverityRef.get());
+        boolean isFirstCompletion = persistTurnOutcome(turn, turnPersisted, turnActuallyPersisted, assistantContent,
+                isCrisisFlagged, finishedReason, crisisSeverityRef.get());
 
         // isFirstCompletion=false 면 이 호출의 응답은 DB에 반영되지 않았다 — 그 결과는 아래
         // 모든 분기에서 버려지므로, 분류기 LLM 호출 자체를 생략해 리스를 잃은 재시도마다 비용과
