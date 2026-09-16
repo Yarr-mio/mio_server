@@ -7,11 +7,13 @@ import com.mio.ai.judge.RiskVerdict;
 import com.mio.ai.judge.SecurityVerdict;
 import com.mio.ai.memory.working.SessionDelta;
 import com.mio.ai.moderation.ModerationStatus;
+import com.mio.ai.profile.SafetyProfile;
 import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -20,6 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PolicyEngineTest {
 
     private final PolicyEngine policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
+
+    {
+        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 테스트는 게이트가 켜진 동작을 검증한다.
+        ReflectionTestUtils.setField(policyEngine, "cbtQuestionGateEnabled", true);
+    }
 
     private CombinedSignal combined(SecurityLevel security, boolean hardCrisis,
                                     boolean riskCandidate, boolean l0Flagged) {
@@ -264,6 +271,82 @@ class PolicyEngineTest {
         var combined = combined(SecurityLevel.CLEAN, false, true, false);
         var decision = policyEngine.decide(combined, judgeResult(RiskLevel.MEDIUM), null, limitReached);
         assertThat(decision.generationMode()).isEqualTo(GenerationMode.SUPPORTIVE);
+    }
+
+    // ── 이슈 #545 STEP 2 — MIO-CBT-010: 왜곡 2회 이상 게이트 ──────────────
+
+    private SafetyProfile profileWithInterventions() {
+        return new SafetyProfile(
+                "user-1", SafetyProfile.SOURCE_DEFAULT,
+                java.util.Map.of(),
+                List.of("cbt_socratic_question", "breathing_exercise"),
+                List.of(),
+                List.of(),
+                0.0, 0,
+                List.of("catastrophizing"));
+    }
+
+    private SessionDelta withDistortionCount(String code, int count) {
+        return new SessionDelta(0, "none", java.util.Map.of(code, count), 0,
+                new java.util.HashSet<>(), new java.util.HashSet<>());
+    }
+
+    @Test
+    @DisplayName("왜곡 미감지 상태에서는 개입 힌트를 만들지 않는다")
+    void noDistortionDetected_producesNoInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(), SessionDelta.empty());
+
+        assertThat(decision.interventionHints().suggestedCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 왜곡이 1회만 감지되면 아직 개입 힌트를 만들지 않는다")
+    void distortionSeenOnce_stillProducesNoInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(),
+                withDistortionCount("catastrophizing", 1));
+
+        assertThat(decision.interventionHints().suggestedCodes()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 왜곡이 2회 이상 감지되면 개입 힌트를 만든다 (MIO-CBT-010)")
+    void distortionSeenTwice_producesInterventionHints() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(),
+                withDistortionCount("catastrophizing", 2));
+
+        assertThat(decision.interventionHints().suggestedCodes())
+                .containsExactly("cbt_socratic_question", "breathing_exercise");
+        assertThat(decision.interventionHints().targetDistortionCode()).isEqualTo("catastrophizing");
+    }
+
+    // ── 이슈 #545 STEP 3 — MIO-CBT-011: 소크라테스 상한은 코드별로 걸러야 한다 ──
+
+    /**
+     * PolicyEngine 은 더 이상 소크라테스 상한 도달을 이유로 힌트 전체를 비우지 않는다.
+     * 코드별 상한(session_limit)은 {@code OntologyInterventionFilter}가 걸러낸다 —
+     * {@code intervention_def.socratic_questioning} 에만 걸려 있고 breathing_exercise 같은
+     * 비질문 개입에는 없다. 여기서 통째로 비우면 그 구분이 무의미해진다.
+     */
+    @Test
+    @DisplayName("소크라테스 상한 도달만으로는 개입 힌트 전체를 비우지 않는다 (코드별 필터링은 OntologyInterventionFilter 책임)")
+    void socraticLimitReached_doesNotEmptyAllHints_whenDistortionGatePassed() {
+        var combined = combined(SecurityLevel.CLEAN, false, true, false);
+        SessionDelta limitReachedWithDistortion = new SessionDelta(
+                2, "none", java.util.Map.of("catastrophizing", 2), 0,
+                new java.util.HashSet<>(), new java.util.HashSet<>());
+
+        var decision = policyEngine.decide(
+                combined, judgeResult(RiskLevel.MEDIUM), profileWithInterventions(), limitReachedWithDistortion);
+
+        assertThat(decision.interventionHints().suggestedCodes())
+                .as("소크라테스 상한 도달은 PolicyEngine 단계가 아니라 코드별 필터에서 걸러야 한다")
+                .containsExactly("cbt_socratic_question", "breathing_exercise");
     }
 
     // ── 이슈 #262: Judge 보안 판정이 실제로 결정에 반영되는지 ──────────────

@@ -8,6 +8,7 @@ import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -16,6 +17,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PromptBuilderTest {
 
     private final PromptBuilder builder = new PromptBuilder();
+
+    {
+        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 테스트는 게이트가 켜진 동작을 검증한다.
+        ReflectionTestUtils.setField(builder, "cbtQuestionGateEnabled", true);
+    }
 
     @Test
     @DisplayName("NORMAL 모드는 기본 프롬프트만 반환한다")
@@ -54,6 +60,54 @@ class PromptBuilderTest {
     void empty_hints_no_hints_section() {
         String prompt = builder.buildSystemPrompt(GenerationMode.NORMAL, InterventionHints.empty());
         assertThat(prompt).doesNotContain("개입 힌트");
+    }
+
+    /**
+     * 이슈 #545 STEP 4 — 힌트가 비어 있고 CBT 게이트가 이번 턴 계약을 질문 0개로 강제할 때
+     * 침묵하지 않고 명시적으로 금지한다. 이전엔 힌트가 없으면 이 지시 자체가 아예 안 나갔다.
+     */
+    @Test
+    @DisplayName("빈 hints + CBT 게이트가 닫힌 계약(질문 0개)은 소크라테스식 질문을 명시적으로 금지한다")
+    void emptyHints_withCbtGateClosedPlan_explicitlyForbidsSocraticQuestion() {
+        ResponsePlan gateClosedPlan = new ResponsePlan(ResponseAct.EMPATHIC_REFLECTION,
+                GenerationFreedom.CONSTRAINED, 0, 4, List.of("cbt_intervention"));
+
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, InterventionHints.empty(),
+                null, "mio", null, gateClosedPlan);
+
+        assertThat(prompt).contains("소크라테스식 질문을 하지 마세요");
+    }
+
+    /**
+     * 코드 리뷰 반영 — 힌트가 비어 있다는 사실만으로는 판단할 수 없다. 왜곡 이력이 전혀 없는
+     * 순수 잡담도 항상 빈 힌트를 받으므로, 계획 없이(또는 질문이 허용된 계획으로) 호출되면
+     * 이 지시가 나가면 안 된다.
+     */
+    @Test
+    @DisplayName("빈 hints라도 CBT 게이트가 닫힌 계약이 아니면(계획 없음) 소크라테스식 질문 금지 지시는 나가지 않는다")
+    void emptyHints_withoutGateClosedPlan_doesNotForbidSocraticQuestion() {
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, InterventionHints.empty());
+        assertThat(prompt).doesNotContain("소크라테스식 질문을 하지 마세요");
+    }
+
+    @Test
+    @DisplayName("빈 hints라도 질문이 허용된 계획(maxQuestions>0)이면 소크라테스식 질문 금지 지시는 나가지 않는다")
+    void emptyHints_withQuestionAllowedPlan_doesNotForbidSocraticQuestion() {
+        ResponsePlan questionAllowedPlan = new ResponsePlan(ResponseAct.EMOTION_CHECK,
+                GenerationFreedom.CONSTRAINED, 1, 4, ResponsePlan.BASE_FORBIDDEN);
+
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, InterventionHints.empty(),
+                null, "mio", null, questionAllowedPlan);
+
+        assertThat(prompt).doesNotContain("소크라테스식 질문을 하지 마세요");
+    }
+
+    @Test
+    @DisplayName("hints가 있으면 소크라테스식 질문 금지 지시는 나가지 않는다")
+    void nonEmptyHints_doesNotForbidSocraticQuestion() {
+        var hints = new InterventionHints(List.of("socratic_questioning"), List.of(), "catastrophizing");
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, hints);
+        assertThat(prompt).doesNotContain("소크라테스식 질문을 하지 마세요");
     }
 
     // ── 응답 계약의 프롬프트 주입 (이슈 #303 / #369, 로드맵 §5.7) ──────────────

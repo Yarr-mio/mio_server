@@ -11,9 +11,11 @@ import com.mio.ai.safety.CombinedSignal;
 import com.mio.ai.security.EffectiveSecurityResolver;
 import com.mio.ai.security.SecurityLevel;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -27,6 +29,13 @@ public class PolicyEngine {
     private static final String POLICY_VERSION = "v2.0-phase2";
 
     private final EffectiveSecurityResolver effectiveSecurityResolver;
+
+    /**
+     * 이슈 #545 CBT 질문 게이트(같은 왜곡 2회 미만이면 힌트 미생성) 전체 스위치.
+     * 배포 ≠ 릴리즈 — 기본 OFF, 켜기 전까지는 게이트 도입 전 동작(무조건 힌트 생성)을 유지한다.
+     */
+    @Value("${cbt.question-gate.enabled:false}")
+    private boolean cbtQuestionGateEnabled;
 
     public PolicyDecision decide(
             CombinedSignal combined,
@@ -106,7 +115,7 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.GUARDED, DeliveryMode.BUFFER,
                     effectiveSecurity, true, true, true,
-                    generateHints(profile, judgedRisk), RiskLevel.HIGH, judgeStatus, moderationStatus);
+                    generateHints(profile, judgedRisk, sessionDelta), RiskLevel.HIGH, judgeStatus, moderationStatus);
         }
 
         // 6. Security SUSPICIOUS → GUARDED + OutputGuard 활성
@@ -133,10 +142,12 @@ public class PolicyEngine {
             // 8. MEDIUM → SUPPORTIVE + CAUTIOUS_SPECULATIVE
             if (riskLevel == RiskLevel.MEDIUM) {
                 GenerationMode genMode = resolveSupportiveMode();
-                // MIO-CBT-011: 소크라테스 2회 제한 도달 시 CBT 개입 힌트 제거
-                InterventionHints hints = (sessionDelta != null && sessionDelta.socraticLimitReached())
-                        ? InterventionHints.empty()
-                        : generateHints(profile, riskLevel);
+                // MIO-CBT-011 상한은 여기서 전부 비우지 않는다 — OntologyInterventionFilter가
+                // intervention_def.contraindicated_when.session_limit으로 socratic_questioning
+                // 코드만 걸러내고 breathing_exercise 등 비질문 개입은 통과시킨다(전 분기 적용,
+                // ConversationOrchestrator 참고). 여기서 통째로 비우면 이 분기만 소크라테스
+                // 상한 도달 시 지원 개입까지 막혀 다른 위험도 분기와 어긋난다(이슈 #545 STEP 3).
+                InterventionHints hints = generateHints(profile, riskLevel, sessionDelta);
                 return build(decisionId, DecisionAction.GENERATE,
                         genMode, DeliveryMode.CAUTIOUS_SPECULATIVE,
                         effectiveSecurity, true, true, true,
@@ -149,7 +160,7 @@ public class PolicyEngine {
                 return build(decisionId, DecisionAction.GENERATE,
                         generationModeFor(combined), deliveryFor(guard),
                         effectiveSecurity, true, true, guard,
-                        generateHints(profile, riskLevel), RiskLevel.LOW, judgeStatus, moderationStatus);
+                        generateHints(profile, riskLevel, sessionDelta), RiskLevel.LOW, judgeStatus, moderationStatus);
             }
         }
 
@@ -159,7 +170,7 @@ public class PolicyEngine {
             return build(decisionId, DecisionAction.GENERATE,
                     GenerationMode.SUPPORTIVE, deliveryFor(guard),
                     effectiveSecurity, true, true, guard,
-                    generateHints(profile, RiskLevel.LOW), RiskLevel.LOW, judgeStatus, moderationStatus);
+                    generateHints(profile, RiskLevel.LOW, sessionDelta), RiskLevel.LOW, judgeStatus, moderationStatus);
         }
 
         // 11. CLEAR_LOW (기본)
@@ -309,8 +320,24 @@ public class PolicyEngine {
         return GenerationMode.SUPPORTIVE;
     }
 
-    private InterventionHints generateHints(SafetyProfile profile, RiskLevel risk) {
+    /**
+     * MIO-CBT-010: 같은 왜곡 유형이 세션 내 2회 이상 감지되기 전에는 개입 힌트를 만들지 않는다
+     * (설계 §8.3 — 왜곡 감지 1회는 공감 응답만, 왜곡 미감지는 개입 없음). 배선 복구 전에는
+     * {@code distortionCount} 가 항상 0이라 이 게이트가 원천적으로 작동 불가능했다(이슈 #545).
+     *
+     * <p>{@code cbtQuestionGateEnabled} 가 꺼져 있으면 이 게이트 자체를 건너뛴다 — 게이트
+     * 도입 전과 동일하게 무조건 힌트를 생성한다(배포 ≠ 릴리즈).
+     */
+    private InterventionHints generateHints(SafetyProfile profile, RiskLevel risk, SessionDelta sessionDelta) {
         if (profile == null) return InterventionHints.empty();
+
+        String qualifyingDistortion = null;
+        if (cbtQuestionGateEnabled) {
+            qualifyingDistortion = qualifyingDistortionCode(sessionDelta);
+            if (qualifyingDistortion == null) {
+                return InterventionHints.empty();
+            }
+        }
 
         List<String> suggested;
         if (risk == RiskLevel.MEDIUM || risk == RiskLevel.HIGH) {
@@ -322,8 +349,20 @@ public class PolicyEngine {
         return new InterventionHints(
                 suggested,
                 profile.ineffectiveInterventions(),
-                null
+                qualifyingDistortion
         );
+    }
+
+    /** 세션 내 누적 횟수가 2회 이상인 왜곡 코드 하나. 없으면 null. */
+    private String qualifyingDistortionCode(SessionDelta sessionDelta) {
+        if (sessionDelta == null || sessionDelta.distortionCounts() == null) {
+            return null;
+        }
+        return sessionDelta.distortionCounts().entrySet().stream()
+                .filter(entry -> entry.getValue() != null && entry.getValue() >= 2)
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse(null);
     }
 
     private PolicyDecision build(

@@ -57,6 +57,25 @@ class OntologyInterventionFilterTest {
         assertThat(result.suggestedCodes()).isEmpty();
     }
 
+    /**
+     * 이슈 #545 STEP 3 (MIO-CBT-011): session_limit 은 intervention_def 에 코드별로 붙어 있다
+     * ({@code socratic_questioning} 에만, {@code breathing_exercise} 등에는 없음 — V21 시드).
+     * 상한 도달이 같이 제안된 비질문 개입까지 막으면 안 된다.
+     */
+    @Test
+    void socraticLimitReached_excludesOnlyTheLimitedCode_keepsOtherSuggestions() {
+        InterventionDef socratic = definition("socratic_questioning", "{\"session_limit\": 2}");
+        InterventionDef breathing = definition("breathing_exercise", "{\"high_crisis\": false}");
+        when(repository.findAllById(List.of("socratic_questioning", "breathing_exercise")))
+                .thenReturn(List.of(socratic, breathing));
+
+        InterventionHints result = filter.filter(
+                new InterventionHints(List.of("socratic_questioning", "breathing_exercise"), List.of(), null),
+                combined(false, false, false, false), sessionDelta(2));
+
+        assertThat(result.suggestedCodes()).containsExactly("breathing_exercise");
+    }
+
     @Test
     void preservesKnownEligibleInterventionAndDropsUnknownCode() {
         InterventionDef breathing = definition("breathing_exercise", "{\"high_crisis\": false}");

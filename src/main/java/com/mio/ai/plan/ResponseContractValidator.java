@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -115,6 +116,59 @@ public class ResponseContractValidator {
         return violations.isEmpty()
                 ? ResponseContractResult.pass()
                 : ResponseContractResult.violated(violations);
+    }
+
+    /**
+     * 위반이 오직 질문 개수 초과뿐인지 (이슈 #545 STEP 4).
+     *
+     * <p>{@code max_sentences}·금지 표현(진단·단정·조언·CBT재구성 등)은 임상적으로 의미 있는
+     * 위반이라 LLM 판정({@code OutputJudge})을 거쳐야 한다. 오직 질문 개수만 넘긴 경우는
+     * 형식 위반이라 결정론적으로({@link #stripExcessQuestions}) 고칠 수 있다 — 판정을 생략해도
+     * 안전 판단을 우회하는 것이 아니다.
+     */
+    public boolean isPureMaxQuestionsViolation(List<String> violations) {
+        return !violations.isEmpty()
+                && violations.stream().allMatch(v -> v.startsWith("max_questions("));
+    }
+
+    private static final Pattern SENTENCE_WITH_TERMINATOR =
+            Pattern.compile("[^.!?。！？\\n]*[.!?。！？\\n]+|[^.!?。！？\\n]+$");
+
+    /**
+     * 예산을 넘는 질문 문장을 뒤에서부터 제거해 계약을 맞춘다(이슈 #545 STEP 4).
+     *
+     * <p>{@link #isPureMaxQuestionsViolation} 이 true 인 경우에만 쓴다 — 안전 문제가 없고
+     * 순수하게 질문 개수만 넘긴 응답을 LLM 판정 없이 결정론적으로 고치기 위함이다.
+     */
+    public String stripExcessQuestions(String text, int maxQuestions) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        List<String> sentences = new ArrayList<>();
+        Matcher matcher = SENTENCE_WITH_TERMINATOR.matcher(text.strip());
+        while (matcher.find()) {
+            String sentence = matcher.group();
+            if (!sentence.isBlank()) {
+                sentences.add(sentence);
+            }
+        }
+
+        int keptQuestions = 0;
+        StringBuilder result = new StringBuilder();
+        for (String sentence : sentences) {
+            boolean isQuestion = QUESTION.matcher(sentence).find();
+            if (isQuestion) {
+                if (keptQuestions >= maxQuestions) {
+                    continue;
+                }
+                keptQuestions++;
+            }
+            if (!result.isEmpty()) {
+                result.append(" ");
+            }
+            result.append(sentence.strip());
+        }
+        return result.toString();
     }
 
     /**

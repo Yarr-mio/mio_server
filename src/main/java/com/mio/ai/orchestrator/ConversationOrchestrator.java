@@ -301,7 +301,17 @@ public class ConversationOrchestrator {
 
             // 6b. 응답 계약 확정 (이슈 #303). 결정론적이며 LLM 을 호출하지 않는다.
             // 정책 결정을 바꾸지 않고 "무엇을 할지"만 덧붙인다 — 계획은 위험 등급을 낮출 수 없다.
-            decision = decision.withResponsePlan(responsePlanner.plan(decision));
+            decision = decision.withResponsePlan(responsePlanner.plan(decision, sessionDelta));
+
+            // 이슈 #545 STEP 4: ResponsePlanner가 "일반 대화"를 계약으로 승격시킨 턴은(예: CBT
+            // 질문 0개 계약) SPECULATIVE로 그대로 흘려보내면 계약을 검사할 시점 자체가 없다 —
+            // 문장 단위로 승인 후 전달하는 경로로 올린다. decision 자체를 갱신해야 아래 safe
+            // prefix 선택·지연 지표·트레이스가 실제로 탄 경로를 본다(리뷰 반영 — 로컬 변수만
+            // 바꾸면 관측치가 어긋난다).
+            if (decision.deliveryMode() == DeliveryMode.SPECULATIVE
+                    && decision.responsePlan().isContractEnforced()) {
+                decision = decision.withDeliveryMode(DeliveryMode.CAUTIOUS_SPECULATIVE);
+            }
 
             // 사용자가 무언가를 보기까지 (P0-4). 아래 첫 승인 콘텐츠 지연과는 safe prefix 가
             // 나간 턴에서만 갈라진다 — prefix 가 없으면 처음 보이는 것이 곧 첫 승인 콘텐츠다.
@@ -411,6 +421,7 @@ public class ConversationOrchestrator {
                 shadowGenerationRunner.maybeShadow(llmRequest);
                 StringBuilder contentBuilder = new StringBuilder();
 
+                // 승격 여부는 위(6b 직후)에서 이미 decision 에 반영했다 — 여기서는 그 결과만 읽는다.
                 DeliveryMode deliveryMode = decision.deliveryMode();
 
                 boolean inputHadRiskSignal = combined.riskCandidate() || combined.emotionSpike();
@@ -429,7 +440,14 @@ public class ConversationOrchestrator {
                     OutputPreFilterResult bufferedGuardInput =
                             mergeContractViolations(preFilterResult, contractResult);
                     if (!bufferedGuardInput.passed()) {
-                        judgeActionResult = outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
+                        // 이슈 #545 STEP 4: 순수 질문 개수 위반(안전 문제 없음)은 OutputJudge가
+                        // 안전 판정 프롬프트만 갖고 있어 실제로 고쳐쓰지 않는다(실측 0% 교정율) —
+                        // LLM 판정 없이 결정론적으로 초과 질문을 제거한다. 진단·단정·조언 등
+                        // 임상적으로 의미 있는 위반이 섞여 있으면 그대로 판정을 거친다.
+                        judgeActionResult = preFilterResult.passed()
+                                && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())
+                                ? deterministicQuestionStripResult(assistantContent, responsePlan)
+                                : outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
                                     judgeActionResult, assistantContent, userMessage, l1Result, user, session, emitter,
@@ -538,10 +556,19 @@ public class ConversationOrchestrator {
                         if (!streamedGuardInput.passed()) {
                             log.warn("OutputGuard post-stream: session={} reasons={}",
                                     sessionId, streamedGuardInput.failReasons());
-                            final String fullContent = assistantContent;
-                            final OutputPreFilterResult fullFilter = streamedGuardInput;
-                            judgeFuture = CompletableFuture.supplyAsync(
-                                    () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
+                            // 이슈 #545 STEP 4: 순수 질문 개수 위반(안전 문제 없음)은 OutputJudge가
+                            // 안전 판정 프롬프트만 갖고 있어 실제로 고쳐쓰지 않는다(실측 0% 교정율)
+                            // — LLM 판정 없이 결정론적으로 초과 질문을 제거한다.
+                            if (preFilterResult.passed()
+                                    && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())) {
+                                judgeFuture = CompletableFuture.completedFuture(
+                                        deterministicQuestionStripResult(assistantContent, responsePlan));
+                            } else {
+                                final String fullContent = assistantContent;
+                                final OutputPreFilterResult fullFilter = streamedGuardInput;
+                                judgeFuture = CompletableFuture.supplyAsync(
+                                        () -> outputJudge.judge(fullContent, fullFilter, userId, sessionId), outputJudgeExecutor);
+                            }
                         }
                     }
 
@@ -792,13 +819,19 @@ public class ConversationOrchestrator {
      * 생성하므로, 이 작업의 목적 자체가 무너진다. 예외는 상위 catch 로 올라가 failTurn 과
      * 폴백 전송으로 이어진다.
      */
-    private void persistTurnOutcome(MessageTurn turn, AtomicBoolean turnPersisted,
+    /**
+     * @return 이 호출이 턴을 실제로 완결시켰는지(true). 로컬 {@code turnPersisted} CAS 는 이
+     *         프로세스 호출 안에서의 재진입만 막을 뿐, 리스가 이미 다른 시도(재시도로 턴을
+     *         이어받은 별도 {@code handle()} 호출)로 넘어간 경우까지는 못 잡는다 — 그 판정은
+     *         {@code completeTurn} 의 리스 확인 결과를 그대로 물려받아야 한다.
+     */
+    private boolean persistTurnOutcome(MessageTurn turn, AtomicBoolean turnPersisted,
                                     String assistantContent, boolean crisisFlowTriggered,
                                     String finishedReason, Integer crisisSeverity) {
         if (turn == null || !turnPersisted.compareAndSet(false, true)) {
-            return;
+            return false;
         }
-        messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
+        return messagePersistenceService.completeTurn(turn.getId(), turn.getLeaseToken(),
                 assistantContent, crisisFlowTriggered, finishedReason, crisisSeverity);
     }
 
@@ -1012,6 +1045,15 @@ public class ConversationOrchestrator {
         // 꼭 좋아질 거예요.` 가 check() 를 통과한다. 반면 질문 수·문장 수는 형식이라
         // 빼둔다: 고정 문구가 계약을 만족하는 것도 아니어서 형식 위반을 다른 형식 위반으로
         // 바꾸는 셈이고, 안전을 얻지 못하면서 코칭만 잃는다.
+        //
+        // <p>이 재검증에 질문 개수를 넣지 않는 이유(코드 리뷰에서 재확인) — 판정자에게는
+        // 정확한 숫자 예산이 아니라 "질문을 줄이라"는 지시만 주어지므로, 판정자가 쓴 본문이
+        // 예산을 살짝 넘는 것은 실패가 아니라 예상된 편차다. 여기서 거부하면
+        // {@code rewriteIsNotRejectedForExceedingQuestionCountAlone} 이 고정한 그 실패
+        // 형태(형식 위반을 형식 위반으로 바꾸며 코칭만 잃음)가 재발한다. 결정론적 스트리핑
+        // (STEP 4, 아래 참고)이 만든 질문 개수 위반은 이 메서드가 아니라 그 호출부에서
+        // 스트리핑 직후에 따로 검증한다 — 판정자가 쓴 산문과 우리 스스로 계산한 예산은
+        // 신뢰 수준이 다르다.
         OutputPreFilterResult recheck = mergeContractViolations(
                 outputPreFilter.check(rewritten),
                 responseContractValidator.validateForbiddenElements(guard.responsePlan(), rewritten));
@@ -1022,6 +1064,29 @@ public class ConversationOrchestrator {
                 + "falling back to the fixed safe response. reasons={}", recheck.failReasons());
         guard.rejected().set(true);
         return SAFE_FIXED_RESPONSE;
+    }
+
+    /**
+     * 순수 질문 개수 위반을 결정론적으로 고친 결과 (이슈 #545 STEP 4, 코드 리뷰 반영).
+     *
+     * <p>{@code stripExcessQuestions()} 는 위반 판정(물음표 문자 개수)과 다른 기준(문장
+     * 경계 — 연속 종결부호를 한 문장으로 묶음)으로 문장을 골라내므로, 스트리핑 후에도
+     * 여전히 예산을 넘거나(예: {@code "정말?? 그렇구나."}) — 문장 전체가 질문뿐이면 —
+     * 빈 문자열이 될 수 있다. 이 결과는 우리가 직접 계산한 것이라({@link OutputJudge} 를
+     * 거치지 않음) 판정자가 쓴 산문과 달리 재검증 없이 내보낼 수 없다 — 실패하면 판정을
+     * 거치지 않고 바로 안전 고정 문구로 내린다(추가 LLM 호출 없이).
+     */
+    private OutputJudgeResult deterministicQuestionStripResult(String assistantContent, ResponsePlan plan) {
+        String stripped = responseContractValidator.stripExcessQuestions(assistantContent, plan.maxQuestions());
+        boolean stillValid = !stripped.isBlank()
+                && responseContractValidator.countQuestions(stripped) <= plan.maxQuestions();
+        if (stillValid) {
+            return OutputJudgeResult.rewrite(stripped);
+        }
+        log.warn("Deterministic question stripping still violated the budget or produced a blank "
+                + "body — falling back to REPLACE without an OutputJudge call. strippedBlank={}",
+                stripped.isBlank());
+        return OutputJudgeResult.replace();
     }
 
     /**
@@ -1118,10 +1183,17 @@ public class ConversationOrchestrator {
         // 결말을 먼저 저장하고 그 다음에 done 을 보낸다.
         // 순서가 반대면, done 이 클라이언트에 도착한 뒤 커밋 전에 프로세스가 죽었을 때 DB 에는
         // generating 턴과 사용자 발화만 남는다. 재시도는 사용자가 이미 받은 응답을 다시 생성한다.
-        persistTurnOutcome(turn, turnPersisted, assistantContent, isCrisisFlagged,
+        //
+        // isFirstCompletion 은 turnPersisted 의 CAS 결과를 그대로 물려받는다 — 같은 턴이 두 번
+        // 완결되는 경로(재시도 등)에서 세션 카운터(왜곡·소크라테스)가 두 번 올라가지 않도록,
+        // 카운터 증가도 "이 턴을 실제로 처음 완결시킨 호출"에만 실행한다.
+        boolean isFirstCompletion = persistTurnOutcome(turn, turnPersisted, assistantContent, isCrisisFlagged,
                 finishedReason, crisisSeverityRef.get());
 
-        CbtMetadataResult metadata = classifyCbt
+        // isFirstCompletion=false 면 이 호출의 응답은 DB에 반영되지 않았다 — 그 결과는 아래
+        // 모든 분기에서 버려지므로, 분류기 LLM 호출 자체를 생략해 리스를 잃은 재시도마다 비용과
+        // 지연을 낭비하지 않는다(이슈 #545 리뷰 반영).
+        CbtMetadataResult metadata = classifyCbt && isFirstCompletion
                 ? cbtMetadataClassifier.classify(
                         sessionDelta.cbtInterventionState(),
                         recentWorkingMessages,
@@ -1134,7 +1206,12 @@ public class ConversationOrchestrator {
                         sessionId)
                 : CbtMetadataResult.none();
 
-        if (metadata.completionReason() != null) {
+        // isFirstCompletion 이 false 인 호출은 리스를 잃어 completeTurn 이 실제로는 아무것도
+        // 쓰지 못했다 — 그 분류는 DB에 반영되지 않은(버려진) 응답 기준이므로, 세션 상태·카운터·
+        // 파생 레코드 어디에도 반영하면 안 된다. 안 그러면 나중에 끝난 시도가 승자의 상태를
+        // 덮어쓰거나(state), 레코드를 중복 생성하거나(emotion-score target), 카운터를 이중
+        // 누적할 수 있다(이슈 #545).
+        if (isFirstCompletion && metadata.completionReason() != null) {
             try {
                 // 운영자 반응신호 조회(이슈 #475)에서 쓰기 위해 세션에 남긴다 — 지금까지는
                 // DoneEvent SSE로만 나가고 DB에는 없어서 세션 종료 후에는 조회할 방법이 없었다.
@@ -1145,7 +1222,7 @@ public class ConversationOrchestrator {
         }
 
         UUID emotionScoreTargetId = null;
-        if (metadata.shouldCreateEmotionScoreTarget()) {
+        if (isFirstCompletion && metadata.shouldCreateEmotionScoreTarget()) {
             try {
                 emotionScoreTargetId = cbtReconstructionService.createEmotionScoreTarget(
                         userId,
@@ -1161,14 +1238,24 @@ public class ConversationOrchestrator {
             }
         }
 
-        if (classifyCbt) {
-            workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
-            if (metadata.state() == CbtInterventionState.SOCRATIC_ASKED) {
-                workingMemory.incrementSocraticQuestionCount(sessionId);
+        // metadata.state()==SOCRATIC_ASKED 만으로는 followup_needed/completed 상태에서 실제로
+        // 질문이 동반된 턴을 놓친다 — 상태는 흐름 단계일 뿐, 이번 턴에 질문이 있었는지는
+        // 분류기가 별도로 반환하는 socratic 플래그가 기준이다(이슈 #545 STEP 3, MIO-CBT-011).
+        boolean isSocratic = metadata.socratic() || metadata.state() == CbtInterventionState.SOCRATIC_ASKED;
+
+        if (classifyCbt && isFirstCompletion) {
+            try {
+                workingMemory.updateCbtInterventionState(sessionId, metadata.state().wireValue());
+                if (isSocratic) {
+                    workingMemory.incrementSocraticQuestionCount(sessionId);
+                }
+                if (CbtMetadataResult.isAllowedBiasType(metadata.biasType())) {
+                    workingMemory.incrementDistortionCount(sessionId, metadata.biasType());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to update CBT session counters for sessionId={} — continuing", sessionId, e);
             }
         }
-
-        boolean isSocratic = metadata.socratic() || metadata.state() == CbtInterventionState.SOCRATIC_ASKED;
 
         sendEvent(emitter, new SseEventDto.DoneEvent(
                 outboundMsgId,

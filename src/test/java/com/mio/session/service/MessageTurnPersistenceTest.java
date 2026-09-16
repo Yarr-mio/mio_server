@@ -114,8 +114,11 @@ class MessageTurnPersistenceTest {
         MessageTurn existing = turn(TurnStatus.GENERATING, UUID.randomUUID());
         when(messageTurnRepository.findById(existing.getId())).thenReturn(Optional.of(existing));
 
-        service.completeTurn(existing.getId(), UUID.randomUUID(), "응답", false, "stop", null);
+        boolean completed = service.completeTurn(existing.getId(), UUID.randomUUID(), "응답", false, "stop", null);
 
+        assertThat(completed)
+                .as("리스를 잃은 호출은 아무것도 완결시키지 못했으므로 false — 이슈 #545 세션 카운터가 이 값을 신뢰한다")
+                .isFalse();
         verify(messageRepository, never()).save(any());
         verify(messageTurnRepository, never()).finishIfHeld(
                 any(), any(), any(), any(), any(), any(), any());
@@ -134,8 +137,9 @@ class MessageTurnPersistenceTest {
         when(messageTurnRepository.finishIfHeld(any(), any(), any(), any(), any(), any(), any()))
                 .thenReturn(1);
 
-        service.completeTurn(held.getId(), lease, null, false, "stop", null);
+        boolean completed = service.completeTurn(held.getId(), lease, null, false, "stop", null);
 
+        assertThat(completed).as("리스를 지킨 채 UPDATE 가 반영됐으면 true").isTrue();
         verify(messageTurnRepository).finishIfHeld(
                 eq(held.getId()), eq(lease), eq(TurnStatus.COMPLETED), eq("stop"),
                 eq(null), eq(null), any(OffsetDateTime.class));

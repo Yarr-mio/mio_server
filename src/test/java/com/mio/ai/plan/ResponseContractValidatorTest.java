@@ -37,6 +37,55 @@ class ResponseContractValidatorTest {
         assertThat(result.violations()).anyMatch(v -> v.startsWith("max_sentences"));
     }
 
+    // ── 이슈 #545 STEP 4 — 순수 질문 개수 위반 결정론적 처리 ──────────────
+
+    @Test
+    @DisplayName("질문 개수 위반만 있으면 순수 위반으로 판정한다")
+    void onlyMaxQuestionsViolation_isPure() {
+        assertThat(validator.isPureMaxQuestionsViolation(List.of("max_questions(1>0)"))).isTrue();
+    }
+
+    @Test
+    @DisplayName("문장 수·금지 표현 위반이 섞이면 순수 위반이 아니다")
+    void mixedViolations_areNotPure() {
+        assertThat(validator.isPureMaxQuestionsViolation(
+                List.of("max_questions(1>0)", "max_sentences(5>4)"))).isFalse();
+        assertThat(validator.isPureMaxQuestionsViolation(
+                List.of("max_questions(1>0)", "cbt_intervention"))).isFalse();
+        assertThat(validator.isPureMaxQuestionsViolation(List.of())).isFalse();
+    }
+
+    @Test
+    @DisplayName("질문 0개 예산이면 모든 질문 문장을 제거한다")
+    void stripExcessQuestions_removesAllQuestionsWhenBudgetIsZero() {
+        String result = validator.stripExcessQuestions(
+                "그런 마음이 드셨군요. 그런데 그때 왜 그렇게 느꼈어요? 많이 힘드셨겠어요.", 0);
+
+        assertThat(result).doesNotContain("?");
+        assertThat(result).contains("그런 마음이 드셨군요.").contains("많이 힘드셨겠어요.");
+    }
+
+    @Test
+    @DisplayName("예산만큼은 앞에서부터 질문을 남기고 초과분만 제거한다")
+    void stripExcessQuestions_keepsQuestionsWithinBudget() {
+        String result = validator.stripExcessQuestions(
+                "언제부터 그랬나요? 어떤 상황이었어요? 오늘은 좀 어때요?", 1);
+
+        assertThat(countQuestionMarks(result)).isEqualTo(1);
+        assertThat(result).contains("언제부터 그랬나요?");
+    }
+
+    @Test
+    @DisplayName("질문이 없는 응답은 그대로 둔다")
+    void stripExcessQuestions_leavesNonQuestionResponseUnchanged() {
+        String original = "많이 힘드셨겠어요. 곁에서 같이 있어줄게요.";
+        assertThat(validator.stripExcessQuestions(original, 0)).isEqualTo(original);
+    }
+
+    private long countQuestionMarks(String text) {
+        return text.chars().filter(c -> c == '?' || c == '？').count();
+    }
+
     @Test
     @DisplayName("상한 안의 응답은 통과한다")
     void compliantResponsePasses() {
