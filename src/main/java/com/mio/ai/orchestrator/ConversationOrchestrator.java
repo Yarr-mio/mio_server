@@ -633,9 +633,18 @@ public class ConversationOrchestrator {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
+                                // 코드 리뷰 반영 — REWRITE로 실제 모델 유래 본문이 (일부만 지워진 채)
+                                // 그대로 나간 경우는 CBT 분류를 계속 돌려야 한다. STEP4의 결정론적
+                                // 질문 스트리핑(이슈 #545)이 바로 이 경로를 타는데, 여기서 분류를
+                                // 계속 건너뛰면 게이트가 한 번이라도 닫힌 세션은 cbt_intervention_state
+                                // 가 그 이후로 영원히 갱신되지 않는다. REPLACE(고정 문구)이거나
+                                // 재검증 실패로 고정 문구(SAFE_FIXED_RESPONSE)로 대체된 경우만
+                                // 분류할 실체가 없으므로 건너뛴다.
+                                boolean deliveredRealContent = judgeActionResult.action() == OutputJudgeAction.REWRITE
+                                        && !rewriteGuard.rejected().get();
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
-                                        "replaced_by_guard", false);
+                                        "replaced_by_guard", deliveredRealContent);
                             } else if (stopSendingDeltas.get()) {
                                 // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
                                 // not trailing tokens that arrived after the early stop

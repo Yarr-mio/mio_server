@@ -13,7 +13,6 @@ import com.mio.ai.safety.SafetyL1Result;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -22,11 +21,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PolicyEngineTest {
 
     private final PolicyEngine policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
-
-    {
-        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 테스트는 게이트가 켜진 동작을 검증한다.
-        ReflectionTestUtils.setField(policyEngine, "cbtQuestionGateEnabled", true);
-    }
 
     private CombinedSignal combined(SecurityLevel security, boolean hardCrisis,
                                     boolean riskCandidate, boolean l0Flagged) {

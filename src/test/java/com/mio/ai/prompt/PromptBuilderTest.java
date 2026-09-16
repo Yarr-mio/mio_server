@@ -8,7 +8,6 @@ import com.mio.ai.policy.GenerationMode;
 import com.mio.ai.policy.InterventionHints;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 
@@ -17,11 +16,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 class PromptBuilderTest {
 
     private final PromptBuilder builder = new PromptBuilder();
-
-    {
-        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 테스트는 게이트가 켜진 동작을 검증한다.
-        ReflectionTestUtils.setField(builder, "cbtQuestionGateEnabled", true);
-    }
 
     @Test
     @DisplayName("NORMAL 모드는 기본 프롬프트만 반환한다")
