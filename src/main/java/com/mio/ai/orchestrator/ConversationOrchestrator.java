@@ -633,9 +633,18 @@ public class ConversationOrchestrator {
                                 assistantContent = replacedContent;
                                 sendEvent(emitter, new SseEventDto.DeltaReplaceEvent(assistantContent, outboundMsgId));
                                 markFirstSubstantive(firstSubstantiveTokenMs, startMs, assistantContent);
+                                // 코드 리뷰 반영 — REWRITE로 실제 모델 유래 본문이 (일부만 지워진 채)
+                                // 그대로 나간 경우는 CBT 분류를 계속 돌려야 한다. STEP4의 결정론적
+                                // 질문 스트리핑(이슈 #545)이 바로 이 경로를 타는데, 여기서 분류를
+                                // 계속 건너뛰면 게이트가 한 번이라도 닫힌 세션은 cbt_intervention_state
+                                // 가 그 이후로 영원히 갱신되지 않는다. REPLACE(고정 문구)이거나
+                                // 재검증 실패로 고정 문구(SAFE_FIXED_RESPONSE)로 대체된 경우만
+                                // 분류할 실체가 없으므로 건너뛴다.
+                                boolean deliveredRealContent = judgeActionResult.action() == OutputJudgeAction.REWRITE
+                                        && !rewriteGuard.rejected().get();
                                 sendDoneEvent(emitter, finishedReasonRef, turn, crisisSeverityRef, turnPersisted, userId, sessionId, outboundMsgId, userSignal.emotionScore(), false,
                                         userMessage, assistantContent, userSignal, sessionDelta, recentWorkingMessages,
-                                        "replaced_by_guard", false);
+                                        "replaced_by_guard", deliveredRealContent);
                             } else if (stopSendingDeltas.get()) {
                                 // Stopped mid-stream but content is safe — restore only the reviewed snapshot,
                                 // not trailing tokens that arrived after the early stop
@@ -1257,6 +1266,11 @@ public class ConversationOrchestrator {
             }
         }
 
+        List<SseEventDto.DoneEvent.Segment> segments = buildSegments(metadata);
+        String lastSegmentId = segments.isEmpty() ? null : segments.get(segments.size() - 1).segmentId();
+        List<SseEventDto.DoneEvent.UiEffect> uiEffects = buildUiEffects(
+                segments, metadata, isSocratic, emotionScoreTargetId, lastSegmentId);
+
         sendEvent(emitter, new SseEventDto.DoneEvent(
                 outboundMsgId,
                 emotionScore,
@@ -1267,8 +1281,75 @@ public class ConversationOrchestrator {
                 emotionScoreTargetId != null,
                 emotionScoreTargetId,
                 emotionScoreTargetId != null ? "after" : null,
-                finishedReason
+                finishedReason,
+                segments.isEmpty() ? null : "1.1",
+                segments,
+                uiEffects
         ));
+    }
+
+    /**
+     * 분류기가 반환한 검증 완료 세그먼트에 {@code segment_id}를 붙인다 (이슈 #549).
+     *
+     * <p>번호는 이 턴 안에서만 고유하면 되므로 순번을 그대로 쓴다 — {@code CbtMetadataClassifier}가
+     * 이미 원문 대조 검증을 마친 뒤이므로 여기서는 ID 부여만 한다.
+     */
+    private List<SseEventDto.DoneEvent.Segment> buildSegments(CbtMetadataResult metadata) {
+        List<CbtMetadataResult.CbtSegment> raw = metadata.segments();
+        List<SseEventDto.DoneEvent.Segment> result = new ArrayList<>(raw.size());
+        for (int i = 0; i < raw.size(); i++) {
+            CbtMetadataResult.CbtSegment segment = raw.get(i);
+            result.add(new SseEventDto.DoneEvent.Segment("seg_" + (i + 1), segment.type(), segment.content()));
+        }
+        return result;
+    }
+
+    /**
+     * 세그먼트에서 파생되는 UI 효과를 만든다 (이슈 #549, API v1.1 {@code ui_effects}).
+     *
+     * <p>지금은 {@code question_card}와 {@code emotion_score_prompt} 두 종류만 판단한다.
+     * 명세가 언급하는 {@code user_declined}/{@code NO_ADVICE}/{@code BLOCK}/{@code AVOID}
+     * 상태의 억제 규칙 중 {@code completion_reason=="user_declined"}만 지금 분류기가 실제로
+     * 반환하는 값과 정확히 대응된다 — 나머지 셋은 지금 코드에 1:1로 대응하는 신호가 없어서
+     * 억지로 매핑하지 않고 후속 작업으로 남긴다({@code todo_suggestion}도 세션 종료 시점의
+     * Memory 도메인 몫이라 이 경로에서는 다루지 않는다).
+     *
+     * <p>{@code question_card}의 show 여부는 세그먼트가 아니라 {@code isSocratic}(호출부가
+     * 이미 세션 카운터 증가에 쓰는 것과 같은 값)로 판단한다 — 세그먼트 검증이 실패해 전체가
+     * {@code reflection} 하나로 폴백된 턴에서도 실제로는 소크라테스 질문이었을 수 있는데,
+     * 세그먼트에서 "question" 타입을 못 찾았다는 이유로 카드를 아예 안 띄우면 이미 신뢰하고
+     * 있는 {@code is_socratic} 신호와 모순된다. {@code segment_id}는 있으면 붙이고
+     * (전체 응답 기준 효과는 segment_id가 없어도 된다는 명세를 그대로 따름), 없으면 null이다.
+     */
+    private List<SseEventDto.DoneEvent.UiEffect> buildUiEffects(
+            List<SseEventDto.DoneEvent.Segment> segments,
+            CbtMetadataResult metadata,
+            boolean isSocratic,
+            UUID emotionScoreTargetId,
+            String lastSegmentId) {
+
+        boolean userDeclined = "user_declined".equals(metadata.completionReason());
+        List<SseEventDto.DoneEvent.UiEffect> effects = new ArrayList<>();
+
+        if (isSocratic && !userDeclined) {
+            String questionSegmentId = segments.stream()
+                    .filter(segment -> "question".equals(segment.type()))
+                    .findFirst()
+                    .map(SseEventDto.DoneEvent.Segment::segmentId)
+                    .orElse(null);
+            effects.add(new SseEventDto.DoneEvent.UiEffect(
+                    "question_card", questionSegmentId, "show", null, null));
+        }
+
+        if (emotionScoreTargetId != null) {
+            effects.add(new SseEventDto.DoneEvent.UiEffect(
+                    "emotion_score_prompt", lastSegmentId, "show", emotionScoreTargetId.toString(), null));
+        } else if (userDeclined) {
+            effects.add(new SseEventDto.DoneEvent.UiEffect(
+                    "emotion_score_prompt", lastSegmentId, "suppress", null, "user_declined"));
+        }
+
+        return effects;
     }
 
     private void sendEvent(SseEmitter emitter, SseEventDto event) throws IOException {

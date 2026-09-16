@@ -57,7 +57,10 @@ public sealed interface SseEventDto
             @JsonProperty("requires_emotion_score") boolean requiresEmotionScore,
             @JsonProperty("emotion_score_target_id") UUID emotionScoreTargetId,
             @JsonProperty("emotion_score_phase") String emotionScorePhase,
-            @JsonProperty("finished_reason") String finishedReason
+            @JsonProperty("finished_reason") String finishedReason,
+            @JsonProperty("envelope_version") String envelopeVersion,
+            @JsonProperty("segments") List<Segment> segments,
+            @JsonProperty("ui_effects") List<UiEffect> uiEffects
     ) implements SseEventDto {
         public DoneEvent(
                 String msgId,
@@ -67,9 +70,26 @@ public sealed interface SseEventDto
                 String finishedReason
         ) {
             this(msgId, emotionScore, isCrisisFlagged, isSocratic,
-                    "none", null, false, null, null, finishedReason);
+                    "none", null, false, null, null, finishedReason,
+                    null, List.of(), List.of());
         }
 
         @Override public String eventName() { return "done"; }
+
+        /** API v1.1 {@code segments[]} — 이슈 #549. */
+        public record Segment(
+                @JsonProperty("segment_id") String segmentId,
+                @JsonProperty("type") String type,
+                @JsonProperty("content") String content
+        ) {}
+
+        /** API v1.1 {@code ui_effects[]} — 이슈 #549. */
+        public record UiEffect(
+                @JsonProperty("type") String type,
+                @JsonProperty("segment_id") String segmentId,
+                @JsonProperty("action") String action,
+                @JsonProperty("target_id") String targetId,
+                @JsonProperty("reason") String reason
+        ) {}
     }
 }

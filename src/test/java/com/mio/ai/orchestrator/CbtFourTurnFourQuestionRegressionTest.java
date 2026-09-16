@@ -20,7 +20,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.TestPropertySource;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -39,11 +38,8 @@ import static org.mockito.Mockito.when;
  * 넘지 않는지 검증한다. 판정은 {@code OutputJudge}를 실제로 부르지 않고(#545 STEP 4 리뷰
  * 반영 — 순수 질문 위반은 결정론적으로 처리) 각 턴에서 최종적으로 사용자에게 전달된 텍스트에
  * 물음표가 남아있는지로 확인한다.
- *
- * <p>게이트는 운영 기본 OFF다 — 이 클래스에서만 켜서 검증한다.
  */
 @MioIntegrationTest
-@TestPropertySource(properties = "cbt.question-gate.enabled=true")
 class CbtFourTurnFourQuestionRegressionTest {
 
     @Autowired
@@ -98,7 +94,6 @@ class CbtFourTurnFourQuestionRegressionTest {
 
     /** 이번 턴 분류기가 반환할 상태. 실제 4턴 흐름을 이 필드로 턴마다 바꿔가며 흉내낸다. */
     private String nextCbtState = "none";
-    private boolean nextIsSocratic = true; // 모델이 "매 턴 질문을 시도하는" 최악의 상황을 고정한다.
 
     @BeforeEach
     void setUp() {
@@ -127,6 +122,28 @@ class CbtFourTurnFourQuestionRegressionTest {
             if (!isCbtClassifier) {
                 return MEDIUM_RISK_VERDICT;
             }
+            // 코드 리뷰 반영 — 분류기는 실제로 전달된(스트리핑 이후) 이번 턴 어시스턴트
+            // 응답을 프롬프트로 받는다. is_socratic을 고정값으로 흉내내면, 이미 질문이
+            // 잘려나간 턴까지 "질문이 있었다"고 잘못 응답해 세션 카운터를 실제보다
+            // 부풀린다 — 진짜 분류기라면 물음표 없는 텍스트를 보고 socratic이라 답할 리
+            // 없다. 프롬프트 전체가 아니라 "[Current Assistant Response]" 구간만 봐야 한다
+            // — 그 앞의 "[Last Assistant Message Before Current User Reply]"에는 직전 턴의
+            // (스트리핑 전) 원본 응답이 그대로 남아있어, 전체를 보면 이미 지나간 턴의
+            // 물음표까지 오탐한다.
+            boolean actuallyHasQuestion = request.messages().stream()
+                    .filter(m -> "user".equals(m.role()))
+                    .map(LlmRequest.Message::content)
+                    .anyMatch(content -> {
+                        int marker = content.indexOf("[Current Assistant Response]");
+                        String currentResponseSection = marker >= 0 ? content.substring(marker) : content;
+                        return QUESTION.matcher(currentResponseSection).find();
+                    });
+            // cbt_intervention_state 도 is_socratic 과 같은 근거(이번 턴에 실제로 물음표가
+            // 남아있는지)로 정해야 한다 — sendDoneEvent()의 isSocratic 계산은
+            // "metadata.socratic() || metadata.state() == SOCRATIC_ASKED" 로 둘 중 하나만
+            // true여도 카운트하므로, state를 매 턴 고정으로 "socratic_asked"를 흉내내면
+            // is_socratic을 아무리 정확히 계산해도 state 쪽에서 다시 세션 카운터가 부풀려진다.
+            String state = actuallyHasQuestion ? "socratic_asked" : nextCbtState;
             return """
                     {
                       "cbt_intervention_state": "%s",
@@ -136,7 +153,7 @@ class CbtFourTurnFourQuestionRegressionTest {
                       "bias_type": "catastrophizing",
                       "reconstructed_thought": null
                     }
-                    """.formatted(nextCbtState, nextIsSocratic);
+                    """.formatted(state, actuallyHasQuestion);
         });
     }
 
@@ -156,7 +173,9 @@ class CbtFourTurnFourQuestionRegressionTest {
         int deliveredQuestions = 0;
 
         for (int turn = 0; turn < TURN_MESSAGES.length; turn++) {
-            nextCbtState = "socratic_asked";
+            // state는 이제 completeJson 스텁 안에서 이번 턴에 실제로 물음표가 있었는지로
+            // 정해진다 — 매 턴 "socratic_asked"로 고정하면 게이트가 막아 질문이 없는
+            // 턴까지 SOCRATIC_ASKED로 잘못 보고돼 세션 카운터가 다시 부풀려진다.
             RecordingSseEmitter emitter = new RecordingSseEmitter(objectMapper);
 
             orchestrator.handle(userId, sessionId, TURN_MESSAGES[turn], emitter,

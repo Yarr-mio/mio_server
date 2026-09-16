@@ -84,7 +84,8 @@ class CbtReconstructionServiceTest {
                 true,
                 false,
                 "catastrophizing",
-                "최악은 아닐 수 있다"
+                "최악은 아닐 수 있다",
+                java.util.List.of()
         );
 
         service.createEmotionScoreTarget(

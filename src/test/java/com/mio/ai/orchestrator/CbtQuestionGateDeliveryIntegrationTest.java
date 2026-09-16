@@ -18,7 +18,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.TestPropertySource;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -34,12 +33,8 @@ import static org.mockito.Mockito.when;
  * 이슈 #545 STEP 4 (MIO-CBT-010/011) — 왜곡이 감지된 적 있는 세션에서 CBT 질문 게이트가
  * 닫혀 있는데도 모델이 질문을 쓰면, 원래 검사 자체가 없던 "일반 대화"(SPECULATIVE) 경로도
  * 노출 전에 걸러져야 한다. 완전히 무관한 잡담은 계속 그대로 흘러가야 한다(회귀 대조군).
- *
- * <p>게이트는 운영 기본 OFF다 — 이 클래스에서만 켜서 검증하고, 다른 통합 테스트(특히
- * {@code QaProductPathReplayTest})는 기본값(OFF) 그대로 실행돼야 한다.
  */
 @MioIntegrationTest
-@TestPropertySource(properties = "cbt.question-gate.enabled=true")
 class CbtQuestionGateDeliveryIntegrationTest {
 
     @Autowired

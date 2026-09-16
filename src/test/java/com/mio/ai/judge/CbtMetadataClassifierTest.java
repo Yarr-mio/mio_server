@@ -86,4 +86,91 @@ class CbtMetadataClassifierTest {
         assertThat(result.requiresEmotionScore()).isFalse();
         assertThat(result.shouldCreateEmotionScoreTarget()).isFalse();
     }
+
+    @Test
+    @DisplayName("세그먼트 content가 실제 응답의 정확한 부분 문자열이면 순서대로 그대로 채택한다 (이슈 #549)")
+    void classify_validSegments_areAdoptedInOrder() {
+        LlmClient llmClient = mock(LlmClient.class);
+        when(llmClient.completeJson(any(LlmRequest.class))).thenReturn("""
+                {
+                  "cbt_intervention_state": "socratic_asked",
+                  "completion_reason": null,
+                  "requires_emotion_score": false,
+                  "is_socratic": true,
+                  "bias_type": "catastrophizing",
+                  "reconstructed_thought": null,
+                  "segments": [
+                    {"type": "question", "content": "그 생각의 근거는 뭐라고 생각하세요?"},
+                    {"type": "reflection", "content": "그런 마음이 드시는군요."}
+                  ]
+                }
+                """);
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
+
+        CbtMetadataResult result = classifier.classify(
+                "none", List.of(), "시험 망하면 끝이야",
+                "그런 마음이 드시는군요. 그 생각의 근거는 뭐라고 생각하세요?",
+                new UserMessageSignal(60, "catastrophizing"), 0, false, null, null);
+
+        assertThat(result.segments()).extracting("type", "content").containsExactly(
+                org.assertj.core.groups.Tuple.tuple("reflection", "그런 마음이 드시는군요."),
+                org.assertj.core.groups.Tuple.tuple("question", "그 생각의 근거는 뭐라고 생각하세요?"));
+    }
+
+    @Test
+    @DisplayName("세그먼트 content가 실제 응답에 없는 문자열(paraphrase)이면 전체를 reflection 하나로 폴백한다 (이슈 #549)")
+    void classify_segmentContentNotVerbatim_fallsBackToSingleSegment() {
+        LlmClient llmClient = mock(LlmClient.class);
+        String actualResponse = "그런 마음이 드시는군요. 그 생각의 근거는 뭐라고 생각하세요?";
+        when(llmClient.completeJson(any(LlmRequest.class))).thenReturn("""
+                {
+                  "cbt_intervention_state": "socratic_asked",
+                  "completion_reason": null,
+                  "requires_emotion_score": false,
+                  "is_socratic": true,
+                  "bias_type": "catastrophizing",
+                  "reconstructed_thought": null,
+                  "segments": [
+                    {"type": "reflection", "content": "많이 힘드시겠어요."},
+                    {"type": "question", "content": "그 생각의 근거는 뭐라고 생각하세요?"}
+                  ]
+                }
+                """);
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
+
+        CbtMetadataResult result = classifier.classify(
+                "none", List.of(), "시험 망하면 끝이야", actualResponse,
+                new UserMessageSignal(60, "catastrophizing"), 0, false, null, null);
+
+        assertThat(result.segments()).containsExactly(
+                new CbtMetadataResult.CbtSegment("reflection", actualResponse));
+    }
+
+    @Test
+    @DisplayName("segments 필드가 없으면 응답 전체를 reflection 하나로 담는다 (이슈 #549)")
+    void classify_missingSegmentsField_fallsBackToSingleSegment() {
+        LlmClient llmClient = mock(LlmClient.class);
+        String actualResponse = "그런 마음이 드시는군요.";
+        when(llmClient.completeJson(any(LlmRequest.class))).thenReturn("""
+                {
+                  "cbt_intervention_state": "none",
+                  "completion_reason": null,
+                  "requires_emotion_score": false,
+                  "is_socratic": false,
+                  "bias_type": null,
+                  "reconstructed_thought": null
+                }
+                """);
+        CbtMetadataClassifier classifier = new CbtMetadataClassifier(llmClient, new ObjectMapper(),
+                ModelCatalog.defaults());
+
+        CbtMetadataResult result = classifier.classify(
+                "none", List.of(), "오늘 힘들었어", actualResponse,
+                new UserMessageSignal(50, null), 0, false, null, null);
+
+        assertThat(result.segments()).containsExactly(
+                new CbtMetadataResult.CbtSegment("reflection", actualResponse));
+    }
 }

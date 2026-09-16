@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.test.context.TestPropertySource;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -46,7 +45,6 @@ import static org.mockito.Mockito.when;
  * </ul>
  */
 @MioIntegrationTest
-@TestPropertySource(properties = "cbt.question-gate.enabled=true")
 class RewrittenBodyRevalidationIntegrationTest {
 
     @Autowired

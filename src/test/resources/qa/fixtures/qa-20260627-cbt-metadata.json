@@ -68,15 +68,15 @@
         }
       },
       "expect": {
-        "sse_events": ["session_meta", "delta", "done"],
+        "sse_events": ["session_meta", "delta", "delta.replace", "done"],
         "final_text": {
           "exact": null,
-          "contains": ["떠올려 볼 수 있을까요"],
+          "contains": ["누르고 있는 것 같아요"],
           "not_contains": []
         },
         "crisis": null,
         "done": {
-          "finished_reason": "stop",
+          "finished_reason": "replaced_by_guard",
           "is_crisis_flagged": false,
           "is_socratic": false,
           "cbt_intervention_state": "followup_needed",

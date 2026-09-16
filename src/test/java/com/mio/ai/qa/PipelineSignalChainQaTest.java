@@ -56,8 +56,6 @@ class PipelineSignalChainQaTest {
         safetyL1 = new SafetyL1(normalizer);
         combiner = new SafetySignalCombiner();
         policyEngine = new PolicyEngine(new EffectiveSecurityResolver());
-        org.springframework.test.util.ReflectionTestUtils.setField(
-                policyEngine, "cbtQuestionGateEnabled", true);
         defaultProfile = new SafetyProfile(
                 "test_user", "default", Map.of(), List.of(), List.of(),
                 List.of(), 0.0, 0, List.of()

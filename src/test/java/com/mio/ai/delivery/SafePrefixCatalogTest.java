@@ -18,7 +18,6 @@ import com.mio.ai.policy.PolicyDecision;
 import com.mio.ai.security.SecurityLevel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
 import java.util.Optional;
@@ -38,14 +37,6 @@ class SafePrefixCatalogTest {
     private final ResponsePlanner planner = new ResponsePlanner();
     private final OutputPreFilter outputPreFilter = new OutputPreFilter();
     private final ResponseContractValidator contractValidator = new ResponseContractValidator();
-
-    {
-        // 이슈 #545 CBT 질문 게이트는 운영 기본 OFF다 — 이 클래스의 게이트 관련 테스트는
-        // 게이트가 켜진 동작을 검증한다. sessionDelta 를 안 넘기는 기존 테스트들은 게이트
-        // 자체가 애초에 안 걸리므로(플래너의 isCbtRelevantButGateClosed 는 sessionDelta 가
-        // null 이면 항상 false) 영향받지 않는다.
-        ReflectionTestUtils.setField(planner, "cbtQuestionGateEnabled", true);
-    }
 
     private PolicyDecision decision(DecisionAction action, GenerationMode mode,
                                     DeliveryMode delivery, RiskLevel risk,
