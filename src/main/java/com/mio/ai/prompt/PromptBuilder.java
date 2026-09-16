@@ -68,7 +68,7 @@ public class PromptBuilder {
                                     ResponsePlan plan, boolean safePrefixDelivered) {
         String base = resolveBasePrompt(characterId) + buildModeInstruction(mode)
                 + buildPlanInstruction(plan) + buildSafePrefixInstruction(plan, safePrefixDelivered);
-        base += buildHintsInstruction(hints);
+        base += buildHintsInstruction(hints, plan);
         if (checkpointSummary != null && !checkpointSummary.isBlank()) {
             base += "\n\n## 이전 대화 요약\n" + checkpointSummary;
         }
@@ -129,10 +129,18 @@ public class PromptBuilder {
      *
      * <p>{@code cbtQuestionGateEnabled} 가 꺼져 있으면 이 명시적 금지 지시를 내지 않는다 —
      * 게이트 도입 전처럼 힌트가 없을 땐 침묵한다(배포 ≠ 릴리즈).
+     *
+     * <p>코드 리뷰 반영 — 힌트가 비어 있다는 사실만으로는 이 턴이 실제로 CBT 게이트가 닫힌
+     * 턴인지 알 수 없다. 왜곡 이력이 전혀 없는 순수 잡담도 {@code generateHints()} 가 항상
+     * 빈 힌트를 반환하므로, 이전에는 그런 턴에도 무조건 이 지시가 나갔다. {@code ResponsePlanner}
+     * 의 CBT 게이트 판단이 정확히 그런 턴만 골라 계약을 {@code maxQuestions=0} 으로 강제하므로,
+     * 그 계약이 실제로 걸린 턴({@code plan.maxQuestions() == 0})에만 지시를 낸다 — 계약 계층과
+     * 프롬프트 계층의 적용 범위를 일치시킨다.
      */
-    private String buildHintsInstruction(InterventionHints hints) {
+    private String buildHintsInstruction(InterventionHints hints, ResponsePlan plan) {
         if (hints == null || hints.suggestedCodes().isEmpty()) {
-            if (!cbtQuestionGateEnabled) {
+            boolean cbtGateClosedThisTurn = plan != null && plan.maxQuestions() == 0;
+            if (!cbtQuestionGateEnabled || !cbtGateClosedThisTurn) {
                 return "";
             }
             return "\n\n[CBT 질문 지시] 지금은 소크라테스식 질문을 하지 마세요. "

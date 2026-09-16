@@ -123,11 +123,17 @@ public record PolicyDecision(
      * 전달 방식을 바꾼 사본 (이슈 #545 STEP 4). 계획이 확정된 뒤 계약이 걸렸는데 전달 방식이
      * 검사 시점 자체가 없는 {@code SPECULATIVE}면 승격시켜야 한다 — 이 값이 갱신돼야
      * {@code aiTurnMetrics}·{@code AiDecisionLogger}·safe prefix 선택이 실제로 탄 경로를 본다.
+     *
+     * <p>{@code CAUTIOUS_SPECULATIVE}로 승격할 땐 {@code requireOutputGuard}도 함께 true로
+     * 맞춘다 (코드 리뷰 반영) — {@link PolicyEngine} 이 직접 만드는 모든 {@code CAUTIOUS_SPECULATIVE}
+     * 결정은 항상 이 조합이고, 그러지 않으면 감사 트레이스({@code ai_policy_decisions})에
+     * PolicyEngine 이 절대 만들지 않는 모순된 조합이 남는다.
      */
     public PolicyDecision withDeliveryMode(DeliveryMode deliveryMode) {
+        boolean guard = requireOutputGuard || deliveryMode == DeliveryMode.CAUTIOUS_SPECULATIVE;
         return new PolicyDecision(
                 decisionId, action, generationMode, deliveryMode, securityLevel,
-                allowGeneration, allowStreaming, requireOutputGuard, interventionHints,
+                allowGeneration, allowStreaming, guard, interventionHints,
                 policyVersion, riskLevel, crisisTrigger, judgeStatus, moderationStatus, responsePlan
         );
     }

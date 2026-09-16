@@ -446,8 +446,7 @@ public class ConversationOrchestrator {
                         // 임상적으로 의미 있는 위반이 섞여 있으면 그대로 판정을 거친다.
                         judgeActionResult = preFilterResult.passed()
                                 && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())
-                                ? OutputJudgeResult.rewrite(responseContractValidator.stripExcessQuestions(
-                                        assistantContent, responsePlan.maxQuestions()))
+                                ? deterministicQuestionStripResult(assistantContent, responsePlan)
                                 : outputJudge.judge(assistantContent, bufferedGuardInput, userId, sessionId);
                         if (judgeActionResult != null) {
                             assistantContent = resolveOutputJudgeAction(
@@ -562,9 +561,8 @@ public class ConversationOrchestrator {
                             // — LLM 판정 없이 결정론적으로 초과 질문을 제거한다.
                             if (preFilterResult.passed()
                                     && responseContractValidator.isPureMaxQuestionsViolation(contractResult.violations())) {
-                                judgeFuture = CompletableFuture.completedFuture(OutputJudgeResult.rewrite(
-                                        responseContractValidator.stripExcessQuestions(
-                                                assistantContent, responsePlan.maxQuestions())));
+                                judgeFuture = CompletableFuture.completedFuture(
+                                        deterministicQuestionStripResult(assistantContent, responsePlan));
                             } else {
                                 final String fullContent = assistantContent;
                                 final OutputPreFilterResult fullFilter = streamedGuardInput;
@@ -1047,6 +1045,15 @@ public class ConversationOrchestrator {
         // 꼭 좋아질 거예요.` 가 check() 를 통과한다. 반면 질문 수·문장 수는 형식이라
         // 빼둔다: 고정 문구가 계약을 만족하는 것도 아니어서 형식 위반을 다른 형식 위반으로
         // 바꾸는 셈이고, 안전을 얻지 못하면서 코칭만 잃는다.
+        //
+        // <p>이 재검증에 질문 개수를 넣지 않는 이유(코드 리뷰에서 재확인) — 판정자에게는
+        // 정확한 숫자 예산이 아니라 "질문을 줄이라"는 지시만 주어지므로, 판정자가 쓴 본문이
+        // 예산을 살짝 넘는 것은 실패가 아니라 예상된 편차다. 여기서 거부하면
+        // {@code rewriteIsNotRejectedForExceedingQuestionCountAlone} 이 고정한 그 실패
+        // 형태(형식 위반을 형식 위반으로 바꾸며 코칭만 잃음)가 재발한다. 결정론적 스트리핑
+        // (STEP 4, 아래 참고)이 만든 질문 개수 위반은 이 메서드가 아니라 그 호출부에서
+        // 스트리핑 직후에 따로 검증한다 — 판정자가 쓴 산문과 우리 스스로 계산한 예산은
+        // 신뢰 수준이 다르다.
         OutputPreFilterResult recheck = mergeContractViolations(
                 outputPreFilter.check(rewritten),
                 responseContractValidator.validateForbiddenElements(guard.responsePlan(), rewritten));
@@ -1057,6 +1064,29 @@ public class ConversationOrchestrator {
                 + "falling back to the fixed safe response. reasons={}", recheck.failReasons());
         guard.rejected().set(true);
         return SAFE_FIXED_RESPONSE;
+    }
+
+    /**
+     * 순수 질문 개수 위반을 결정론적으로 고친 결과 (이슈 #545 STEP 4, 코드 리뷰 반영).
+     *
+     * <p>{@code stripExcessQuestions()} 는 위반 판정(물음표 문자 개수)과 다른 기준(문장
+     * 경계 — 연속 종결부호를 한 문장으로 묶음)으로 문장을 골라내므로, 스트리핑 후에도
+     * 여전히 예산을 넘거나(예: {@code "정말?? 그렇구나."}) — 문장 전체가 질문뿐이면 —
+     * 빈 문자열이 될 수 있다. 이 결과는 우리가 직접 계산한 것이라({@link OutputJudge} 를
+     * 거치지 않음) 판정자가 쓴 산문과 달리 재검증 없이 내보낼 수 없다 — 실패하면 판정을
+     * 거치지 않고 바로 안전 고정 문구로 내린다(추가 LLM 호출 없이).
+     */
+    private OutputJudgeResult deterministicQuestionStripResult(String assistantContent, ResponsePlan plan) {
+        String stripped = responseContractValidator.stripExcessQuestions(assistantContent, plan.maxQuestions());
+        boolean stillValid = !stripped.isBlank()
+                && responseContractValidator.countQuestions(stripped) <= plan.maxQuestions();
+        if (stillValid) {
+            return OutputJudgeResult.rewrite(stripped);
+        }
+        log.warn("Deterministic question stripping still violated the budget or produced a blank "
+                + "body — falling back to REPLACE without an OutputJudge call. strippedBlank={}",
+                stripped.isBlank());
+        return OutputJudgeResult.replace();
     }
 
     /**

@@ -87,4 +87,38 @@ class PolicyDecisionTest {
                 JudgeStatus.FAILED
         ));
     }
+
+    /**
+     * 코드 리뷰 반영 — withDeliveryMode() 가 deliveryMode 만 바꾸고 requireOutputGuard 를
+     * 그대로 복사하면, SPECULATIVE→CAUTIOUS_SPECULATIVE 승격 후 PolicyEngine 이 절대 직접
+     * 만들지 않는 조합(CAUTIOUS_SPECULATIVE + requireOutputGuard=false)이 감사 트레이스에
+     * 남는다. 승격 시 requireOutputGuard 도 함께 true 로 맞춰야 한다.
+     */
+    @Test
+    void withDeliveryMode_promotingToCautiousSpeculative_alsoRequiresOutputGuard() {
+        PolicyDecision speculativeWithoutGuard = new PolicyDecision(
+                "decision",
+                DecisionAction.GENERATE,
+                GenerationMode.NORMAL,
+                DeliveryMode.SPECULATIVE,
+                SecurityLevel.CLEAN,
+                true,
+                true,
+                false,
+                InterventionHints.empty(),
+                "test",
+                RiskLevel.CLEAR_LOW,
+                null,
+                JudgeStatus.SKIPPED,
+                ModerationStatus.RESOLVED
+        );
+
+        PolicyDecision promoted = speculativeWithoutGuard.withDeliveryMode(DeliveryMode.CAUTIOUS_SPECULATIVE);
+
+        org.assertj.core.api.Assertions.assertThat(promoted.deliveryMode())
+                .isEqualTo(DeliveryMode.CAUTIOUS_SPECULATIVE);
+        org.assertj.core.api.Assertions.assertThat(promoted.requireOutputGuard())
+                .as("PolicyEngine이 직접 만드는 모든 CAUTIOUS_SPECULATIVE 결정은 항상 requireOutputGuard=true다")
+                .isTrue();
+    }
 }
