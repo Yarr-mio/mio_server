@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.TestPropertySource;
 
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -38,8 +39,11 @@ import static org.mockito.Mockito.when;
  * 넘지 않는지 검증한다. 판정은 {@code OutputJudge}를 실제로 부르지 않고(#545 STEP 4 리뷰
  * 반영 — 순수 질문 위반은 결정론적으로 처리) 각 턴에서 최종적으로 사용자에게 전달된 텍스트에
  * 물음표가 남아있는지로 확인한다.
+ *
+ * <p>게이트는 운영 기본 OFF다 — 이 클래스에서만 켜서 검증한다.
  */
 @MioIntegrationTest
+@TestPropertySource(properties = "cbt.question-gate.enabled=true")
 class CbtFourTurnFourQuestionRegressionTest {
 
     @Autowired
