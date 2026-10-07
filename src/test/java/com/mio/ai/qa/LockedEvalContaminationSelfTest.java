@@ -172,6 +172,26 @@ class LockedEvalContaminationSelfTest {
                 .hasMessageContaining("스캔 대상");
     }
 
+    /**
+     * 이슈 #559 — {@code Path#relativize}의 {@code toString()}은 Windows에서 역슬래시를
+     * 돌려주므로, 잠금 폴더 제외 비교 전에 정규화하지 않으면 Windows에서 잠금 세트 파일
+     * 자신이 "유출"로 잡힌다. 실제 파일시스템 경로는 테스트를 돌리는 OS의 구분자를 따르므로
+     * (Linux CI에서는 항상 슬래시), 이 회귀는 순수 문자열로 직접 검사해야 어느 OS에서
+     * 돌려도 같은 것을 확인할 수 있다.
+     */
+    @Test
+    @DisplayName("Windows 형식 경로 문자열도 정규화 후 잠금 폴더로 식별된다")
+    void normalizeSeparatorsMakesWindowsStylePathMatchLockedDir() {
+        String windowsStyle = "src\\test\\resources\\eval\\locked\\mio-locked-eval-v1.json";
+
+        String normalized = LockedEvalContaminationScanner.normalizeSeparators(windowsStyle);
+
+        assertThat(normalized).isEqualTo("src/test/resources/eval/locked/mio-locked-eval-v1.json");
+        assertThat(normalized)
+                .as("정규화 후에는 LOCKED_DIR 제외 비교가 Windows 경로에서도 성립해야 한다")
+                .startsWith(LockedEvalContaminationScanner.LOCKED_DIR);
+    }
+
     @Test
     @DisplayName("합성 표본은 실제 잠금 케이스와 근사 중복이 아니다 — 자기검증이 실제 세트를 오염시키지 않는다")
     void syntheticSamplesDoNotResembleRealCases() {
