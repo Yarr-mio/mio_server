@@ -51,3 +51,5 @@ docs/
 .codex
 CLAUDE.md
 AGENTS.md
+### Private eval sets (평가용 시험 세트는 저장소에 넣지 않는다 — 이슈 #554) ###
+eval-private/
