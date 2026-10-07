@@ -96,6 +96,18 @@ final class LockedEvalContaminationScanner {
     /** 잠금 세트 자신은 스캔에서 제외한다. */
     static final String LOCKED_DIR = "src/test/resources/eval/locked";
 
+    /**
+     * 경로 구분자를 OS와 무관하게 {@code "/"}로 통일한다 (이슈 #559).
+     *
+     * <p>{@code Path#relativize}의 {@code toString()}은 Windows에서 역슬래시를 돌려준다.
+     * {@link #LOCKED_DIR}는 슬래시로 적혀 있어, 정규화 없이 {@code startsWith}로 비교하면
+     * Windows에서는 항상 불일치해 잠금 폴더 제외가 작동하지 않고 잠금 세트 파일 자신이
+     * "유출"로 잡힌다.
+     */
+    static String normalizeSeparators(String path) {
+        return path.replace('\\', '/');
+    }
+
     static final int LONG_FRAGMENT_LENGTH = 16;
     static final int SHORT_FRAGMENT_LENGTH = 9;
     static final int MIN_GUARDABLE_LENGTH = 8;
@@ -214,7 +226,7 @@ final class LockedEvalContaminationScanner {
         Map<String, Set<ShortProbe>> trigramIndex = trigramIndex(probes.shortProbes());
         List<Hit> hits = new ArrayList<>();
         for (Path file : files) {
-            String relative = root.relativize(file).toString();
+            String relative = normalizeSeparators(root.relativize(file).toString());
             String content = LockedEvalSet.normalize(read(file));
             hits.addAll(scanContent(relative, content, probes, trigramIndex));
         }
@@ -325,7 +337,8 @@ final class LockedEvalContaminationScanner {
             try (Stream<Path> walk = Files.walk(dir)) {
                 walk.filter(Files::isRegularFile)
                         .filter(LockedEvalContaminationScanner::hasScannableExtension)
-                        .filter(p -> !root.relativize(p).toString().startsWith(LOCKED_DIR))
+                        .filter(p -> !normalizeSeparators(root.relativize(p).toString())
+                                .startsWith(LOCKED_DIR))
                         .forEach(p -> {
                             if (seen.add(p.toAbsolutePath())) {
                                 files.add(p);
@@ -349,7 +362,8 @@ final class LockedEvalContaminationScanner {
             }
             try (Stream<Path> walk = Files.walk(dir)) {
                 walk.filter(Files::isRegularFile)
-                        .filter(p -> !root.relativize(p).toString().startsWith(LOCKED_DIR))
+                        .filter(p -> !normalizeSeparators(root.relativize(p).toString())
+                                .startsWith(LOCKED_DIR))
                         .forEach(p -> {
                             if (seen.add(p.toAbsolutePath())) {
                                 census.merge(extensionOf(p), 1L, Long::sum);
