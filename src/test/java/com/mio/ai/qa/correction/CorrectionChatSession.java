@@ -55,7 +55,10 @@ final class CorrectionChatSession {
 
     static void save(Path file, List<Turn> turns) {
         try {
-            Files.createDirectories(file.getParent());
+            Path parent = file.getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
             ArrayNode root = MAPPER.createArrayNode();
             for (Turn t : turns) {
                 ObjectNode n = root.addObject();

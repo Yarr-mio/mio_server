@@ -17,13 +17,16 @@ class CorrectionRunConfigTest {
     }
 
     @Test
-    @DisplayName("세트 경로만 주면 나머지는 안전한 기본값이다 (요약 리포트, 반복 3, 두 모드, 두 팔)")
+    @DisplayName("세트 경로만 주면 나머지는 안전한 기본값이다 (요약 리포트, 반복 3, 두 모드, 기준선 팔 하나)")
     void defaults() {
         CorrectionRunConfig config = parse(Map.of(CorrectionRunConfig.SET_PATH, "eval-private/x.json", CorrectionRunConfig.MAX_KRW, "1000"));
 
         assertThat(config.repeats()).isEqualTo(3);
         assertThat(config.modes()).containsExactly(GenerationMode.NORMAL, GenerationMode.SUPPORTIVE);
-        assertThat(config.arms()).containsExactly(CorrectionPromptArm.BASELINE, CorrectionPromptArm.WITH_CORRECTION_BLOCK);
+        // 기본은 BASELINE 하나뿐이다 — WITH_CORRECTION_BLOCK은 이제 같은 블록을 한 번 더 중복해
+        // 붙이므로(이슈 #558), 기본값에 넣으면 "기준선 대 후보"가 "프로덕션 대 프로덕션+중복"이
+        // 된다. 회귀 비교가 필요할 때만 MIO_EVAL_CORRECTION_ARMS로 명시한다.
+        assertThat(config.arms()).containsExactly(CorrectionPromptArm.BASELINE);
         assertThat(config.parallelism()).isEqualTo(4);
         assertThat(config.detail()).isEqualTo(CorrectionReport.Detail.SUMMARY);
         assertThat(config.archiveDir().toString().replace('\\', '/')).isEqualTo("eval-private/runs");

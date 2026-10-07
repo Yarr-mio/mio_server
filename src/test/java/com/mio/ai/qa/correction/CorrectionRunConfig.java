@@ -16,7 +16,10 @@ import java.util.function.Function;
  *   <tr><td>{@code MIO_EVAL_CORRECTION_SET_PATH}</td><td>필수. 시험 세트 JSON 경로</td></tr>
  *   <tr><td>{@code MIO_EVAL_CORRECTION_REPEATS}</td><td>케이스당 반복 생성 횟수, 기본 3</td></tr>
  *   <tr><td>{@code MIO_EVAL_CORRECTION_MODES}</td><td>쉼표 구분 생성 모드, 기본 NORMAL,SUPPORTIVE</td></tr>
- *   <tr><td>{@code MIO_EVAL_CORRECTION_ARMS}</td><td>쉼표 구분 팔, 기본 BASELINE,WITH_CORRECTION_BLOCK</td></tr>
+ *   <tr><td>{@code MIO_EVAL_CORRECTION_ARMS}</td><td>쉼표 구분 팔, 기본 BASELINE(= 현재 프로덕션, 이슈
+ *       #558 반영 이후). WITH_CORRECTION_BLOCK은 같은 블록을 한 번 더 중복해 붙이므로 회귀 비교가
+ *       필요할 때만 명시적으로 지정한다 — 기본값에 넣으면 "기준선 대 후보" 측정이 프로덕션과 프로덕션+
+ *       중복 블록을 비교하는 꼴이 된다</td></tr>
  *   <tr><td>{@code MIO_EVAL_CORRECTION_PARALLELISM}</td><td>동시 호출 수, 기본 4</td></tr>
  *   <tr><td>{@code MIO_EVAL_CORRECTION_REPORT}</td><td>SUMMARY(기본) 또는 DETAIL — DETAIL 은 튜닝용 세트에만</td></tr>
  *   <tr><td>{@code MIO_EVAL_CORRECTION_ARCHIVE_DIR}</td><td>실행 결과 저장 위치, 기본 eval-private/runs</td></tr>
@@ -50,7 +53,7 @@ record CorrectionRunConfig(Path setPath, int repeats, List<GenerationMode> modes
                 Path.of(set),
                 positiveInt(env, REPEATS, 3),
                 list(env, MODES, "NORMAL,SUPPORTIVE", GenerationMode::valueOf),
-                list(env, ARMS, "BASELINE,WITH_CORRECTION_BLOCK", CorrectionPromptArm::valueOf),
+                list(env, ARMS, "BASELINE", CorrectionPromptArm::valueOf),
                 positiveInt(env, PARALLELISM, 4),
                 CorrectionReport.Detail.valueOf(orDefault(env, REPORT, "SUMMARY").toUpperCase()),
                 Path.of(orDefault(env, ARCHIVE_DIR, "eval-private/runs")),
