@@ -1,0 +1,217 @@
+{
+  "version": "correction-dev-v1",
+  "tier": "dev_gold",
+  "createdOn": "2026-09-21",
+  "language": "ko",
+  "purpose": "정정 대응 프롬프트(이슈 #551)를 고칠 때 보는 튜닝용 세트. 평가용 세트와 작성자를 분리한다.",
+  "lock": {
+    "state": "UNLOCKED",
+    "allowedUses": ["프롬프트 튜닝", "채점기 사람 검증", "파일럿 측정"],
+    "forbiddenUses": ["최종 성공 판단(결정 4)", "평가용 세트 작성 전 열람"]
+  },
+  "dataRights": {
+    "sourceClass": "MIO_AUTHORED_SYNTHETIC",
+    "sourceLabel": "Mio 자체 합성 세트 (티켓 사례 1건 포함)",
+    "redistribution": "INTERNAL_ONLY"
+  },
+  "cases": [
+    { "id": "D-F-01", "type": "fact", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "퇴근하고 나서도 개인 프로젝트 하느라 제대로 쉬지도 자지도 못하고 있어요"},
+      {"role": "ASSISTANT", "text": "퇴근 후에도 쉬지 못하고 계시다니 많이 지치셨겠어요. 휴식이 사치처럼 느껴지는 마음도 이해돼요."},
+      {"role": "USER", "text": "아니 사치로 느끼는 게 아니라 아예 쉴 시간이 없다고요"}]},
+    { "id": "D-F-02", "type": "fact", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "팀장님이 어제 제 보고서를 다시 써오라고 하셨어요"},
+      {"role": "ASSISTANT", "text": "보고서를 지적받아서 자신감이 많이 떨어지셨겠어요. 스스로의 능력을 의심하게 되셨나 봐요."},
+      {"role": "USER", "text": "능력을 의심하는 게 아니라 왜 다시 쓰라는 건지 이유를 아직 못 들어서 답답한 거예요"}]},
+    { "id": "D-F-03", "type": "fact", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "동생이랑 또 싸웠어요"},
+      {"role": "ASSISTANT", "text": "동생분이랑 자주 부딪히시나 봐요. 어릴 때부터 사이가 좋지 않으셨던 걸까요?"},
+      {"role": "USER", "text": "어릴 때부터는 아니에요"}]},
+    { "id": "D-F-04", "type": "fact", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "이번 시험 망친 것 같아요"},
+      {"role": "ASSISTANT", "text": "많이 준비하셨을 텐데 결과가 기대에 못 미쳐서 속상하시겠어요. 아쉬움이 크시겠어요."},
+      {"role": "USER", "text": "많이 준비한 건 아니에요"}]},
+    { "id": "D-F-05", "type": "fact", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "요즘 회사 가기가 싫어요"},
+      {"role": "ASSISTANT", "text": "회사 가기 싫은 마음이 커지셨군요. 업무가 너무 많아서 힘드신가요?"},
+      {"role": "USER", "text": "네 좀 힘들어요"},
+      {"role": "ASSISTANT", "text": "업무량 때문에 지치신 거군요. 야근이 잦으신가요?"},
+      {"role": "USER", "text": "업무량이라기보다는 사람 문제에 가까운 것 같기도 해요"}]},
+    { "id": "D-F-06", "type": "fact", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "남자친구가 요즘 연락을 잘 안 해요"},
+      {"role": "ASSISTANT", "text": "연락이 뜸해서 서운하고 불안하셨겠어요. 바쁜 일이 있는 걸까요?"},
+      {"role": "USER", "text": "바빠서 그런 게 아니라 일부러 안 하는 거예요. 저번에 싸운 뒤로요"}]},
+
+    { "id": "D-E-01", "type": "emotion", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "오늘 발표를 망쳤어요"},
+      {"role": "ASSISTANT", "text": "발표에서 실수하셔서 많이 부끄럽고 창피하셨겠어요."},
+      {"role": "USER", "text": "창피한 게 아니라 화가 나요. 준비할 시간을 안 준 팀원들한테요"}]},
+    { "id": "D-E-02", "type": "emotion", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "엄마가 또 전화해서 잔소리를 하셨어요"},
+      {"role": "ASSISTANT", "text": "어머니 잔소리에 상처받으셨겠어요."},
+      {"role": "USER", "text": "상처받은 건 아니에요"}]},
+    { "id": "D-E-03", "type": "emotion", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "친구가 제 생일을 잊어버렸어요"},
+      {"role": "ASSISTANT", "text": "생일을 잊어버린 친구에게 많이 서운하셨겠어요."},
+      {"role": "USER", "text": "서운하다기보다는... 그냥 좀 허탈한 것 같아요"}]},
+    { "id": "D-E-04", "type": "emotion", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "이직 제안을 받았는데 고민돼요"},
+      {"role": "ASSISTANT", "text": "이직 제안이 불안하고 두려우시겠어요. 변화가 무서운 마음이 드시나 봐요."},
+      {"role": "USER", "text": "무서운 게 아니라 설레는데 지금 팀에 미안한 마음이 커서 고민인 거예요"}]},
+    { "id": "D-E-05", "type": "emotion", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "요즘 아무것도 하기 싫어요"},
+      {"role": "ASSISTANT", "text": "무기력하고 우울한 기분이 드시는군요."},
+      {"role": "USER", "text": "그런 것 같아요"},
+      {"role": "ASSISTANT", "text": "우울한 마음이 오래 이어지셨나요?"},
+      {"role": "USER", "text": "우울한 건 아니고 그냥 지쳐서 아무것도 못 하겠는 거예요"}]},
+    { "id": "D-E-06", "type": "emotion", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "아이가 학교에서 친구랑 싸웠다고 연락을 받았어요"},
+      {"role": "ASSISTANT", "text": "아이가 다치지 않았을까 걱정되고 불안하셨겠어요."},
+      {"role": "USER", "text": "걱정도 되긴 하는데 사실 제일 큰 건 제 탓 같아서 드는 죄책감이에요"}]},
+
+    { "id": "D-A-01", "type": "advice_refusal", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "요즘 잠이 잘 안 와요"},
+      {"role": "ASSISTANT", "text": "자기 전에 따뜻한 차를 마시고 스마트폰을 멀리해 보시면 도움이 될 수 있어요."},
+      {"role": "USER", "text": "그건 다 해봤어요"}]},
+    { "id": "D-A-02", "type": "advice_refusal", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "운동을 안 했더니 몸이 무거워요"},
+      {"role": "ASSISTANT", "text": "하루 10분씩 가볍게 걷는 것부터 시작해 보시는 건 어떨까요?"},
+      {"role": "USER", "text": "걷기는 두 달 했는데 오히려 무릎만 아파져서 그만둔 거예요"}]},
+    { "id": "D-A-03", "type": "advice_refusal", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "발표 때문에 너무 떨려요"},
+      {"role": "ASSISTANT", "text": "발표 전에 심호흡을 하고 연습을 여러 번 해 보시면 긴장이 줄어들 수 있어요."},
+      {"role": "USER", "text": "음, 연습은 하고 있는데 그게 도움이 되는지는 잘 모르겠어요"}]},
+    { "id": "D-A-04", "type": "advice_refusal", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "회사 사람들이랑 어울리는 게 힘들어요"},
+      {"role": "ASSISTANT", "text": "점심시간에 먼저 말을 걸어 보시는 것도 방법이에요."},
+      {"role": "USER", "text": "그런 성격이 아니라서요"},
+      {"role": "ASSISTANT", "text": "그럼 작은 인사부터 시작해 보시면 어떨까요?"},
+      {"role": "USER", "text": "저한테는 그런 조언이 안 맞아요"}]},
+    { "id": "D-A-05", "type": "advice_refusal", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "돈 걱정 때문에 잠을 못 자요"},
+      {"role": "ASSISTANT", "text": "가계부를 써서 지출을 파악해 보시면 마음이 한결 편해질 수 있어요."},
+      {"role": "USER", "text": "가계부는 3년째 쓰고 있어요. 문제는 쓸 수 있는 돈 자체가 부족하다는 거예요"}]},
+    { "id": "D-A-06", "type": "advice_refusal", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "친구와 멀어진 것 같아서 마음이 안 좋아요"},
+      {"role": "ASSISTANT", "text": "먼저 연락해서 안부를 물어보시는 게 좋을 것 같아요."},
+      {"role": "USER", "text": "그게 좋은 건 알겠는데 지금은 좀 어려운 것 같아요"}]},
+
+    { "id": "D-S-01", "type": "soft_disagreement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "부장님이 저한테만 유독 그러세요"},
+      {"role": "ASSISTANT", "text": "부장님이 유독 나를 미워한다고 느껴지시니 정말 힘드셨겠어요."},
+      {"role": "USER", "text": "음... 미워한다기보다는 저한테만 기대가 큰 걸 수도 있고요"}]},
+    { "id": "D-S-02", "type": "soft_disagreement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "결혼 준비하다 보니 자꾸 싸워요"},
+      {"role": "ASSISTANT", "text": "준비 과정에서 서로 스트레스가 쌓여서 다투게 되나 봐요. 결혼 자체가 부담스러우신 건가요?"},
+      {"role": "USER", "text": "부담스러운 건 아닌데... 뭐랄까, 꼭 그런 건 아닌 것 같아요"}]},
+    { "id": "D-S-03", "type": "soft_disagreement", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "요즘 매일 야근이에요"},
+      {"role": "ASSISTANT", "text": "매일 야근이라니 체력적으로 정말 힘드시겠어요. 회사를 그만두고 싶은 생각도 드시죠?"},
+      {"role": "USER", "text": "그만두고 싶은 건 아닌 것 같은데요"}]},
+    { "id": "D-S-04", "type": "soft_disagreement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "친구들 사이에서 소외되는 기분이에요"},
+      {"role": "ASSISTANT", "text": "친구들이 일부러 나를 빼놓는다고 느끼시는 거군요."},
+      {"role": "USER", "text": "일부러 그런 건 아닐 수도 있는데... 잘 모르겠어요"}]},
+    { "id": "D-S-05", "type": "soft_disagreement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "요즘 감정 기복이 심해요"},
+      {"role": "ASSISTANT", "text": "감정 기복이 심하시다니 힘드시겠어요. 호르몬 변화 때문일 수도 있겠어요."},
+      {"role": "USER", "text": "그럴 수도 있어요"},
+      {"role": "ASSISTANT", "text": "혹시 최근에 스트레스를 많이 받으셨나요?"},
+      {"role": "USER", "text": "스트레스라고 딱 잘라 말하기는 좀 애매한 것 같아요"}]},
+    { "id": "D-S-06", "type": "soft_disagreement", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "육아가 너무 힘들어요"},
+      {"role": "ASSISTANT", "text": "혼자서 육아를 다 감당하고 계시니 정말 지치셨겠어요."},
+      {"role": "USER", "text": "혼자는 아니에요. 남편도 도와주긴 하는데..."}]},
+
+    { "id": "D-R-01", "type": "restatement", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "승진에서 떨어진 게 아니라 아예 후보에도 못 들었어요"},
+      {"role": "ASSISTANT", "text": "승진에서 탈락하셔서 많이 속상하시겠어요."},
+      {"role": "USER", "text": "탈락이 아니라 후보 명단에조차 없었다고요. 그게 더 충격이에요"}]},
+    { "id": "D-R-02", "type": "restatement", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "제가 힘든 건 일이 많아서가 아니라 일이 재미가 없어서예요"},
+      {"role": "ASSISTANT", "text": "업무가 많아서 지치셨군요. 일을 조금 줄이는 방법을 생각해 보면 어떨까요?"},
+      {"role": "USER", "text": "일이 많은 게 아니라 재미가 없다니까요"}]},
+    { "id": "D-R-03", "type": "restatement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "친구가 나쁘다기보다 제가 그 친구한테 너무 의존한 게 문제 같아요"},
+      {"role": "ASSISTANT", "text": "친구분이 그런 행동을 하셔서 속상하셨겠어요. 그 친구와 거리를 두는 것도 방법일 수 있어요."},
+      {"role": "USER", "text": "그러니까 친구 잘못이라기보다는 제가 의존한 부분을 말씀드리고 싶었어요"}]},
+    { "id": "D-R-04", "type": "restatement", "strength": "strong", "correction": true, "turns": [
+      {"role": "USER", "text": "저는 이직하고 싶은 게 아니라 지금 팀에서 인정받고 싶은 거예요"},
+      {"role": "ASSISTANT", "text": "이직을 고민하고 계시는군요. 새로운 환경에서 시작하면 마음이 편해질 수 있어요."},
+      {"role": "USER", "text": "이직이 아니라 지금 팀에서 인정받는 게 목적이에요. 다시 말씀드리지만요"}]},
+    { "id": "D-R-05", "type": "restatement", "strength": "medium", "correction": true, "turns": [
+      {"role": "USER", "text": "아이가 말을 안 듣는 게 문제가 아니라 제가 화를 참지 못하는 게 문제예요"},
+      {"role": "ASSISTANT", "text": "아이가 말을 안 들어서 많이 힘드시겠어요. 아이와 규칙을 정해 보시는 것도 방법이에요."},
+      {"role": "USER", "text": "아이 문제가 아니고 제 화 문제요. 제가 화를 참지 못한다는 거요"}]},
+    { "id": "D-R-06", "type": "restatement", "strength": "weak", "correction": true, "turns": [
+      {"role": "USER", "text": "공부가 어려운 게 아니라 왜 해야 하는지를 모르겠어요"},
+      {"role": "ASSISTANT", "text": "공부가 너무 어려우시군요. 학습 방법을 바꿔 보면 도움이 될 거예요."},
+      {"role": "USER", "text": "어렵다기보다는 왜 하는지를 모르겠다는 거였어요"}]},
+
+    { "id": "D-N-01", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "아니 진짜 오늘 너무 힘들었어요"}]},
+    { "id": "D-N-02", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "회사에서 실수했어요"},
+      {"role": "ASSISTANT", "text": "실수해서 마음이 무거우시겠어요. 어떤 일이 있었나요?"},
+      {"role": "USER", "text": "아니 진짜 어이가 없어서요. 별것도 아닌데 다 제 탓을 하더라고요"}]},
+    { "id": "D-N-03", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "아니 근데 이게 말이 돼요? 어제 밤을 새웠는데"}]},
+
+    { "id": "D-N-04", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "요즘 잠을 못 자요"},
+      {"role": "ASSISTANT", "text": "잠을 잘 못 주무셔서 낮에도 많이 피곤하시겠어요."},
+      {"role": "USER", "text": "네 맞아요. 낮에 계속 졸려요"}]},
+    { "id": "D-N-05", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "친구랑 오해가 생겼어요"},
+      {"role": "ASSISTANT", "text": "오해가 생겨서 마음이 불편하시겠어요."},
+      {"role": "USER", "text": "맞아요, 그게 제일 힘들어요"}]},
+    { "id": "D-N-06", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "이직 준비 중이에요"},
+      {"role": "ASSISTANT", "text": "새로운 도전을 준비하고 계시는군요."},
+      {"role": "USER", "text": "네 그렇죠"},
+      {"role": "ASSISTANT", "text": "준비하면서 불안한 마음도 드시죠?"},
+      {"role": "USER", "text": "맞아요, 사실 좀 불안해요"}]},
+
+    { "id": "D-N-07", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "이번 시험은 어려운 게 아니라 양이 너무 많아서 힘들어요"}]},
+    { "id": "D-N-08", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "후배가 프로젝트에서 인정받았어요"},
+      {"role": "ASSISTANT", "text": "후배분이 인정받는 걸 보면 여러 생각이 드셨을 것 같아요."},
+      {"role": "USER", "text": "그 친구가 잘한 게 아니라 운이 좋았던 것 같아서 마음이 좀 그래요"}]},
+    { "id": "D-N-09", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "동료가 승진한 게 부러운 게 아니라 제가 하는 일을 아무도 모르는 게 서운해요"}]},
+
+    { "id": "D-N-10", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "엄마랑 자주 싸워요"},
+      {"role": "ASSISTANT", "text": "어머니와 다투는 일이 잦으시군요. 마음이 무거우시겠어요."},
+      {"role": "USER", "text": "사실 제가 어릴 때부터 엄마랑 둘이 살았어요"}]},
+    { "id": "D-N-11", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "회사가 힘들어요"},
+      {"role": "ASSISTANT", "text": "회사 생활이 힘드시군요. 어떤 부분이 가장 힘드세요?"},
+      {"role": "USER", "text": "팀이 작아서 일이 다 저한테 몰려요"}]},
+    { "id": "D-N-12", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "운동을 시작했어요"},
+      {"role": "ASSISTANT", "text": "운동을 시작하셨다니 좋은 변화네요."},
+      {"role": "USER", "text": "주 3회 헬스장에 가고 있어요. 한 달 됐어요"}]},
+
+    { "id": "D-N-13", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "오늘 날씨가 정말 좋았어요"},
+      {"role": "ASSISTANT", "text": "날씨가 좋으면 기분도 한결 나아지죠."},
+      {"role": "USER", "text": "그런데 어제 일이 아직 마음에 걸려요. 상사한테 했던 말이요"}]},
+    { "id": "D-N-14", "type": "control", "correction": false, "turns": [
+      {"role": "USER", "text": "점심은 잘 먹었어요"},
+      {"role": "ASSISTANT", "text": "잘 챙겨 드셨다니 다행이에요."},
+      {"role": "USER", "text": "이제 저녁에 있을 가족 모임이 걱정돼요"}]},
+
+    { "id": "D-N-15", "type": "control", "correction": false, "adviceRequested": true, "turns": [
+      {"role": "USER", "text": "잠이 안 와요. 뭘 해보면 좋을까요?"}]},
+    { "id": "D-N-16", "type": "control", "correction": false, "adviceRequested": true, "turns": [
+      {"role": "USER", "text": "내일 면접인데 긴장을 줄이는 방법 좀 알려 주세요"}]},
+    { "id": "D-N-17", "type": "control", "correction": false, "adviceRequested": true, "turns": [
+      {"role": "USER", "text": "친구랑 화해하고 싶은데 어떻게 말을 꺼내야 할까요?"}]},
+    { "id": "D-N-18", "type": "control", "correction": false, "adviceRequested": true, "turns": [
+      {"role": "USER", "text": "요즘 집중이 안 돼요"},
+      {"role": "ASSISTANT", "text": "집중이 안 돼서 답답하시겠어요."},
+      {"role": "USER", "text": "집중력을 높이는 방법을 알려 주실 수 있어요?"}]}
+  ]
+}
