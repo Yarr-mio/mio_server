@@ -78,7 +78,10 @@ final class LockedEvalContaminationScanner {
      */
     static final Set<String> SCAN_EXTENSIONS = Set.of(
             ".java", ".yml", ".yaml", ".json", ".md", ".sql", ".txt", ".py", ".sh", ".kts",
-            ".properties", ".xml", ".conf", ".factories", ".example");
+            ".properties", ".xml", ".conf", ".factories", ".example",
+            // 정정 대응 시험 세트 작성 양식(.csv)과 변환 스크립트(.ps1, 이슈 #554). 둘 다 사람이
+            // 문장을 옮겨 적을 수 있는 텍스트이므로 무시 목록이 아니라 스캔 대상이다.
+            ".csv", ".ps1");
 
     /**
      * 프롬프트·키워드 텍스트를 담을 수 없다고 판단해 스캔하지 않는 확장자.

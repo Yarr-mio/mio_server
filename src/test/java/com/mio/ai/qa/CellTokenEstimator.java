@@ -20,12 +20,12 @@ package com.mio.ai.qa;
  * 실측 토큰을 들고 있다. 추정은 "돌리기 전에 청구서를 본다" 는 용도에만 쓰고, 실행 후
  * 리포트는 실측만 쓴다.
  */
-final class CellTokenEstimator {
+public final class CellTokenEstimator {
 
     /** 추정 오차 하한 배수 — 실측이 추정보다 작을 수 있는 폭. */
-    static final double LOWER_MULTIPLIER = 0.75;
+    public static final double LOWER_MULTIPLIER = 0.75;
     /** 추정 오차 상한 배수. 견적은 상한 쪽으로 읽는 것이 안전하다. */
-    static final double UPPER_MULTIPLIER = 1.40;
+    public static final double UPPER_MULTIPLIER = 1.40;
 
     private static final double ASCII_CHARS_PER_TOKEN = 4.0;
     private static final double HANGUL_CHARS_PER_TOKEN = 1.2;
@@ -38,7 +38,7 @@ final class CellTokenEstimator {
     }
 
     /** 텍스트 한 덩이의 추정 토큰 수. */
-    static long tokens(String text) {
+    public static long tokens(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
         }
@@ -62,7 +62,7 @@ final class CellTokenEstimator {
     }
 
     /** 채팅 요청 하나의 추정 prompt 토큰 수. */
-    static long promptTokens(java.util.List<com.mio.ai.llm.LlmRequest.Message> messages) {
+    public static long promptTokens(java.util.List<com.mio.ai.llm.LlmRequest.Message> messages) {
         long total = 0;
         for (var message : messages) {
             total += tokens(message.content()) + PER_MESSAGE_OVERHEAD;
