@@ -79,8 +79,12 @@ class CorrectionGenerationRunnerTest {
     }
 
     @Test
-    @DisplayName("기준선 팔은 프로덕션 프롬프트 그대로이고, 후보 팔만 정정 대응 블록이 붙는다")
+    @DisplayName("기준선 팔은 이제 프로덕션 프롬프트(정정 대응 블록 포함) 그대로이고, "
+            + "후보 팔은 같은 블록을 중복으로 한 번 더 붙인다")
     void armsDifferOnlyByCorrectionBlock() {
+        // 이슈 #558로 CORRECTION_BLOCK이 PromptBuilder에 반영된 뒤로는 BASELINE도
+        // 프로덕션 그대로라 [정정 대응]이 이미 포함된다. WITH_CORRECTION_BLOCK은 같은
+        // 블록을 한 번 더 붙이므로(회귀 비교용으로만 남김) 둘의 차이는 그 중복 한 벌이다.
         RecordingClient client = new RecordingClient(r -> "응답");
         CorrectionGenerationRunner runner = CorrectionGenerationRunner.production(client, GenerationMode.NORMAL);
 
@@ -89,8 +93,8 @@ class CorrectionGenerationRunnerTest {
 
         String baseline = client.requests.get(0).messages().get(0).content();
         String candidate = client.requests.get(1).messages().get(0).content();
-        assertThat(baseline).contains("당신은 미오입니다").doesNotContain("[정정 대응]");
-        assertThat(candidate).startsWith(baseline).contains("[정정 대응]");
+        assertThat(baseline).contains("당신은 미오입니다").contains("[정정 대응]");
+        assertThat(candidate).isEqualTo(baseline + "\n\n" + CorrectionPromptArm.CORRECTION_BLOCK);
     }
 
     @Test

@@ -30,7 +30,10 @@ import java.util.concurrent.TimeUnit;
  * <p>환경 변수:
  * <ul>
  *   <li>{@code MIO_CHAT_MODE} — NORMAL(기본) 또는 SUPPORTIVE</li>
- *   <li>{@code MIO_CHAT_ARM} — WITH_CORRECTION_BLOCK(기본, 후보) 또는 BASELINE(현재 프로덕션)</li>
+ *   <li>{@code MIO_CHAT_ARM} — BASELINE(기본, 현재 프로덕션 — 이슈 #558로 정정 대응 블록이
+ *       {@code PromptBuilder}에 반영된 뒤로는 이 팔이 그 블록을 포함한다) 또는
+ *       WITH_CORRECTION_BLOCK(같은 블록을 한 번 더 중복해 붙임, 회귀 비교용으로만 남김 —
+ *       기본으로 쓰면 정정 대응 지시가 두 번 들어간 프롬프트로 대화하게 된다)</li>
  * </ul>
  */
 @Tag("llm-integration")
@@ -53,7 +56,7 @@ class CorrectionChatSessionLlmTest {
         }
         GenerationMode mode = GenerationMode.valueOf(orDefault(System.getenv("MIO_CHAT_MODE"), "NORMAL").toUpperCase());
         CorrectionPromptArm arm = CorrectionPromptArm.valueOf(
-                orDefault(System.getenv("MIO_CHAT_ARM"), "WITH_CORRECTION_BLOCK").toUpperCase());
+                orDefault(System.getenv("MIO_CHAT_ARM"), "BASELINE").toUpperCase());
 
         CorrectionCostLedger ledger = new CorrectionCostLedger();
         LlmClient client = CorrectionClients.real(apiKey, ledger);

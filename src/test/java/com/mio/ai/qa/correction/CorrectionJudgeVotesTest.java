@@ -158,7 +158,7 @@ class CorrectionJudgeVotesTest {
     @Test
     @DisplayName("후보 블록에는 정정이 아닌 경우 적용하지 않는다는 범위 문장과 조언·격려·질문 금지가 있고, 지문은 8자다")
     void candidateBlockScopeAndFingerprint() {
-        assertThat(CorrectionPromptArm.CORRECTION_BLOCK).contains("이 지시를 적용하지 말고", "사과나 인정을 하지 마세요", "질문", "마무리 문장");
+        assertThat(CorrectionPromptArm.CORRECTION_BLOCK).contains("이 지시를 적용하지 말고", "사과나 인정을 하지 마세요", "질문", "마무리는 전부 셋째 문장");
         assertThat(CorrectionPromptArm.blockFingerprint()).hasSize(8);
     }
 }

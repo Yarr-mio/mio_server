@@ -202,6 +202,30 @@ class PromptBuilderTest {
         assertThat(promptFor(ResponseAct.EMOTION_CHECK)).doesNotContain("[이미 전달됨]");
     }
 
+    // ── 정정 대응 공통 규칙 (이슈 #551/#558) ──────────────────────────────
+    //
+    // CorrectionPromptArm.CORRECTION_BLOCK(측정으로 동결한 v3 문구)을 그대로 여기로
+    // 옮겼다. 두 상수가 몰래 갈라지면 측정했던 프롬프트와 실제로 나가는 프롬프트가
+    // 달라지므로, 내용이 글자 그대로 같은지 이 테스트로 계속 감시한다.
+
+    @Test
+    @DisplayName("모든 모드의 시스템 프롬프트 맨 끝에 정정 대응 블록이 그대로 붙는다")
+    void correctionBlock_isAppendedVerbatimToEveryMode() {
+        for (GenerationMode mode : GenerationMode.values()) {
+            String prompt = builder.buildSystemPrompt(mode, InterventionHints.empty());
+            assertThat(prompt)
+                    .as("모드 %s", mode)
+                    .endsWith("\n\n" + com.mio.ai.qa.correction.CorrectionPromptArm.CORRECTION_BLOCK);
+        }
+    }
+
+    @Test
+    @DisplayName("정정 대응 블록이 붙어도 기존 프롬프트 내용은 그대로 남는다")
+    void correctionBlock_doesNotDisplaceExistingContent() {
+        String prompt = builder.buildSystemPrompt(GenerationMode.SUPPORTIVE, InterventionHints.empty());
+        assertThat(prompt).contains("미오").contains("감정을 먼저 충분히 인정");
+    }
+
     private String promptFor(ResponseAct act) {
         ResponsePlan plan = new ResponsePlan(act, GenerationFreedom.CONSTRAINED,
                 1, 4, ResponsePlan.BASE_FORBIDDEN);

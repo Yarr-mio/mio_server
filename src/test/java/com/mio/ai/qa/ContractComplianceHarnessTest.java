@@ -62,10 +62,18 @@ class ContractComplianceHarnessTest {
 
         assertThat(with).contains("[응답 계약]");
         assertThat(without).doesNotContain("[응답 계약]");
+
+        // [응답 계약] 문단만 잘라낸다 — 문단 끝은 그다음 "\n\n"이다. 문단 뒤에 오는 다른
+        // 내용(정정 대응 블록 등)까지 통째로 날리면 "계약 블록만 빠진다"는 검사가 무의미해진다
+        // (이슈 #551, PromptBuilder가 정정 대응 블록을 항상 맨 뒤에 붙이게 되면서 드러남).
+        int start = with.indexOf("\n\n[응답 계약]");
+        int end = with.indexOf("\n\n", start + 2);
+        String withoutContractOnly = end >= 0
+                ? with.substring(0, start) + with.substring(end)
+                : with.substring(0, start);
         assertThat(without)
                 .as("계약 블록 말고 다른 것이 함께 빠지면 A/B 의 차이가 계약의 효과가 아니게 된다")
-                .isEqualTo(with.replace(with.substring(with.indexOf("\n\n[응답 계약]"),
-                        with.length()), ""));
+                .isEqualTo(withoutContractOnly);
     }
 
     @Test
